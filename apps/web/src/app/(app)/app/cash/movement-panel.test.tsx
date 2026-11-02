@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import {
   ApiRequestError,
   CASH_IDEMPOTENCY_KEY_CONFLICT_MESSAGE,
@@ -69,17 +69,17 @@ function renderPanel(overrides: PanelOverrides = {}): {
 }
 
 function setType(type: string): void {
-  fireEvent.change(screen.getByLabelText("Movement type"), { target: { value: type } });
+  fireEvent.change(screen.getByLabelText("Tipo de movimiento"), { target: { value: type } });
 }
 
 function fillMovement(type: string, amount: string, reason: string, direction?: string): void {
   setType(type);
-  fireEvent.change(screen.getByLabelText("Amount"), { target: { value: amount } });
+  fireEvent.change(screen.getByLabelText("Importe"), { target: { value: amount } });
   if (reason.length > 0) {
-    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: reason } });
+    fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: reason } });
   }
   if (direction !== undefined) {
-    fireEvent.change(screen.getByLabelText("Adjustment direction"), {
+    fireEvent.change(screen.getByLabelText("Sentido del ajuste"), {
       target: { value: direction },
     });
   }
@@ -90,20 +90,20 @@ describe("MovementPanel states", () => {
     renderPanel({ session: null });
 
     expect(screen.getByTestId("movements-no-session")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Amount")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Importe")).not.toBeInTheDocument();
   });
 
   it("shows a loading state before the API answers", () => {
     renderPanel({ isLoading: true });
 
-    expect(screen.getByTestId("movements-loading")).toHaveTextContent("Loading cash movements...");
+    expect(screen.getByTestId("movements-loading")).toHaveTextContent("Cargando movimientos…");
   });
 
   it("shows an empty ledger state for a session without movements", () => {
     renderPanel();
 
     expect(screen.getByTestId("movements-empty")).toHaveTextContent(
-      "No movements recorded for this session yet."
+      "Todavía no hay movimientos en esta sesión."
     );
   });
 
@@ -111,7 +111,7 @@ describe("MovementPanel states", () => {
     renderPanel({ loadError: new ApiRequestError("NOT_FOUND", "x", 404) });
 
     expect(screen.getByTestId("movements-error")).toHaveTextContent(
-      "Cash register or session not found"
+      "No encontramos la caja o sesión"
     );
   });
 
@@ -131,26 +131,26 @@ describe("MovementPanel states", () => {
     });
 
     expect(screen.getByText(/Cleaning supplies/)).toBeInTheDocument();
-    expect(screen.getByText("Adjustment · Decrease expected cash")).toBeInTheDocument();
-    expect(screen.getByText("1,500.00")).toBeInTheDocument();
-    expect(screen.getByText("250.00")).toBeInTheDocument();
+    expect(screen.getByText("Ajuste · Disminuir efectivo esperado")).toBeInTheDocument();
+    expect(screen.getByText("1.500")).toBeInTheDocument();
+    expect(screen.getByText("250")).toBeInTheDocument();
   });
 
   it("shows a success state only from the movement the API returned", () => {
     renderPanel({ created: MOVEMENT });
 
     const status = screen.getByTestId("movement-created");
-    expect(status).toHaveTextContent("Movement recorded");
-    expect(status).toHaveTextContent("The API stored this expense movement of 1,500.00.");
+    expect(status).toHaveTextContent("Movimiento registrado");
+    expect(status).toHaveTextContent("Se registró un movimiento de gasto por 1.500.");
   });
 
   it("offers no form for a session that is already closed", () => {
     renderPanel({ session: { ...SESSION, status: "CLOSED" } });
 
     expect(screen.getByTestId("movements-session-closed")).toHaveTextContent(
-      "This session is closed."
+      "Esta sesión está cerrada"
     );
-    expect(screen.queryByLabelText("Amount")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Importe")).not.toBeInTheDocument();
   });
 });
 
@@ -158,15 +158,15 @@ describe("MovementPanel form shape", () => {
   it("labels every field visibly", () => {
     renderPanel();
 
-    expect(screen.getByLabelText("Movement type")).toBeInTheDocument();
-    expect(screen.getByLabelText("Amount")).toBeInTheDocument();
-    expect(screen.getByLabelText("Reason")).toBeInTheDocument();
+    expect(screen.getByLabelText("Tipo de movimiento")).toBeInTheDocument();
+    expect(screen.getByLabelText("Importe")).toBeInTheDocument();
+    expect(screen.getByLabelText("Motivo")).toBeInTheDocument();
   });
 
   it("offers every non-sale movement kind and never SALE", () => {
     renderPanel();
 
-    const options = [...screen.getByLabelText("Movement type").querySelectorAll("option")].map(
+    const options = [...screen.getByLabelText("Tipo de movimiento").querySelectorAll("option")].map(
       (option) => option.getAttribute("value")
     );
     expect(options).toEqual(["REFUND", "INCOME", "EXPENSE", "WITHDRAWAL", "DEPOSIT", "ADJUSTMENT"]);
@@ -176,13 +176,13 @@ describe("MovementPanel form shape", () => {
   it("offers the direction control exactly for ADJUSTMENT", () => {
     renderPanel();
 
-    expect(screen.queryByLabelText("Adjustment direction")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Sentido del ajuste")).not.toBeInTheDocument();
 
     setType("ADJUSTMENT");
-    expect(screen.getByLabelText("Adjustment direction")).toBeInTheDocument();
+    expect(screen.getByLabelText("Sentido del ajuste")).toBeInTheDocument();
 
     setType("DEPOSIT");
-    expect(screen.queryByLabelText("Adjustment direction")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Sentido del ajuste")).not.toBeInTheDocument();
   });
 });
 
@@ -190,21 +190,21 @@ describe("MovementPanel validation", () => {
   it("requires a positive exact amount", () => {
     const { onCreate } = renderPanel();
 
-    fireEvent.click(screen.getByRole("button", { name: "Record movement" }));
+    clickCashAction("Registrar movimiento");
     expect(screen.getByTestId("movement-validation-error")).toHaveTextContent(
-      "An amount is required."
+      "Ingresá el importe."
     );
 
-    fillMovement("INCOME", "0.00", "");
-    fireEvent.click(screen.getByRole("button", { name: "Record movement" }));
+    fillMovement("INCOME", "0,00", "");
+    clickCashAction("Registrar movimiento");
     expect(screen.getByTestId("movement-validation-error")).toHaveTextContent(
-      "The movement amount must be greater than zero."
+      "El importe del movimiento debe ser mayor que cero."
     );
 
-    fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "-1.00" } });
-    fireEvent.click(screen.getByRole("button", { name: "Record movement" }));
+    fireEvent.change(screen.getByLabelText("Importe"), { target: { value: "-1,00" } });
+    clickCashAction("Registrar movimiento");
     expect(screen.getByTestId("movement-validation-error")).toHaveTextContent(
-      "The movement amount must be an exact positive decimal with at most 2 decimals."
+      "Ingresá un importe positivo con hasta dos decimales, usando coma decimal."
     );
 
     expect(onCreate).not.toHaveBeenCalled();
@@ -213,16 +213,16 @@ describe("MovementPanel validation", () => {
   it("requires a reason for every kind but INCOME", () => {
     const { onCreate } = renderPanel();
 
-    fillMovement("EXPENSE", "10.00", "");
-    fireEvent.click(screen.getByRole("button", { name: "Record movement" }));
+    fillMovement("EXPENSE", "10,00", "");
+    clickCashAction("Registrar movimiento");
     expect(screen.getByTestId("movement-validation-error")).toHaveTextContent(
-      "A reason is required for this movement kind."
+      "Ingresá un motivo para este tipo de movimiento."
     );
 
-    fillMovement("WITHDRAWAL", "10.00", "");
-    fireEvent.click(screen.getByRole("button", { name: "Record movement" }));
+    fillMovement("WITHDRAWAL", "10,00", "");
+    clickCashAction("Registrar movimiento");
     expect(screen.getByTestId("movement-validation-error")).toHaveTextContent(
-      "A reason is required for this movement kind."
+      "Ingresá un motivo para este tipo de movimiento."
     );
 
     expect(onCreate).not.toHaveBeenCalled();
@@ -231,8 +231,8 @@ describe("MovementPanel validation", () => {
   it("accepts an INCOME without a reason", async () => {
     const { onCreate } = renderPanel();
 
-    fillMovement("INCOME", "10.00", "");
-    fireEvent.click(screen.getByRole("button", { name: "Record movement" }));
+    fillMovement("INCOME", "10,00", "");
+    clickCashAction("Registrar movimiento");
 
     await waitFor(() => {
       expect(onCreate).toHaveBeenCalledTimes(1);
@@ -243,11 +243,11 @@ describe("MovementPanel validation", () => {
   it("requires a direction exactly for ADJUSTMENT", () => {
     const { onCreate } = renderPanel();
 
-    fillMovement("ADJUSTMENT", "10.00", "Recount");
-    fireEvent.click(screen.getByRole("button", { name: "Record movement" }));
+    fillMovement("ADJUSTMENT", "10,00", "Recount");
+    clickCashAction("Registrar movimiento");
 
     expect(screen.getByTestId("movement-validation-error")).toHaveTextContent(
-      "An adjustment direction is required."
+      "Elegí el sentido del ajuste."
     );
     expect(onCreate).not.toHaveBeenCalled();
   });
@@ -257,8 +257,8 @@ describe("MovementPanel create payload", () => {
   it("sends the session, type, amount and reason without a direction", async () => {
     const { onCreate } = renderPanel();
 
-    fillMovement("EXPENSE", "1500.00", "Cleaning supplies");
-    fireEvent.click(screen.getByRole("button", { name: "Record movement" }));
+    fillMovement("EXPENSE", "1500,00", "Cleaning supplies");
+    clickCashAction("Registrar movimiento");
 
     await waitFor(() => {
       expect(onCreate).toHaveBeenCalledTimes(1);
@@ -278,8 +278,8 @@ describe("MovementPanel create payload", () => {
   it("omits the optional reason for INCOME", async () => {
     const { onCreate } = renderPanel();
 
-    fillMovement("INCOME", "10.00", "");
-    fireEvent.click(screen.getByRole("button", { name: "Record movement" }));
+    fillMovement("INCOME", "10,00", "");
+    clickCashAction("Registrar movimiento");
 
     await waitFor(() => {
       expect(onCreate).toHaveBeenCalledTimes(1);
@@ -292,8 +292,8 @@ describe("MovementPanel create payload", () => {
   it("sends the direction for ADJUSTMENT", async () => {
     const { onCreate } = renderPanel();
 
-    fillMovement("ADJUSTMENT", "10.00", "Recount", "DECREASE");
-    fireEvent.click(screen.getByRole("button", { name: "Record movement" }));
+    fillMovement("ADJUSTMENT", "10,00", "Recount", "DECREASE");
+    clickCashAction("Registrar movimiento");
 
     await waitFor(() => {
       expect(onCreate).toHaveBeenCalledTimes(1);
@@ -311,10 +311,10 @@ describe("MovementPanel create payload", () => {
   it("clears the amount after a confirmed create", async () => {
     renderPanel();
 
-    fillMovement("INCOME", "10.00", "");
-    fireEvent.click(screen.getByRole("button", { name: "Record movement" }));
+    fillMovement("INCOME", "10,00", "");
+    clickCashAction("Registrar movimiento");
 
-    expect(await screen.findByLabelText("Amount")).toHaveValue("");
+    expect(await screen.findByLabelText("Importe")).toHaveValue("");
   });
 });
 
@@ -326,10 +326,10 @@ describe("MovementPanel idempotency key", () => {
     renderPanel({ onCreate });
 
     const submit = (): void => {
-      fireEvent.click(screen.getByRole("button", { name: "Record movement" }));
+      clickCashAction("Registrar movimiento");
     };
 
-    fillMovement("INCOME", "10.00", "");
+    fillMovement("INCOME", "10,00", "");
     submit();
     await waitFor(() => {
       expect(onCreate).toHaveBeenCalledTimes(1);
@@ -347,7 +347,7 @@ describe("MovementPanel idempotency key", () => {
     expect(secondKey).toBe(firstKey);
 
     // The confirmed create closes the attempt: the next one is a new intent.
-    fillMovement("INCOME", "20.00", "");
+    fillMovement("INCOME", "20,00", "");
     submit();
     await waitFor(() => {
       expect(onCreate).toHaveBeenCalledTimes(3);
@@ -361,8 +361,8 @@ describe("MovementPanel idempotency key", () => {
   it("never mints a key for a locally refused draft", () => {
     const { onCreate } = renderPanel();
 
-    fillMovement("EXPENSE", "10.00", "");
-    fireEvent.click(screen.getByRole("button", { name: "Record movement" }));
+    fillMovement("EXPENSE", "10,00", "");
+    clickCashAction("Registrar movimiento");
 
     expect(onCreate).not.toHaveBeenCalled();
   });
@@ -379,7 +379,7 @@ describe("MovementPanel refusals", () => {
     });
 
     expect(screen.getByTestId("movement-create-error")).toHaveTextContent(
-      "The request was rejected as invalid"
+      "Revisá los datos de la operación"
     );
   });
 
@@ -387,7 +387,7 @@ describe("MovementPanel refusals", () => {
     renderPanel({ createError: new ApiRequestError("NOT_FOUND", "x", 404) });
 
     expect(screen.getByTestId("movement-create-error")).toHaveTextContent(
-      "Cash register or session not found"
+      "No encontramos la caja o sesión"
     );
   });
 
@@ -397,7 +397,7 @@ describe("MovementPanel refusals", () => {
     });
 
     expect(screen.getByTestId("movement-create-error")).toHaveTextContent(
-      "This cash session is not open"
+      "Esta sesión no está abierta"
     );
   });
 
@@ -407,21 +407,46 @@ describe("MovementPanel refusals", () => {
     });
 
     expect(screen.getByTestId("movement-create-error")).toHaveTextContent(
-      "This idempotency key was already used for a different request"
+      "El intento enviado corresponde a otro movimiento"
     );
   });
 
   it("surfaces the permission refusal", () => {
     renderPanel({ createError: new ApiRequestError("FORBIDDEN", "Access denied.", 403) });
 
-    expect(screen.getByTestId("movement-create-error")).toHaveTextContent("Permission denied");
+    expect(screen.getByTestId("movement-create-error")).toHaveTextContent("Sin permiso");
   });
 
   it("relabels the button and blocks the fields while the create is in flight", () => {
     renderPanel({ isCreating: true });
 
-    expect(screen.getByRole("button", { name: "Recording movement..." })).toBeDisabled();
-    expect(screen.getByLabelText("Amount")).toBeDisabled();
-    expect(screen.getByLabelText("Reason")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Registrando movimiento…" })).toBeDisabled();
+    expect(screen.getByLabelText("Importe")).toBeDisabled();
+    expect(screen.getByLabelText("Motivo")).toBeDisabled();
   });
 });
+
+beforeAll(() => {
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value: function (this: HTMLDialogElement) {
+      this.open = true;
+    },
+  });
+  Object.defineProperty(HTMLDialogElement.prototype, "close", {
+    configurable: true,
+    value: function (this: HTMLDialogElement) {
+      this.open = false;
+    },
+  });
+});
+function clickCashAction(name: string): void {
+  fireEvent.click(screen.getByRole("button", { name }));
+  const dialog = screen.queryByRole("dialog");
+  const confirm: Record<string, string> = {
+    "Abrir sesión": "Confirmar apertura",
+    "Registrar movimiento": "Confirmar movimiento",
+    "Cerrar sesión": "Confirmar cierre",
+  };
+  if (dialog) fireEvent.click(within(dialog).getByRole("button", { name: confirm[name] }));
+}

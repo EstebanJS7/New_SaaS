@@ -1,5 +1,6 @@
 "use client";
 
+import { normalizeEsPyDecimalInput } from "@/lib/es-py-format";
 import {
   CASH_REGISTER_NAME_MAX_LENGTH,
   type CashMovementDirection,
@@ -33,6 +34,12 @@ export const CASH_MOVEMENT_REASON_MAX_LENGTH = 500;
  */
 const CASH_WIRE_AMOUNT_PATTERN = /^\d{1,12}(?:\.\d{1,2})?$/;
 
+/** Local es-PY text to the existing wire shape; no arithmetic or rounding. */
+export function normalizeCashAmountInput(value: string): string | null {
+  const wire = normalizeEsPyDecimalInput(value);
+  return wire !== null && CASH_WIRE_AMOUNT_PATTERN.test(wire) ? wire : null;
+}
+
 /** The movement kinds whose reason is MANDATORY (DEC-032). */
 export const CASH_REASON_REQUIRED_TYPES: readonly CashMovementType[] = [
   "REFUND",
@@ -56,10 +63,10 @@ export function isCashDirectionRequired(type: CashMovementType): boolean {
 export function cashRegisterNameError(name: string): string | null {
   const trimmed = name.trim();
   if (trimmed.length === 0) {
-    return "A cash register name is required.";
+    return "Ingresá un nombre para la caja.";
   }
   if (trimmed.length > CASH_REGISTER_NAME_MAX_LENGTH) {
-    return `A cash register name must be at most ${CASH_REGISTER_NAME_MAX_LENGTH} characters.`;
+    return `El nombre de la caja admite hasta ${CASH_REGISTER_NAME_MAX_LENGTH} caracteres.`;
   }
   return null;
 }
@@ -68,10 +75,10 @@ export function cashRegisterNameError(name: string): string | null {
 export function cashOpeningAmountError(value: string): string | null {
   const trimmed = value.trim();
   if (trimmed.length === 0) {
-    return "An opening amount is required.";
+    return "Ingresá el importe inicial.";
   }
-  if (!CASH_WIRE_AMOUNT_PATTERN.test(trimmed)) {
-    return "The opening amount must be an exact non-negative decimal with at most 2 decimals.";
+  if (normalizeCashAmountInput(trimmed) === null) {
+    return "Ingresá un importe inicial no negativo con hasta dos decimales, usando coma decimal.";
   }
   return null;
 }
@@ -80,10 +87,10 @@ export function cashOpeningAmountError(value: string): string | null {
 export function cashCountedAmountError(value: string): string | null {
   const trimmed = value.trim();
   if (trimmed.length === 0) {
-    return "A counted amount is required.";
+    return "Ingresá el importe contado.";
   }
-  if (!CASH_WIRE_AMOUNT_PATTERN.test(trimmed)) {
-    return "The counted amount must be an exact non-negative decimal with at most 2 decimals.";
+  if (normalizeCashAmountInput(trimmed) === null) {
+    return "Ingresá un importe contado no negativo con hasta dos decimales, usando coma decimal.";
   }
   return null;
 }
@@ -96,13 +103,13 @@ export function cashCountedAmountError(value: string): string | null {
 export function cashMovementAmountError(value: string): string | null {
   const trimmed = value.trim();
   if (trimmed.length === 0) {
-    return "An amount is required.";
+    return "Ingresá el importe.";
   }
-  if (!CASH_WIRE_AMOUNT_PATTERN.test(trimmed)) {
-    return "The movement amount must be an exact positive decimal with at most 2 decimals.";
+  if (normalizeCashAmountInput(trimmed) === null) {
+    return "Ingresá un importe positivo con hasta dos decimales, usando coma decimal.";
   }
-  if (/^0+(?:\.0+)?$/.test(trimmed)) {
-    return "The movement amount must be greater than zero.";
+  if (/^0+(?:\.0+)?$/.test(normalizeCashAmountInput(trimmed) ?? "")) {
+    return "El importe del movimiento debe ser mayor que cero.";
   }
   return null;
 }
@@ -111,10 +118,10 @@ export function cashMovementAmountError(value: string): string | null {
 export function cashMovementReasonError(type: CashMovementType, reason: string): string | null {
   const trimmed = reason.trim();
   if (trimmed.length === 0) {
-    return isCashReasonRequired(type) ? "A reason is required for this movement kind." : null;
+    return isCashReasonRequired(type) ? "Ingresá un motivo para este tipo de movimiento." : null;
   }
   if (trimmed.length > CASH_MOVEMENT_REASON_MAX_LENGTH) {
-    return `A reason must be at most ${CASH_MOVEMENT_REASON_MAX_LENGTH} characters.`;
+    return `El motivo admite hasta ${CASH_MOVEMENT_REASON_MAX_LENGTH} caracteres.`;
   }
   return null;
 }
@@ -128,9 +135,9 @@ export function cashMovementDirectionError(
   direction: CashMovementDirection | ""
 ): string | null {
   if (type === "ADJUSTMENT") {
-    return direction === "" ? "An adjustment direction is required." : null;
+    return direction === "" ? "Elegí el sentido del ajuste." : null;
   }
-  return direction === "" ? null : "A direction is only allowed for an adjustment.";
+  return direction === "" ? null : "El sentido solo corresponde a un ajuste.";
 }
 
 /** The locally held movement form, before it becomes a create payload. */

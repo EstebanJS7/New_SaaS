@@ -49,22 +49,22 @@ describe("RegisterPanel states", () => {
   it("shows a loading state before the API answers", () => {
     renderPanel({ isLoading: true });
 
-    expect(screen.getByTestId("registers-loading")).toHaveTextContent("Loading cash registers...");
+    expect(screen.getByTestId("registers-loading")).toHaveTextContent("Cargando cajas…");
     expect(screen.queryByTestId("registers-empty")).not.toBeInTheDocument();
   });
 
   it("shows an empty state when the tenant has no registers", () => {
     renderPanel();
 
-    expect(screen.getByTestId("registers-empty")).toHaveTextContent("No cash registers yet.");
+    expect(screen.getByTestId("registers-empty")).toHaveTextContent("Todavía no hay cajas.");
   });
 
   it("renders the permission-denied branch when the read is refused", () => {
     renderPanel({ loadError: new ApiRequestError("FORBIDDEN", "Access denied.", 403) });
 
     const alert = screen.getByTestId("registers-error");
-    expect(alert).toHaveTextContent("Permission denied");
-    expect(alert).toHaveTextContent("You do not have permission to manage cash registers.");
+    expect(alert).toHaveTextContent("Sin permiso");
+    expect(alert).toHaveTextContent("No tenés permiso para gestionar Caja.");
   });
 
   it("renders the entitlement-denied branch when the tenant lacks the capability", () => {
@@ -77,7 +77,7 @@ describe("RegisterPanel states", () => {
     });
 
     expect(screen.getByTestId("registers-error")).toHaveTextContent(
-      "Cash features are not enabled for this tenant"
+      "Caja no está habilitada para esta organización"
     );
   });
 
@@ -93,8 +93,8 @@ describe("RegisterPanel states", () => {
     renderPanel({ created: REGISTER });
 
     const status = screen.getByTestId("register-created");
-    expect(status).toHaveTextContent("Register created");
-    expect(status).toHaveTextContent('"Front desk" now exists for this tenant.');
+    expect(status).toHaveTextContent("Caja creada");
+    expect(status).toHaveTextContent('La caja "Front desk" fue creada.');
   });
 });
 
@@ -102,16 +102,16 @@ describe("RegisterPanel create form", () => {
   it("labels its single field visibly", () => {
     renderPanel();
 
-    expect(screen.getByLabelText("Register name")).toHaveValue("");
+    expect(screen.getByLabelText("Nombre de la caja")).toHaveValue("");
   });
 
   it("refuses a blank name locally and never calls the API", () => {
     const { onCreate } = renderPanel();
 
-    fireEvent.click(screen.getByRole("button", { name: "Create register" }));
+    fireEvent.click(screen.getByRole("button", { name: "Crear caja" }));
 
     expect(screen.getByTestId("register-name-error")).toHaveTextContent(
-      "A cash register name is required."
+      "Ingresá un nombre para la caja."
     );
     expect(onCreate).not.toHaveBeenCalled();
   });
@@ -119,23 +119,25 @@ describe("RegisterPanel create form", () => {
   it("sends the trimmed name alone and clears the field after a confirmed create", async () => {
     const { onCreate } = renderPanel();
 
-    fireEvent.change(screen.getByLabelText("Register name"), {
+    fireEvent.change(screen.getByLabelText("Nombre de la caja"), {
       target: { value: "  Front desk  " },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Create register" }));
+    fireEvent.click(screen.getByRole("button", { name: "Crear caja" }));
 
     expect(onCreate).toHaveBeenCalledWith({ name: "Front desk" });
-    expect(await screen.findByLabelText("Register name")).toHaveValue("");
+    expect(await screen.findByLabelText("Nombre de la caja")).toHaveValue("");
   });
 
   it("keeps the entered name when the API refuses the create", async () => {
     const onCreate = vi.fn((_input: CreateCashRegisterInput) => Promise.reject(new Error("no")));
     renderPanel({ onCreate, createError: new Error("no") });
 
-    fireEvent.change(screen.getByLabelText("Register name"), { target: { value: "Front desk" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create register" }));
+    fireEvent.change(screen.getByLabelText("Nombre de la caja"), {
+      target: { value: "Front desk" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Crear caja" }));
 
-    expect(await screen.findByLabelText("Register name")).toHaveValue("Front desk");
+    expect(await screen.findByLabelText("Nombre de la caja")).toHaveValue("Front desk");
   });
 
   it("surfaces the duplicate-name 409 as its own outcome", () => {
@@ -144,7 +146,7 @@ describe("RegisterPanel create form", () => {
     });
 
     expect(screen.getByTestId("register-create-error")).toHaveTextContent(
-      "A cash register with this name already exists"
+      "Ya existe una caja con este nombre"
     );
   });
 
@@ -158,19 +160,19 @@ describe("RegisterPanel create form", () => {
     });
 
     expect(screen.getByTestId("register-create-error")).toHaveTextContent(
-      "The request was rejected as invalid"
+      "Revisá los datos de la operación"
     );
   });
 
   it("surfaces the permission and entitlement refusals distinctly", () => {
     renderPanel({ createError: new ApiRequestError("FORBIDDEN", "Access denied.", 403) });
-    expect(screen.getByTestId("register-create-error")).toHaveTextContent("Permission denied");
+    expect(screen.getByTestId("register-create-error")).toHaveTextContent("Sin permiso");
   });
 
   it("blocks the field and relabels the button while the create is in flight", () => {
     renderPanel({ isCreating: true });
 
-    expect(screen.getByLabelText("Register name")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Creating register..." })).toBeDisabled();
+    expect(screen.getByLabelText("Nombre de la caja")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Creando caja…" })).toBeDisabled();
   });
 });

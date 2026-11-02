@@ -4,6 +4,70 @@ All notable product changes will be documented here.
 
 ## Unreleased
 
+- **UX-034: intentos de Caja y fechas v1.** Comandos y selección bloqueados
+  mientras el resultado esté pendiente/incierto; replay explícito con el mismo
+  body/key para movimientos y lectura por ID para cierre. Salida advertida, sin
+  reenvíos automáticos o cancelación implícita. Fechas/horas es-PY en la zona
+  fija v1; wire y ledger intactos. Límites de durabilidad y evidencia en QA.
+
+- **UX-033: formularios y mensajes de Caja.** Español, entrada es-PY exacta
+  y revisión explícita de apertura, movimiento y cierre. Errores privados
+  sanitizados, cancelación sin comando y clave de movimiento conservada tras
+  rechazo. Wire, cálculos y ledger intactos. Paneles por sesión con identidad
+  React propia. Evidencia dirigida y límites en QA UX-033.
+
+- **UX-032: importes de lectura de Caja en es-PY.**
+  Agrupación y coma decimal exactas, signos de faltante/sobrante preservados y
+  descripción de diferencia en español. Sin cambio de input, wire o comandos.
+
+- **UX-031: protección del carrito POS.** Creación incierta
+  bloquea edición/reenvío y conserva la copia local. Salida por enlace requiere
+  confirmación y se bloquea durante comando pendiente; beforeunload advierte.
+  Sin cancelación backend, nueva idempotencia o recuperación tras recarga.
+
+- **UX-030: contexto y retorno de atención.** POS verifica cita/paciente,
+  ofrece volver a la consulta exacta con o sin cita y recupera lecturas fallidas
+  mediante GET explícito. Acciones bloqueadas durante revalidación; sugerencia
+  exige servicio activo actual y clic. Navegación sin efectos y vínculos
+  explícitos preservados. 406 pruebas (Agenda con runtime actualizado ya instalado) y lane real 8/8;
+  límites y TD-071/072 en QA.
+
+- **UX-029: experiencia staff de Catálogo.** Alta, edición y detalle en español,
+  errores accesibles, foco y protección de salida. Precio y umbral con entrada
+  es-PY y precisión exacta, conservando moneda y omisión/null; comandos inciertos
+  o denegados bloqueados sin reenvío automático. Guardar sin cambios conserva el
+  registro y su auditoría en lugar de devolver un falso 404. Sin cálculos o
+  movimientos nuevos. Pruebas legadas de consumidores alineadas con su UI
+  existente (TD-070); evidencia y límites en QA UX-029.
+
+- **UX-028: identidad staff de Pacientes.** Alta/edición en español, validación
+  accesible y salida con confirmación. Catálogo/clientes con estados claros;
+  fecha seleccionada legible en es-PY. Errores privados sanitizados y bloqueo de
+  comandos inciertos/denegados, sin retry automático. Lecturas fallidas no
+  habilitan controles hijos. Conserva creación atómica, principal único,
+  contratos, permisos y clínica; evidencia y límites en QA UX-028.
+
+- **UX-027: experiencia staff de Clientes.** Alta, edición, detalle y
+  formularios de direcciones/contactos en español; etiquetas y errores
+  accesibles, foco, protección de salida y layout móvil adaptable. Errores
+  sanitizados, pendiente sin doble envío y resultado incierto bloqueado.
+  Contratos, permisos y semántica de campos preservados; sin nuevas reglas de
+  contacto o recuperación durable. Validación y límites en QA UX-027.
+
+- **TD-068: expectativas clínicas de localización actualizadas.** Pruebas de
+  vacunas/desparasitación alineadas con etiquetas y mensajes existentes y fechas
+  es-PY; mismos 60 escenarios, todos aprobados, sin cambio de
+  producto/contratos. Lint dirigido y tipos web aprobados.
+
+- **UX-026 / DEC-085: guardias clínicas obligatorias preproductivas.** POST de
+  tratamientos/estudios/pesos requiere UUID de idempotencia; PUT requiere
+  versión original y motivo no vacío, hasta 2000. API, aplicación y BFF rechazan
+  omisiones o valores inválidos antes de efectos. Consumidores/fixtures
+  actualizados; replay, CAS, historial y recuperación preservados. Peso
+  confirmado sigue GET-only y los históricos sin motivo/unidad conservan su
+  presentación. Sin migraciones nuevas, purga, dependencias, commit/push o
+  despliegue. Evidencia en QA UX-026.
+
 - **UX-025: navegación staff sin suspensión global redundante.** Se retira la
   barrera global loading.tsx y se conservan indicadores/cargas cliente, auth,
   branding/CSP y documento de recuperación. Reproducción fría del bloqueo y dos

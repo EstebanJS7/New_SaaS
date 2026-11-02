@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import {
   ApiRequestError,
   CASH_SESSION_NOT_OPEN_MESSAGE,
@@ -59,20 +59,20 @@ describe("ClosePanel states", () => {
     renderPanel({ session: null });
 
     expect(screen.getByTestId("close-no-session")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Counted amount")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Importe contado")).not.toBeInTheDocument();
   });
 
   it("labels the counted amount visibly", () => {
     renderPanel();
 
-    expect(screen.getByLabelText("Counted amount")).toHaveValue("");
+    expect(screen.getByLabelText("Importe contado")).toHaveValue("");
   });
 
   it("shows a closed session's stored close result instead of the form", () => {
     renderPanel({ session: CLOSED_SESSION });
 
     expect(screen.getByTestId("close-outcome")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Counted amount")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Importe contado")).not.toBeInTheDocument();
   });
 });
 
@@ -80,15 +80,15 @@ describe("ClosePanel form", () => {
   it("requires an exact non-negative counted amount", () => {
     const { onClose } = renderPanel();
 
-    fireEvent.click(screen.getByRole("button", { name: "Close session" }));
+    clickCashAction("Cerrar sesión");
     expect(screen.getByTestId("close-validation-error")).toHaveTextContent(
-      "A counted amount is required."
+      "Ingresá el importe contado."
     );
 
-    fireEvent.change(screen.getByLabelText("Counted amount"), { target: { value: "-1.00" } });
-    fireEvent.click(screen.getByRole("button", { name: "Close session" }));
+    fireEvent.change(screen.getByLabelText("Importe contado"), { target: { value: "-1,00" } });
+    clickCashAction("Cerrar sesión");
     expect(screen.getByTestId("close-validation-error")).toHaveTextContent(
-      "The counted amount must be an exact non-negative decimal with at most 2 decimals."
+      "Ingresá un importe contado no negativo con hasta dos decimales, usando coma decimal."
     );
 
     expect(onClose).not.toHaveBeenCalled();
@@ -97,18 +97,18 @@ describe("ClosePanel form", () => {
   it("sends the counted amount alone and clears it after a confirmed close", async () => {
     const { onClose } = renderPanel();
 
-    fireEvent.change(screen.getByLabelText("Counted amount"), { target: { value: "498500.00" } });
-    fireEvent.click(screen.getByRole("button", { name: "Close session" }));
+    fireEvent.change(screen.getByLabelText("Importe contado"), { target: { value: "498500,00" } });
+    clickCashAction("Cerrar sesión");
 
     expect(onClose).toHaveBeenCalledWith({ countedAmount: "498500.00" });
-    expect(await screen.findByLabelText("Counted amount")).toHaveValue("");
+    expect(await screen.findByLabelText("Importe contado")).toHaveValue("");
   });
 
   it("relabels the button and blocks the field while the close is in flight", () => {
     renderPanel({ isClosing: true });
 
-    expect(screen.getByRole("button", { name: "Closing session..." })).toBeDisabled();
-    expect(screen.getByLabelText("Counted amount")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cerrando sesión…" })).toBeDisabled();
+    expect(screen.getByLabelText("Importe contado")).toBeDisabled();
   });
 });
 
@@ -116,18 +116,18 @@ describe("ClosePanel outcome", () => {
   it("shows the three amounts the close returned", () => {
     renderPanel({ session: CLOSED_SESSION });
 
-    expect(screen.getByTestId("close-expected")).toHaveTextContent("500,000.00");
-    expect(screen.getByTestId("close-counted")).toHaveTextContent("498,500.00");
+    expect(screen.getByTestId("close-expected")).toHaveTextContent("500.000");
+    expect(screen.getByTestId("close-counted")).toHaveTextContent("498.500");
   });
 
   it("renders a short drawer with an explicit minus sign and never as an error", () => {
     renderPanel({ session: CLOSED_SESSION });
 
     const difference = screen.getByTestId("close-difference");
-    expect(difference).toHaveTextContent("-1,500.00");
+    expect(difference).toHaveTextContent("-1.500");
     expect(difference.className).not.toMatch(/destructive/);
     expect(screen.getByTestId("close-outcome")).toHaveAttribute("data-outcome", "SHORT");
-    expect(screen.getByTestId("close-difference-note")).toHaveTextContent("Short by 1,500.00");
+    expect(screen.getByTestId("close-difference-note")).toHaveTextContent("Faltante de 1.500");
   });
 
   it("renders an over drawer with an explicit plus sign", () => {
@@ -140,10 +140,10 @@ describe("ClosePanel outcome", () => {
     });
 
     const difference = screen.getByTestId("close-difference");
-    expect(difference).toHaveTextContent("+1,500.00");
+    expect(difference).toHaveTextContent("+1.500");
     expect(difference.className).not.toMatch(/destructive/);
     expect(screen.getByTestId("close-outcome")).toHaveAttribute("data-outcome", "OVER");
-    expect(screen.getByTestId("close-difference-note")).toHaveTextContent("Over by 1,500.00");
+    expect(screen.getByTestId("close-difference-note")).toHaveTextContent("Sobrante de 1.500");
   });
 
   it("renders a balanced count without a sign", () => {
@@ -151,9 +151,9 @@ describe("ClosePanel outcome", () => {
       session: { ...CLOSED_SESSION, countedAmount: "500000.00", differenceAmount: "0.00" },
     });
 
-    expect(screen.getByTestId("close-difference")).toHaveTextContent("0.00");
+    expect(screen.getByTestId("close-difference")).toHaveTextContent(/^0$/);
     expect(screen.getByTestId("close-outcome")).toHaveAttribute("data-outcome", "BALANCED");
-    expect(screen.getByTestId("close-difference-note")).toHaveTextContent("Balanced");
+    expect(screen.getByTestId("close-difference-note")).toHaveTextContent("Sin diferencia");
   });
 
   it("states plainly when the API did not report an amount", () => {
@@ -166,9 +166,9 @@ describe("ClosePanel outcome", () => {
       },
     });
 
-    expect(screen.getByTestId("close-expected")).toHaveTextContent("Not reported");
-    expect(screen.getByTestId("close-counted")).toHaveTextContent("Not reported");
-    expect(screen.getByTestId("close-difference")).toHaveTextContent("Not reported");
+    expect(screen.getByTestId("close-expected")).toHaveTextContent("No informado");
+    expect(screen.getByTestId("close-counted")).toHaveTextContent("No informado");
+    expect(screen.getByTestId("close-difference")).toHaveTextContent("No informado");
     expect(screen.queryByTestId("close-difference-note")).not.toBeInTheDocument();
   });
 
@@ -185,15 +185,13 @@ describe("ClosePanel refusals", () => {
       closeError: new ApiRequestError("CONFLICT", CASH_SESSION_NOT_OPEN_MESSAGE, 409),
     });
 
-    expect(screen.getByTestId("close-error")).toHaveTextContent("This cash session is not open");
+    expect(screen.getByTestId("close-error")).toHaveTextContent("Esta sesión no está abierta");
   });
 
   it("surfaces the shared 404", () => {
     renderPanel({ closeError: new ApiRequestError("NOT_FOUND", "x", 404) });
 
-    expect(screen.getByTestId("close-error")).toHaveTextContent(
-      "Cash register or session not found"
-    );
+    expect(screen.getByTestId("close-error")).toHaveTextContent("No encontramos la caja o sesión");
   });
 
   it("surfaces the stable 400 validation refusal", () => {
@@ -201,14 +199,37 @@ describe("ClosePanel refusals", () => {
       closeError: new ApiRequestError("VALIDATION_FAILED", "Invalid cash session close body.", 400),
     });
 
-    expect(screen.getByTestId("close-error")).toHaveTextContent(
-      "The request was rejected as invalid"
-    );
+    expect(screen.getByTestId("close-error")).toHaveTextContent("Revisá los datos de la operación");
   });
 
   it("surfaces the permission refusal", () => {
     renderPanel({ closeError: new ApiRequestError("FORBIDDEN", "Access denied.", 403) });
 
-    expect(screen.getByTestId("close-error")).toHaveTextContent("Permission denied");
+    expect(screen.getByTestId("close-error")).toHaveTextContent("Sin permiso");
   });
 });
+
+beforeAll(() => {
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value: function (this: HTMLDialogElement) {
+      this.open = true;
+    },
+  });
+  Object.defineProperty(HTMLDialogElement.prototype, "close", {
+    configurable: true,
+    value: function (this: HTMLDialogElement) {
+      this.open = false;
+    },
+  });
+});
+function clickCashAction(name: string): void {
+  fireEvent.click(screen.getByRole("button", { name }));
+  const dialog = screen.queryByRole("dialog");
+  const confirm: Record<string, string> = {
+    "Abrir sesión": "Confirmar apertura",
+    "Registrar movimiento": "Confirmar movimiento",
+    "Cerrar sesión": "Confirmar cierre",
+  };
+  if (dialog) fireEvent.click(within(dialog).getByRole("button", { name: confirm[name] }));
+}

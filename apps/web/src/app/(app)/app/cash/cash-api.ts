@@ -445,9 +445,9 @@ export function isCashIdempotencyKeyConflict(error: Error): boolean {
 }
 
 /**
- * True when the request never reached the API: a fetch rejection or any other
- * non-`ApiRequestError` failure. Rendered as a transport error so it is never
- * conflated with a refusal the API actually produced.
+ * True when no API refusal was received: a fetch rejection or any other
+ * non-`ApiRequestError` failure. It cannot establish whether the server committed;
+ * render an unconfirmed result rather than an authoritative rejection.
  */
 export function isCashTransportError(error: Error): boolean {
   return !(error instanceof ApiRequestError);
@@ -457,24 +457,28 @@ export function isCashTransportError(error: Error): boolean {
  * Maps the stable cash error contract to staff-facing UX copy.
  *
  * These messages are UX-only; the backend still enforces every gate. Every
- * unmapped code falls through to the server message — which the cash API keeps
- * value-free — instead of inventing a cause, and a bare transport failure gets
- * its own copy rather than a raw browser string.
+ * unknown response uses safe generic copy. Stable wire messages remain intact
+ * for conflict classifiers; they are never translated inside the transport.
  */
 export function userFacingCashError(error: Error): string {
+  if (isCashRegisterNameConflict(error)) return "Ya existe una caja con este nombre.";
+  if (isCashSessionAlreadyOpen(error)) return "Esta caja ya tiene una sesión abierta.";
+  if (isCashSessionNotOpen(error)) return "Esta sesión no está abierta.";
+  if (isCashIdempotencyKeyConflict(error))
+    return "El intento enviado corresponde a otro movimiento. Revisá su estado; no lo reemplaces por un intento nuevo.";
   if (!(error instanceof ApiRequestError)) {
-    return "The request could not reach the server. Check your connection and try again.";
+    return "No pudimos confirmar el resultado. Revisá el estado antes de volver a enviar.";
   }
   switch (error.code) {
     case "UNAUTHENTICATED":
-      return "You must be signed in to use the cash register.";
+      return "Iniciá sesión para usar Caja.";
     case "FORBIDDEN":
-      return "You do not have permission to manage cash registers.";
+      return "No tenés permiso para gestionar Caja.";
     case "FEATURE_NOT_ENTITLED":
-      return "Cash features are not enabled for this tenant.";
+      return "Caja no está habilitada para esta organización.";
     case "NOT_FOUND":
-      return "Cash register or session not found.";
+      return "No encontramos la caja o sesión.";
     default:
-      return error.message;
+      return "No pudimos completar la operación. Revisá los datos y el estado antes de volver a enviar.";
   }
 }

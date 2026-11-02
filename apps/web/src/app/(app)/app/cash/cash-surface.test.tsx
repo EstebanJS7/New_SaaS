@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+import { beforeAll, afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { CashMovement, CashRegister, CashSession } from "./cash-api";
 import { CashSurface } from "./cash-surface";
@@ -115,8 +116,8 @@ function renderSurface(): void {
 }
 
 async function selectFirstSession(): Promise<void> {
-  fireEvent.click(await screen.findByRole("button", { name: "Select session" }));
-  await screen.findByLabelText("Counted amount");
+  fireEvent.click(await screen.findByRole("button", { name: "Seleccionar sesión" }));
+  await screen.findByLabelText("Importe contado");
 }
 
 describe("CashSurface reads", () => {
@@ -133,7 +134,7 @@ describe("CashSurface reads", () => {
     renderSurface();
 
     expect(await screen.findAllByText("Front desk")).not.toHaveLength(0);
-    expect(await screen.findByText(/Open session · register #55555555/)).toBeInTheDocument();
+    expect(await screen.findByText(/Sesión abierta · caja #55555555/)).toBeInTheDocument();
 
     const urls = typedCalls(fetchMock).map((call) => resolveUrl(call[0]));
     expect(urls).toContain("/api/cash/registers");
@@ -146,9 +147,9 @@ describe("CashSurface reads", () => {
     });
 
     renderSurface();
-    await screen.findByText(/Open session/);
+    await screen.findByText(/Sesión abierta/);
 
-    fireEvent.change(screen.getByLabelText("Status filter"), { target: { value: "OPEN" } });
+    fireEvent.change(screen.getByLabelText("Filtrar por estado"), { target: { value: "OPEN" } });
 
     await waitFor(() => {
       expect(typedCalls(fetchMock).map((call) => resolveUrl(call[0]))).toContain(
@@ -165,7 +166,7 @@ describe("CashSurface reads", () => {
 
     renderSurface();
 
-    expect(await screen.findByTestId("registers-error")).toHaveTextContent("Permission denied");
+    expect(await screen.findByTestId("registers-error")).toHaveTextContent("Sin permiso");
   });
 
   it("hides the workspace when the tenant lacks the cash capability", async () => {
@@ -182,11 +183,11 @@ describe("CashSurface reads", () => {
     renderSurface();
 
     expect(await screen.findByTestId("cash-entitlement-denied")).toHaveTextContent(
-      "Cash features are not enabled for this tenant"
+      "Caja no está habilitada para esta organización"
     );
     // The UX gate hides the surface; the backend remains the authority.
-    expect(screen.queryByLabelText("Register name")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Status filter")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Nombre de la caja")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Filtrar por estado")).not.toBeInTheDocument();
   });
 });
 
@@ -205,10 +206,12 @@ describe("CashSurface commands", () => {
     renderSurface();
     await screen.findByTestId("registers-empty");
 
-    fireEvent.change(screen.getByLabelText("Register name"), { target: { value: "Front desk" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create register" }));
+    fireEvent.change(screen.getByLabelText("Nombre de la caja"), {
+      target: { value: "Front desk" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Crear caja" }));
 
-    expect(await screen.findByTestId("register-created")).toHaveTextContent("Register created");
+    expect(await screen.findByTestId("register-created")).toHaveTextContent("Caja creada");
 
     const post = callsTo(fetchMock, "/api/cash/registers").find(
       (call) => call[1]?.method === "POST"
@@ -232,21 +235,21 @@ describe("CashSurface commands", () => {
     });
 
     renderSurface();
-    const selectButtons = await screen.findAllByRole("button", { name: "Select session" });
+    const selectButtons = await screen.findAllByRole("button", { name: "Seleccionar sesión" });
     fireEvent.click(selectButtons[0]);
 
     // Values entered for the FIRST session must not survive a switch to the
     // second: a carried counted amount would be submitted with the NEW session
     // id, and a carried key would be replayed against the wrong movement.
-    fireEvent.change(await screen.findByLabelText("Counted amount"), {
-      target: { value: "498500.00" },
+    fireEvent.change(await screen.findByLabelText("Importe contado"), {
+      target: { value: "498500,00" },
     });
-    expect(screen.getByLabelText("Counted amount")).toHaveValue("498500.00");
+    expect(screen.getByLabelText("Importe contado")).toHaveValue("498500,00");
 
     fireEvent.click(selectButtons[1]);
 
     await waitFor(() => {
-      expect(screen.getByLabelText("Counted amount")).toHaveValue("");
+      expect(screen.getByLabelText("Importe contado")).toHaveValue("");
     });
   });
 
@@ -261,14 +264,14 @@ describe("CashSurface commands", () => {
     renderSurface();
     await screen.findByRole("option", { name: "Front desk" });
 
-    fireEvent.change(screen.getByLabelText("Register"), { target: { value: REGISTER.id } });
-    fireEvent.change(screen.getByLabelText("Opening amount"), { target: { value: "500000.00" } });
-    fireEvent.click(screen.getByRole("button", { name: "Open session" }));
+    fireEvent.change(screen.getByLabelText("Caja"), { target: { value: REGISTER.id } });
+    fireEvent.change(screen.getByLabelText("Importe inicial"), { target: { value: "500000,00" } });
+    clickCashAction("Abrir sesión");
 
-    expect(await screen.findByTestId("session-opened")).toHaveTextContent("Session opened");
+    expect(await screen.findByTestId("session-opened")).toHaveTextContent("Sesión abierta");
     // The opened session is selected: the ledger is read for it and the close
     // form becomes available.
-    expect(await screen.findByLabelText("Counted amount")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Importe contado")).toBeInTheDocument();
 
     const post = callsTo(fetchMock, "/api/cash/sessions").find(
       (call) => call[1]?.method === "POST"
@@ -297,10 +300,12 @@ describe("CashSurface commands", () => {
     renderSurface();
     await selectFirstSession();
 
-    fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "1500.00" } });
-    fireEvent.click(screen.getByRole("button", { name: "Record movement" }));
+    fireEvent.change(screen.getByLabelText("Importe"), { target: { value: "1500,00" } });
+    clickCashAction("Registrar movimiento");
 
-    expect(await screen.findByTestId("movement-created")).toHaveTextContent("Movement recorded");
+    expect(await screen.findByTestId("movement-created")).toHaveTextContent(
+      "Movimiento registrado"
+    );
 
     const post = callsTo(fetchMock, "/api/cash/movements").find(
       (call) => call[1]?.method === "POST"
@@ -329,14 +334,14 @@ describe("CashSurface commands", () => {
     renderSurface();
     await selectFirstSession();
 
-    fireEvent.change(screen.getByLabelText("Counted amount"), { target: { value: "498500.00" } });
-    fireEvent.click(screen.getByRole("button", { name: "Close session" }));
+    fireEvent.change(screen.getByLabelText("Importe contado"), { target: { value: "498500,00" } });
+    clickCashAction("Cerrar sesión");
 
     expect(await screen.findByTestId("close-outcome")).toHaveAttribute("data-outcome", "SHORT");
-    expect(screen.getByTestId("close-expected")).toHaveTextContent("500,000.00");
-    expect(screen.getByTestId("close-counted")).toHaveTextContent("498,500.00");
-    expect(screen.getByTestId("close-difference")).toHaveTextContent("-1,500.00");
-    expect(screen.getByTestId("close-difference-note")).toHaveTextContent("Short by 1,500.00");
+    expect(screen.getByTestId("close-expected")).toHaveTextContent("500.000");
+    expect(screen.getByTestId("close-counted")).toHaveTextContent("498.500");
+    expect(screen.getByTestId("close-difference")).toHaveTextContent("-1.500");
+    expect(screen.getByTestId("close-difference-note")).toHaveTextContent("Faltante de 1.500");
 
     const post = callsTo(fetchMock, "/api/cash/sessions").find((call) =>
       resolveUrl(call[0]).endsWith("/close")
@@ -362,11 +367,11 @@ describe("CashSurface commands", () => {
     renderSurface();
     await selectFirstSession();
 
-    fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "1500.00" } });
-    fireEvent.click(screen.getByRole("button", { name: "Record movement" }));
+    fireEvent.change(screen.getByLabelText("Importe"), { target: { value: "1500,00" } });
+    clickCashAction("Registrar movimiento");
 
     expect(await screen.findByTestId("movement-create-error")).toHaveTextContent(
-      "This cash session is not open"
+      "Esta sesión no está abierta"
     );
     expect(screen.queryByTestId("movement-created")).not.toBeInTheDocument();
   });
@@ -390,3 +395,28 @@ describe("CashSurface commands", () => {
     }
   });
 });
+
+beforeAll(() => {
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value: function (this: HTMLDialogElement) {
+      this.open = true;
+    },
+  });
+  Object.defineProperty(HTMLDialogElement.prototype, "close", {
+    configurable: true,
+    value: function (this: HTMLDialogElement) {
+      this.open = false;
+    },
+  });
+});
+function clickCashAction(name: string): void {
+  fireEvent.click(screen.getByRole("button", { name }));
+  const dialog = screen.queryByRole("dialog");
+  const confirm: Record<string, string> = {
+    "Abrir sesión": "Confirmar apertura",
+    "Registrar movimiento": "Confirmar movimiento",
+    "Cerrar sesión": "Confirmar cierre",
+  };
+  if (dialog) fireEvent.click(within(dialog).getByRole("button", { name: confirm[name] }));
+}

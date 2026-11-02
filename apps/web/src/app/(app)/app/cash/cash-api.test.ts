@@ -253,7 +253,7 @@ describe("cash-api transport contract", () => {
     expect(isCashRegisterNameConflict(error as Error)).toBe(true);
     // The conflict copy never echoes the name back.
     expect((error as ApiRequestError).message).not.toContain("Front desk");
-    expect(userFacingCashError(error as Error)).toBe(CASH_REGISTER_NAME_CONFLICT_MESSAGE);
+    expect(userFacingCashError(error as Error)).toBe("Ya existe una caja con este nombre.");
   });
 
   it("distinguishes an already-open register from a duplicate name", () => {
@@ -306,25 +306,25 @@ describe("cash-api transport contract", () => {
 
   it("maps not-found, entitlement, permission and transport failures to distinct copy", () => {
     expect(userFacingCashError(new ApiRequestError("FORBIDDEN", "Access denied.", 403))).toBe(
-      "You do not have permission to manage cash registers."
+      "No tenés permiso para gestionar Caja."
     );
     expect(
       userFacingCashError(
         new ApiRequestError("FEATURE_NOT_ENTITLED", CASH_FEATURE_NOT_ENTITLED_MESSAGE, 403)
       )
-    ).toBe("Cash features are not enabled for this tenant.");
+    ).toBe("Caja no está habilitada para esta organización.");
     expect(
       userFacingCashError(new ApiRequestError("NOT_FOUND", "Resource was not found.", 404))
-    ).toBe("Cash register or session not found.");
+    ).toBe("No encontramos la caja o sesión.");
     expect(
       userFacingCashError(new ApiRequestError("UNAUTHENTICATED", "Authentication required.", 401))
-    ).toBe("You must be signed in to use the cash register.");
+    ).toBe("Iniciá sesión para usar Caja.");
     expect(userFacingCashError(new TypeError("Failed to fetch"))).toBe(
-      "The request could not reach the server. Check your connection and try again."
+      "No pudimos confirmar el resultado. Revisá el estado antes de volver a enviar."
     );
-    // An unmapped code keeps the server message instead of inventing a cause.
+    // Unknown private text is not shown and does not invent a cause.
     expect(userFacingCashError(new ApiRequestError("VALIDATION_FAILED", "Bad body.", 400))).toBe(
-      "Bad body."
+      "No pudimos completar la operación. Revisá los datos y el estado antes de volver a enviar."
     );
   });
 
@@ -354,7 +354,9 @@ describe("cash-api transport contract", () => {
 
     expect((error as ApiRequestError).code).toBe("UNKNOWN");
     expect((error as ApiRequestError).status).toBe(500);
-    expect(userFacingCashError(error as Error)).toBe("Request failed (500)");
+    expect(userFacingCashError(error as Error)).toBe(
+      "No pudimos completar la operación. Revisá los datos y el estado antes de volver a enviar."
+    );
   });
 
   it("never writes a cash payload to the console", async () => {

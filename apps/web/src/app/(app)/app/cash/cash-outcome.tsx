@@ -34,36 +34,36 @@ import {
 /** The heading for a refused cash request, by its stable outcome. */
 export function cashErrorTitle(error: Error): string {
   if (isCashNotEntitled(error)) {
-    return "Cash features are not enabled for this tenant";
+    return "Caja no está habilitada para esta organización";
   }
   if (isCashPermissionDenied(error)) {
-    return "Permission denied";
+    return "Sin permiso";
   }
   if (isCashNotFound(error)) {
-    return "Cash register or session not found";
+    return "No encontramos la caja o sesión";
   }
   if (isCashRegisterNameConflict(error)) {
-    return "A cash register with this name already exists";
+    return "Ya existe una caja con este nombre";
   }
   if (isCashSessionAlreadyOpen(error)) {
-    return "This cash register already has an open session";
+    return "Esta caja ya tiene una sesión abierta";
   }
   if (isCashSessionNotOpen(error)) {
-    return "This cash session is not open";
+    return "Esta sesión no está abierta";
   }
   if (isCashIdempotencyKeyConflict(error)) {
-    return "This idempotency key was already used for a different request";
+    return "El intento enviado corresponde a otro movimiento";
   }
   if (isCashConflict(error)) {
-    return "The API refused the request";
+    return "La operación fue rechazada";
   }
   if (error instanceof ApiRequestError && error.status === 400) {
-    return "The request was rejected as invalid";
+    return "Revisá los datos de la operación";
   }
   if (isCashTransportError(error)) {
-    return "Could not reach the server";
+    return "No pudimos confirmar el resultado";
   }
-  return "The request failed";
+  return "No pudimos completar la operación";
 }
 
 interface CashErrorAlertProps {

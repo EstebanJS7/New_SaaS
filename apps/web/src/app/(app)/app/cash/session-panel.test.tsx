@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import {
   ApiRequestError,
   CASH_SESSION_ALREADY_OPEN_MESSAGE,
@@ -81,14 +81,14 @@ describe("SessionPanel states", () => {
   it("shows a loading state before the API answers", () => {
     renderPanel({ isLoading: true });
 
-    expect(screen.getByTestId("sessions-loading")).toHaveTextContent("Loading cash sessions...");
+    expect(screen.getByTestId("sessions-loading")).toHaveTextContent("Cargando sesiones…");
   });
 
   it("shows an empty state when no session matches the filter", () => {
     renderPanel();
 
     expect(screen.getByTestId("sessions-empty")).toHaveTextContent(
-      "No sessions match this filter."
+      "No hay sesiones para este filtro."
     );
   });
 
@@ -96,23 +96,23 @@ describe("SessionPanel states", () => {
     renderPanel({ loadError: new ApiRequestError("NOT_FOUND", "x", 404) });
 
     expect(screen.getByTestId("sessions-error")).toHaveTextContent(
-      "Cash register or session not found"
+      "No encontramos la caja o sesión"
     );
   });
 
   it("lists the API's sessions with their status and opening amount", () => {
     renderPanel({ sessions: [SESSION] });
 
-    expect(screen.getByText(/Open session · register #55555555/)).toBeInTheDocument();
-    expect(screen.getByText(/Opening 500,000.00/)).toBeInTheDocument();
+    expect(screen.getByText(/Sesión abierta · caja #55555555/)).toBeInTheDocument();
+    expect(screen.getByText(/Inicial 500\.000/)).toBeInTheDocument();
   });
 
   it("shows a success state only from the session the API opened", () => {
     renderPanel({ opened: SESSION });
 
     const status = screen.getByTestId("session-opened");
-    expect(status).toHaveTextContent("Session opened");
-    expect(status).toHaveTextContent("opening amount of 500,000.00");
+    expect(status).toHaveTextContent("Sesión abierta");
+    expect(status).toHaveTextContent("importe inicial de 500.000");
   });
 });
 
@@ -120,11 +120,11 @@ describe("SessionPanel filter and selection", () => {
   it("labels the status filter visibly and reports a change", () => {
     const { onStatusFilterChange } = renderPanel();
 
-    const select = screen.getByLabelText("Status filter");
+    const select = screen.getByLabelText("Filtrar por estado");
     expect([...select.querySelectorAll("option")].map((option) => option.textContent)).toEqual([
-      "All statuses",
-      "Open",
-      "Closed",
+      "Todos los estados",
+      "Abierta",
+      "Cerrada",
     ]);
 
     fireEvent.change(select, { target: { value: "OPEN" } });
@@ -134,7 +134,7 @@ describe("SessionPanel filter and selection", () => {
   it("selects a session for the movement and close panels", () => {
     const { onSelectSession } = renderPanel({ sessions: [SESSION] });
 
-    fireEvent.click(screen.getByRole("button", { name: "Select session" }));
+    fireEvent.click(screen.getByRole("button", { name: "Seleccionar sesión" }));
 
     expect(onSelectSession).toHaveBeenCalledWith(SESSION);
   });
@@ -142,7 +142,7 @@ describe("SessionPanel filter and selection", () => {
   it("marks the already-selected session", () => {
     renderPanel({ sessions: [SESSION], selectedSessionId: SESSION.id });
 
-    expect(screen.getByRole("button", { name: "Selected" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Seleccionada" })).toHaveAttribute(
       "aria-pressed",
       "true"
     );
@@ -153,18 +153,18 @@ describe("SessionPanel open form", () => {
   it("labels both fields visibly", () => {
     renderPanel();
 
-    expect(screen.getByLabelText("Register")).toBeInTheDocument();
-    expect(screen.getByLabelText("Opening amount")).toHaveValue("");
+    expect(screen.getByLabelText("Caja")).toBeInTheDocument();
+    expect(screen.getByLabelText("Importe inicial")).toHaveValue("");
   });
 
   it("requires a register before opening", () => {
     const { onOpen } = renderPanel();
 
-    fireEvent.change(screen.getByLabelText("Opening amount"), { target: { value: "0.00" } });
-    fireEvent.click(screen.getByRole("button", { name: "Open session" }));
+    fireEvent.change(screen.getByLabelText("Importe inicial"), { target: { value: "0,00" } });
+    clickCashAction("Abrir sesión");
 
     expect(screen.getByTestId("session-open-validation-error")).toHaveTextContent(
-      "Select the register to open the session for."
+      "Elegí la caja para abrir la sesión."
     );
     expect(onOpen).not.toHaveBeenCalled();
   });
@@ -172,12 +172,12 @@ describe("SessionPanel open form", () => {
   it("requires an exact non-negative opening amount", () => {
     const { onOpen } = renderPanel();
 
-    fireEvent.change(screen.getByLabelText("Register"), { target: { value: REGISTER.id } });
-    fireEvent.change(screen.getByLabelText("Opening amount"), { target: { value: "-1.00" } });
-    fireEvent.click(screen.getByRole("button", { name: "Open session" }));
+    fireEvent.change(screen.getByLabelText("Caja"), { target: { value: REGISTER.id } });
+    fireEvent.change(screen.getByLabelText("Importe inicial"), { target: { value: "-1,00" } });
+    clickCashAction("Abrir sesión");
 
     expect(screen.getByTestId("session-open-validation-error")).toHaveTextContent(
-      "The opening amount must be an exact non-negative decimal with at most 2 decimals."
+      "Ingresá un importe inicial no negativo con hasta dos decimales, usando coma decimal."
     );
     expect(onOpen).not.toHaveBeenCalled();
   });
@@ -185,25 +185,25 @@ describe("SessionPanel open form", () => {
   it("sends the register and the opening amount alone", async () => {
     const { onOpen } = renderPanel();
 
-    fireEvent.change(screen.getByLabelText("Register"), { target: { value: REGISTER.id } });
-    fireEvent.change(screen.getByLabelText("Opening amount"), { target: { value: "500000.00" } });
-    fireEvent.click(screen.getByRole("button", { name: "Open session" }));
+    fireEvent.change(screen.getByLabelText("Caja"), { target: { value: REGISTER.id } });
+    fireEvent.change(screen.getByLabelText("Importe inicial"), { target: { value: "500000,00" } });
+    clickCashAction("Abrir sesión");
 
     expect(onOpen).toHaveBeenCalledWith({
       registerId: REGISTER.id,
       openingAmount: "500000.00",
     });
-    expect(await screen.findByLabelText("Opening amount")).toHaveValue("");
+    expect(await screen.findByLabelText("Importe inicial")).toHaveValue("");
   });
 
   it("disables the form and explains itself when no register exists yet", () => {
     renderPanel({ registers: [] });
 
     expect(screen.getByTestId("session-no-registers")).toHaveTextContent(
-      "Create a register before opening a session."
+      "Creá una caja antes de abrir una sesión."
     );
-    expect(screen.getByRole("button", { name: "Open session" })).toBeDisabled();
-    expect(screen.getByLabelText("Register")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Abrir sesión" })).toBeDisabled();
+    expect(screen.getByLabelText("Caja")).toBeDisabled();
   });
 
   it("surfaces the already-open 409 as a real state of the tenant", () => {
@@ -212,7 +212,7 @@ describe("SessionPanel open form", () => {
     });
 
     expect(screen.getByTestId("session-open-error")).toHaveTextContent(
-      "This cash register already has an open session"
+      "Esta caja ya tiene una sesión abierta"
     );
   });
 
@@ -222,7 +222,7 @@ describe("SessionPanel open form", () => {
     });
 
     expect(screen.getByTestId("session-open-error")).toHaveTextContent(
-      "Cash register or session not found"
+      "No encontramos la caja o sesión"
     );
   });
 
@@ -231,20 +231,45 @@ describe("SessionPanel open form", () => {
       openError: new ApiRequestError("VALIDATION_FAILED", "Invalid cash session open body.", 400),
     });
     expect(screen.getByTestId("session-open-error")).toHaveTextContent(
-      "The request was rejected as invalid"
+      "Revisá los datos de la operación"
     );
   });
 
   it("surfaces the permission refusal for the open command", () => {
     renderPanel({ openError: new ApiRequestError("FORBIDDEN", "Access denied.", 403) });
 
-    expect(screen.getByTestId("session-open-error")).toHaveTextContent("Permission denied");
+    expect(screen.getByTestId("session-open-error")).toHaveTextContent("Sin permiso");
   });
 
   it("relabels the button and blocks the fields while the open is in flight", () => {
     renderPanel({ isOpening: true });
 
-    expect(screen.getByRole("button", { name: "Opening session..." })).toBeDisabled();
-    expect(screen.getByLabelText("Opening amount")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Abriendo sesión…" })).toBeDisabled();
+    expect(screen.getByLabelText("Importe inicial")).toBeDisabled();
   });
 });
+
+beforeAll(() => {
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value: function (this: HTMLDialogElement) {
+      this.open = true;
+    },
+  });
+  Object.defineProperty(HTMLDialogElement.prototype, "close", {
+    configurable: true,
+    value: function (this: HTMLDialogElement) {
+      this.open = false;
+    },
+  });
+});
+function clickCashAction(name: string): void {
+  fireEvent.click(screen.getByRole("button", { name }));
+  const dialog = screen.queryByRole("dialog");
+  const confirm: Record<string, string> = {
+    "Abrir sesión": "Confirmar apertura",
+    "Registrar movimiento": "Confirmar movimiento",
+    "Cerrar sesión": "Confirmar cierre",
+  };
+  if (dialog) fireEvent.click(within(dialog).getByRole("button", { name: confirm[name] }));
+}

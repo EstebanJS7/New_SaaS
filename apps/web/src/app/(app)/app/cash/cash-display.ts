@@ -1,6 +1,6 @@
 "use client";
 
-import { formatWireAmount } from "../sales/sales-api";
+import { formatEsPyDecimal, formatEsPyInstant, DEFAULT_CLINIC_TIME_ZONE } from "@/lib/es-py-format";
 import type { CashMovementDirection, CashMovementType, CashSessionStatus } from "./cash-api";
 
 /**
@@ -8,9 +8,8 @@ import type { CashMovementDirection, CashMovementType, CashSessionStatus } from 
  *
  * Everything here is display only: it labels the API's pinned lifecycle and
  * movement values and renders the API's exact decimal strings. No amount is ever
- * parsed into a JavaScript number — the money formatter is the sales surface's
- * {@link formatWireAmount}, which groups the digits textually, exactly as the
- * cash client's own header documents.
+ * parsed into a JavaScript number. The shared es-PY formatter groups the exact
+ * digits without changing the wire amount or the editable input contract.
  *
  * The close result's `differenceAmount` is `countedAmount - expectedAmount` and
  * is legitimately NEGATIVE when the drawer is short (DEC-031). This module
@@ -29,24 +28,24 @@ export const cashTextareaClassName =
 
 /** Staff-facing label for each pinned `cash_session_status` value. */
 export const CASH_SESSION_STATUS_LABELS: Record<CashSessionStatus, string> = {
-  OPEN: "Open",
-  CLOSED: "Closed",
+  OPEN: "Abierta",
+  CLOSED: "Cerrada",
 };
 
 /** Staff-facing label for each movement kind the standalone command accepts. */
 export const CASH_MOVEMENT_TYPE_LABELS: Record<CashMovementType, string> = {
-  REFUND: "Refund",
-  INCOME: "Income",
-  EXPENSE: "Expense",
-  WITHDRAWAL: "Withdrawal",
-  DEPOSIT: "Deposit",
-  ADJUSTMENT: "Adjustment",
+  REFUND: "Devolución",
+  INCOME: "Ingreso",
+  EXPENSE: "Gasto",
+  WITHDRAWAL: "Retiro",
+  DEPOSIT: "Depósito",
+  ADJUSTMENT: "Ajuste",
 };
 
 /** Staff-facing label for the explicit `ADJUSTMENT` sign (DEC-030). */
 export const CASH_MOVEMENT_DIRECTION_LABELS: Record<CashMovementDirection, string> = {
-  INCREASE: "Increase expected cash",
-  DECREASE: "Decrease expected cash",
+  INCREASE: "Aumentar efectivo esperado",
+  DECREASE: "Disminuir efectivo esperado",
 };
 
 /** A short, stable fragment of a UUID, shown instead of a full identifier. */
@@ -54,17 +53,17 @@ export function shortId(id: string): string {
   return id.slice(0, 8);
 }
 
-/** The API's `createdAt`/`openedAt` are ISO timestamps; show the UTC date only. */
+/** Instants use the pinned v1 tenant zone, never the browser zone or a UTC slice. */
 export function formatDate(iso: string): string {
-  return iso.slice(0, 10);
+  return formatEsPyInstant(iso, DEFAULT_CLINIC_TIME_ZONE);
 }
 
 /**
  * Renders an exact non-negative wire amount. The amount is never parsed:
- * {@link formatWireAmount} groups the digits textually.
+ * {@link formatEsPyDecimal} groups the digits textually.
  */
 export function formatCashAmount(value: string): string {
-  return formatWireAmount(value);
+  return formatEsPyDecimal(value);
 }
 
 /** Exact signed decimal literal as the close result projects it. */
@@ -112,8 +111,8 @@ export function cashDifferenceOutcome(difference: string): CashDifferenceOutcome
 }
 
 /**
- * Renders an exact signed decimal with its sign made explicit: `-1,500.00` for a
- * short drawer, `+1,500.00` for an over one and `0.00` for a balanced count. The
+ * Renders an exact signed decimal with its sign made explicit: `-1.500` for a
+ * short drawer, `+1.500` for an over one and `0` for a balanced count. The
  * magnitude is grouped textually and never parsed. A literal the wire did not
  * produce is returned unchanged rather than mangled.
  */
@@ -123,9 +122,9 @@ export function formatSignedWireAmount(value: string): string {
     return value;
   }
   if (isZeroMagnitude(parsed.magnitude)) {
-    return formatWireAmount(parsed.magnitude);
+    return formatEsPyDecimal(parsed.magnitude);
   }
-  return `${parsed.negative ? "-" : "+"}${formatWireAmount(parsed.magnitude)}`;
+  return `${parsed.negative ? "-" : "+"}${formatEsPyDecimal(parsed.magnitude)}`;
 }
 
 /**
@@ -136,10 +135,10 @@ export function formatSignedWireAmount(value: string): string {
 export function cashDifferenceLabel(difference: string): string {
   const parsed = parseSignedWireAmount(difference);
   if (parsed === null) {
-    return "Difference unavailable";
+    return "Diferencia no disponible";
   }
   if (isZeroMagnitude(parsed.magnitude)) {
-    return "Balanced";
+    return "Sin diferencia";
   }
-  return `${parsed.negative ? "Short" : "Over"} by ${formatWireAmount(parsed.magnitude)}`;
+  return `${parsed.negative ? "Faltante" : "Sobrante"} de ${formatEsPyDecimal(parsed.magnitude)}`;
 }

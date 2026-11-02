@@ -20,6 +20,7 @@ import { CashErrorAlert } from "./cash-outcome";
 import { cashRegisterNameError } from "./cash-validation";
 
 interface RegisterPanelProps {
+  readonly commandsBlocked?: boolean;
   /** The caller tenant's registers, newest first, as the API returned them. */
   readonly registers: readonly CashRegister[];
   readonly isLoading: boolean;
@@ -42,6 +43,7 @@ interface RegisterPanelProps {
  * failure of the same intent.
  */
 export function RegisterPanel({
+  commandsBlocked = false,
   registers,
   isLoading,
   loadError,
@@ -54,6 +56,7 @@ export function RegisterPanel({
   const [localError, setLocalError] = useState<string | null>(null);
 
   async function submitRegister(): Promise<void> {
+    if (commandsBlocked || isCreating) return;
     const error = cashRegisterNameError(name);
     if (error !== null) {
       setLocalError(error);
@@ -77,22 +80,22 @@ export function RegisterPanel({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Registers</CardTitle>
+        <CardTitle>Cajas</CardTitle>
         <CardDescription>
-          A register is the drawer a session is opened against. Its expected amount is derived from
-          the movement ledger and is never edited here.
+          Cada caja tiene sus propias sesiones. El importe esperado se obtiene de los movimientos y
+          no se edita directamente.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {isLoading ? (
           <p data-testid="registers-loading" className="text-sm text-muted-foreground">
-            Loading cash registers...
+            Cargando cajas…
           </p>
         ) : loadError !== null ? (
           <CashErrorAlert error={loadError} testId="registers-error" />
         ) : registers.length === 0 ? (
           <p data-testid="registers-empty" className="text-sm text-muted-foreground">
-            No cash registers yet. Create one to open a session against it.
+            Todavía no hay cajas. Creá una para abrir una sesión.
           </p>
         ) : (
           <ul className="space-y-2">
@@ -104,11 +107,11 @@ export function RegisterPanel({
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-foreground">{register.name}</p>
                   <p className="text-xs text-muted-foreground">
-                    {`#${shortId(register.id)} · created ${formatDate(register.createdAt)}`}
+                    {`#${shortId(register.id)} · creada ${formatDate(register.createdAt)}`}
                   </p>
                 </div>
                 <span className="shrink-0 text-xs text-muted-foreground">
-                  {register.isActive ? "Active" : "Inactive"}
+                  {register.isActive ? "Activa" : "Inactiva"}
                 </span>
               </li>
             ))}
@@ -121,9 +124,9 @@ export function RegisterPanel({
             data-testid="register-created"
             className="rounded-lg border border-border bg-muted p-4 text-sm"
           >
-            <p className="font-medium text-foreground">Register created</p>
+            <p className="font-medium text-foreground">Caja creada</p>
             <p className="text-muted-foreground">
-              {`"${created.name}" now exists for this tenant. It can be used to open a session.`}
+              {`La caja "${created.name}" fue creada. Ya podés abrir una sesión.`}
             </p>
           </div>
         )}
@@ -135,7 +138,7 @@ export function RegisterPanel({
         <form onSubmit={handleSubmit} className="space-y-3 border-t border-border pt-4">
           <div className="space-y-2">
             <label htmlFor="cash-register-name" className="text-sm font-medium">
-              Register name
+              Nombre de la caja
             </label>
             <input
               id="cash-register-name"
@@ -144,8 +147,8 @@ export function RegisterPanel({
               value={name}
               maxLength={CASH_REGISTER_NAME_MAX_LENGTH}
               onChange={(event) => setName(event.target.value)}
-              disabled={isCreating}
-              placeholder="Front desk"
+              disabled={isCreating || commandsBlocked}
+              placeholder="Recepción"
               className={cashInputClassName}
             />
           </div>
@@ -156,8 +159,8 @@ export function RegisterPanel({
             </p>
           )}
 
-          <Button type="submit" disabled={isCreating}>
-            {isCreating ? "Creating register..." : "Create register"}
+          <Button type="submit" disabled={isCreating || commandsBlocked}>
+            {isCreating ? "Creando caja…" : "Crear caja"}
           </Button>
         </form>
       </CardContent>

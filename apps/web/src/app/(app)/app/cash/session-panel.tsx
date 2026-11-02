@@ -24,6 +24,9 @@ import {
   formatDate,
   shortId,
 } from "./cash-display";
+import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
+import { normalizeCashAmountInput } from "./cash-validation";
+import { userFacingCashError } from "./cash-api";
 import { CashErrorAlert } from "./cash-outcome";
 import { cashOpeningAmountError } from "./cash-validation";
 
@@ -31,6 +34,7 @@ import { cashOpeningAmountError } from "./cash-validation";
 export type CashSessionFilter = CashSessionStatus | "ALL";
 
 interface SessionPanelProps {
+  readonly commandsBlocked?: boolean;
   /** The caller tenant's sessions, newest first, as the API returned them. */
   readonly sessions: readonly CashSession[];
   readonly isLoading: boolean;
@@ -65,6 +69,7 @@ interface SessionPanelProps {
  * status and the tenant are all server-resolved.
  */
 export function SessionPanel({
+  commandsBlocked = false,
   sessions,
   isLoading,
   loadError,
@@ -83,54 +88,50 @@ export function SessionPanel({
   const [openingAmount, setOpeningAmount] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
 
-  const canOpen = registers.length > 0;
+  const [review, setReview] = useState<OpenCashSessionInput | null>(null);
 
-  async function submitOpen(): Promise<void> {
-    if (registerId.length === 0) {
-      setLocalError("Select the register to open the session for.");
-      return;
-    }
-    const amountError = cashOpeningAmountError(openingAmount);
-    if (amountError !== null) {
-      setLocalError(amountError);
-      return;
-    }
-    setLocalError(null);
-    try {
-      await onOpen({ registerId, openingAmount: openingAmount.trim() });
-      setOpeningAmount("");
-    } catch {
-      // The refusal is rendered from `openError`; the entered values are kept so
-      // the operator can correct them without retyping the whole form.
-    }
-  }
+  const canOpen = registers.length > 0;
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault();
-    void submitOpen();
+    if (commandsBlocked || isOpening || review !== null) return;
+    if (registerId.length === 0) {
+      setLocalError("Elegí la caja para abrir la sesión.");
+      return;
+    }
+    const error = cashOpeningAmountError(openingAmount);
+    if (error !== null) {
+      setLocalError(error);
+      return;
+    }
+    const amount = normalizeCashAmountInput(openingAmount);
+    if (amount === null) return;
+    setLocalError(null);
+    setReview({ registerId, openingAmount: amount });
   }
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Sessions</CardTitle>
+        <CardTitle>Sesiones</CardTitle>
         <CardDescription>
-          A session is the accounting window of one register. Only one session may be open per
-          register at a time.
+          Una sesión reúne las operaciones de una caja. Solo puede haber una sesión abierta por
+          caja.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-2">
           <label htmlFor="cash-session-status-filter" className="text-sm font-medium">
-            Status filter
+            Filtrar por estado
           </label>
           <select
             id="cash-session-status-filter"
+            disabled={commandsBlocked}
             value={statusFilter}
             onChange={(event) => onStatusFilterChange(event.target.value as CashSessionFilter)}
             className={cashInputClassName}
           >
-            <option value="ALL">All statuses</option>
+            <option value="ALL">Todos los estados</option>
             {CASH_SESSION_STATUSES.map((status) => (
               <option key={status} value={status}>
                 {CASH_SESSION_STATUS_LABELS[status]}
@@ -141,13 +142,13 @@ export function SessionPanel({
 
         {isLoading ? (
           <p data-testid="sessions-loading" className="text-sm text-muted-foreground">
-            Loading cash sessions...
+            Cargando sesiones…
           </p>
         ) : loadError !== null ? (
           <CashErrorAlert error={loadError} testId="sessions-error" />
         ) : sessions.length === 0 ? (
           <p data-testid="sessions-empty" className="text-sm text-muted-foreground">
-            No sessions match this filter.
+            No hay sesiones para este filtro.
           </p>
         ) : (
           <ul className="space-y-2">
@@ -161,10 +162,10 @@ export function SessionPanel({
                 >
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium text-foreground">
-                      {`${CASH_SESSION_STATUS_LABELS[session.status]} session · register #${shortId(session.registerId)}`}
+                      {`Sesión ${CASH_SESSION_STATUS_LABELS[session.status].toLowerCase()} · caja #${shortId(session.registerId)}`}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {`Opening ${formatCashAmount(session.openingAmount)} · opened ${formatDate(session.openedAt)}`}
+                      {`Inicial ${formatCashAmount(session.openingAmount)} · apertura ${formatDate(session.openedAt)}`}
                     </p>
                   </div>
                   <Button
@@ -172,9 +173,10 @@ export function SessionPanel({
                     variant="outline"
                     size="sm"
                     aria-pressed={selected}
+                    disabled={commandsBlocked}
                     onClick={() => onSelectSession(session)}
                   >
-                    {selected ? "Selected" : "Select session"}
+                    {selected ? "Seleccionada" : "Seleccionar sesión"}
                   </Button>
                 </li>
               );
@@ -188,9 +190,9 @@ export function SessionPanel({
             data-testid="session-opened"
             className="rounded-lg border border-border bg-muted p-4 text-sm"
           >
-            <p className="font-medium text-foreground">Session opened</p>
+            <p className="font-medium text-foreground">Sesión abierta</p>
             <p className="text-muted-foreground">
-              {`The API opened a session for register #${shortId(opened.registerId)} with an opening amount of ${formatCashAmount(opened.openingAmount)}. It is selected for movements and close.`}
+              {`Sesión abierta para la caja #${shortId(opened.registerId)}, con importe inicial de ${formatCashAmount(opened.openingAmount)}. Quedó seleccionada para operar.`}
             </p>
           </div>
         )}
@@ -200,16 +202,16 @@ export function SessionPanel({
         <form onSubmit={handleSubmit} className="space-y-3 border-t border-border pt-4">
           <div className="space-y-2">
             <label htmlFor="cash-session-register" className="text-sm font-medium">
-              Register
+              Caja
             </label>
             <select
               id="cash-session-register"
               value={registerId}
               onChange={(event) => setRegisterId(event.target.value)}
-              disabled={isOpening || !canOpen}
+              disabled={isOpening || commandsBlocked || !canOpen}
               className={cashInputClassName}
             >
-              <option value="">Select a register</option>
+              <option value="">Elegí una caja</option>
               {registers.map((register) => (
                 <option key={register.id} value={register.id}>
                   {register.name}
@@ -220,7 +222,7 @@ export function SessionPanel({
 
           <div className="space-y-2">
             <label htmlFor="cash-session-opening-amount" className="text-sm font-medium">
-              Opening amount
+              Importe inicial
             </label>
             <input
               id="cash-session-opening-amount"
@@ -229,21 +231,19 @@ export function SessionPanel({
               autoComplete="off"
               value={openingAmount}
               onChange={(event) => setOpeningAmount(event.target.value)}
-              disabled={isOpening || !canOpen}
-              placeholder="0.00"
+              disabled={isOpening || commandsBlocked || !canOpen}
+              placeholder="0,00"
               className={cashInputClassName}
             />
             <p className="text-xs text-muted-foreground">
-              The opening float of the drawer, as an exact decimal with at most 2 decimals. The API
-              stores it and computes the expected amount from the ledger.
+              Efectivo inicial de la caja. Usá coma para hasta dos decimales y punto para agrupar
+              miles. El importe esperado se calcula a partir de los movimientos.
             </p>
           </div>
 
           {!canOpen && (
             <p data-testid="session-no-registers" className="text-sm text-muted-foreground">
-              {registersLoading
-                ? "Loading registers..."
-                : "Create a register before opening a session."}
+              {registersLoading ? "Cargando cajas…" : "Creá una caja antes de abrir una sesión."}
             </p>
           )}
 
@@ -257,11 +257,37 @@ export function SessionPanel({
             </p>
           )}
 
-          <Button type="submit" disabled={isOpening || !canOpen}>
-            {isOpening ? "Opening session..." : "Open session"}
+          <Button type="submit" disabled={isOpening || commandsBlocked || !canOpen}>
+            {isOpening ? "Abriendo sesión…" : "Abrir sesión"}
           </Button>
         </form>
       </CardContent>
+      <ConfirmActionDialog
+        open={review !== null}
+        onOpenChange={(open) => {
+          if (!open) setReview(null);
+        }}
+        title="Revisar apertura"
+        description="Se abrirá una sesión con el efectivo inicial indicado. Solo puede haber una sesión abierta por caja."
+        confirmLabel="Confirmar apertura"
+        cancelLabel="Volver"
+        pending={isOpening}
+        confirmDisabled={commandsBlocked}
+        errorMessage={openError ? userFacingCashError(openError) : undefined}
+        onConfirm={async () => {
+          if (commandsBlocked || !review || isOpening) return;
+          await onOpen(review);
+          setOpeningAmount("");
+        }}
+      >
+        {review && (
+          <p className="break-words text-sm">
+            {registers.find((row) => row.id === review.registerId)?.name ??
+              `Caja #${shortId(review.registerId)}`}{" "}
+            · Inicial: {formatCashAmount(review.openingAmount)}
+          </p>
+        )}
+      </ConfirmActionDialog>
     </Card>
   );
 }

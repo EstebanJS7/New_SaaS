@@ -28,10 +28,14 @@ import {
   formatDate,
   shortId,
 } from "./cash-display";
+import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
+import { normalizeCashAmountInput } from "./cash-validation";
+import { userFacingCashError } from "./cash-api";
 import { CashErrorAlert } from "./cash-outcome";
 import { cashMovementDraftError, type CashMovementDraft } from "./cash-validation";
 
 interface MovementPanelProps {
+  readonly commandsBlocked?: boolean;
   /** The selected session, or `null` before one is chosen. */
   readonly session: CashSession | null;
   /** The selected session's movements, newest first, as the API returned them. */
@@ -81,6 +85,7 @@ const EMPTY_DRAFT: CashMovementDraft = {
  * double-posts.
  */
 export function MovementPanel({
+  commandsBlocked = false,
   session,
   movements,
   isLoading,
@@ -100,7 +105,11 @@ export function MovementPanel({
     return idempotencyKeyRef.current;
   }
 
-  async function submitMovement(): Promise<void> {
+  const [review, setReview] = useState<CreateCashMovementInput | null>(null);
+
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    if (commandsBlocked || isCreating || review !== null) return;
     if (session === null) {
       return;
     }
@@ -114,7 +123,7 @@ export function MovementPanel({
     const input: CreateCashMovementInput = {
       sessionId: session.id,
       type: draft.type,
-      amount: draft.amount.trim(),
+      amount: normalizeCashAmountInput(draft.amount)!,
       // The reason is omitted only for `INCOME`, where it is optional.
       ...(reason.length > 0 ? { reason } : {}),
       // The direction is sent exactly for `ADJUSTMENT` and never otherwise.
@@ -122,21 +131,14 @@ export function MovementPanel({
         ? { direction: draft.direction as CashMovementDirection }
         : {}),
     };
-    try {
-      await onCreate(input, idempotencyKeyForAttempt());
-      // A confirmed create closes the attempt: the next movement is a new intent
-      // and must not reuse the key that already identified this one.
-      idempotencyKeyRef.current = null;
-      setDraft({ ...EMPTY_DRAFT, type: draft.type });
-    } catch {
-      // The attempt is unresolved: keep the key so a retry replays the stored
-      // movement instead of writing a second one.
-    }
+    setReview(input);
   }
 
-  function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
-    event.preventDefault();
-    void submitMovement();
+  async function submitMovement(): Promise<void> {
+    if (commandsBlocked || !review || isCreating || session?.status !== "OPEN") return;
+    await onCreate(review, idempotencyKeyForAttempt());
+    idempotencyKeyRef.current = null;
+    setDraft({ ...EMPTY_DRAFT, type: draft.type });
   }
 
   function changeType(type: CashMovementType): void {
@@ -152,29 +154,29 @@ export function MovementPanel({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Movements</CardTitle>
+        <CardTitle>Movimientos</CardTitle>
         <CardDescription>
           {session === null
-            ? "Select a session to see its immutable ledger."
-            : `The immutable ledger of the selected session. Amounts are positive; the movement type owns the sign (DEC-030).`}
+            ? "Seleccioná una sesión para consultar sus movimientos."
+            : "Los movimientos registrados no se editan. Ingresá importes positivos; el tipo de movimiento determina si suman o restan efectivo."}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {session === null ? (
           <p data-testid="movements-no-session" className="text-sm text-muted-foreground">
-            Select a session above to view its movements and record a manual one.
+            Seleccioná una sesión para consultar y registrar movimientos.
           </p>
         ) : (
           <>
             {isLoading ? (
               <p data-testid="movements-loading" className="text-sm text-muted-foreground">
-                Loading cash movements...
+                Cargando movimientos…
               </p>
             ) : loadError !== null ? (
               <CashErrorAlert error={loadError} testId="movements-error" />
             ) : movements.length === 0 ? (
               <p data-testid="movements-empty" className="text-sm text-muted-foreground">
-                No movements recorded for this session yet.
+                Todavía no hay movimientos en esta sesión.
               </p>
             ) : (
               <ul className="space-y-2">
@@ -207,9 +209,9 @@ export function MovementPanel({
                 data-testid="movement-created"
                 className="rounded-lg border border-border bg-muted p-4 text-sm"
               >
-                <p className="font-medium text-foreground">Movement recorded</p>
+                <p className="font-medium text-foreground">Movimiento registrado</p>
                 <p className="text-muted-foreground">
-                  {`The API stored this ${CASH_MOVEMENT_TYPE_LABELS[created.type].toLowerCase()} movement of ${formatCashAmount(created.amount)}. The ledger entry is immutable.`}
+                  {`Se registró un movimiento de ${CASH_MOVEMENT_TYPE_LABELS[created.type].toLowerCase()} por ${formatCashAmount(created.amount)}. El registro no se puede editar.`}
                 </p>
               </div>
             )}
@@ -222,13 +224,13 @@ export function MovementPanel({
               <form onSubmit={handleSubmit} className="space-y-3 border-t border-border pt-4">
                 <div className="space-y-2">
                   <label htmlFor="cash-movement-type" className="text-sm font-medium">
-                    Movement type
+                    Tipo de movimiento
                   </label>
                   <select
                     id="cash-movement-type"
                     value={draft.type}
                     onChange={(event) => changeType(event.target.value as CashMovementType)}
-                    disabled={isCreating}
+                    disabled={isCreating || commandsBlocked}
                     className={cashInputClassName}
                   >
                     {CASH_MOVEMENT_TYPES.map((type) => (
@@ -241,7 +243,7 @@ export function MovementPanel({
 
                 <div className="space-y-2">
                   <label htmlFor="cash-movement-amount" className="text-sm font-medium">
-                    Amount
+                    Importe
                   </label>
                   <input
                     id="cash-movement-amount"
@@ -252,19 +254,19 @@ export function MovementPanel({
                     onChange={(event) =>
                       setDraft((previous) => ({ ...previous, amount: event.target.value }))
                     }
-                    disabled={isCreating}
-                    placeholder="0.00"
+                    disabled={isCreating || commandsBlocked}
+                    placeholder="0,00"
                     className={cashInputClassName}
                   />
                   <p className="text-xs text-muted-foreground">
-                    A positive amount; the movement type decides whether expected cash rises or
-                    falls.
+                    Importe mayor que cero, con hasta dos decimales. Usá coma decimal y punto para
+                    los miles; el tipo determina si suma o resta.
                   </p>
                 </div>
 
                 <div className="space-y-2">
                   <label htmlFor="cash-movement-reason" className="text-sm font-medium">
-                    Reason
+                    Motivo
                   </label>
                   <textarea
                     id="cash-movement-reason"
@@ -272,19 +274,19 @@ export function MovementPanel({
                     onChange={(event) =>
                       setDraft((previous) => ({ ...previous, reason: event.target.value }))
                     }
-                    disabled={isCreating}
-                    placeholder="Why the cash moved"
+                    disabled={isCreating || commandsBlocked}
+                    placeholder="Explicá el motivo del movimiento"
                     className={cashTextareaClassName}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Required for every kind except income, where it is optional.
+                    Obligatorio salvo para ingresos, donde es opcional.
                   </p>
                 </div>
 
                 {draft.type === "ADJUSTMENT" && (
                   <div className="space-y-2">
                     <label htmlFor="cash-movement-direction" className="text-sm font-medium">
-                      Adjustment direction
+                      Sentido del ajuste
                     </label>
                     <select
                       id="cash-movement-direction"
@@ -295,10 +297,10 @@ export function MovementPanel({
                           direction: event.target.value as CashMovementDirection | "",
                         }))
                       }
-                      disabled={isCreating}
+                      disabled={isCreating || commandsBlocked}
                       className={cashInputClassName}
                     >
-                      <option value="">Select a direction</option>
+                      <option value="">Elegí el sentido</option>
                       {CASH_MOVEMENT_DIRECTIONS.map((direction) => (
                         <option key={direction} value={direction}>
                           {CASH_MOVEMENT_DIRECTION_LABELS[direction]}
@@ -318,19 +320,44 @@ export function MovementPanel({
                   </p>
                 )}
 
-                <Button type="submit" disabled={isCreating}>
-                  {isCreating ? "Recording movement..." : "Record movement"}
+                <Button type="submit" disabled={isCreating || commandsBlocked}>
+                  {isCreating ? "Registrando movimiento…" : "Registrar movimiento"}
                 </Button>
               </form>
             ) : (
               <p data-testid="movements-session-closed" className="text-sm text-muted-foreground">
-                This session is closed. Its ledger is immutable and no further movement can be
-                recorded against it. Open a new session to record one.
+                Esta sesión está cerrada y conserva sus movimientos. Abrí otra sesión para registrar
+                nuevos movimientos.
               </p>
             )}
           </>
         )}
       </CardContent>
+      <ConfirmActionDialog
+        open={review !== null}
+        onOpenChange={(open) => {
+          if (!open) setReview(null);
+        }}
+        title="Revisar movimiento"
+        description="El movimiento quedará registrado y no podrá editarse. Revisá el tipo, el importe y el motivo antes de confirmar."
+        confirmLabel="Confirmar movimiento"
+        cancelLabel="Volver"
+        pending={isCreating}
+        confirmDisabled={commandsBlocked || session?.status !== "OPEN"}
+        errorMessage={createError ? userFacingCashError(createError) : undefined}
+        onConfirm={submitMovement}
+      >
+        {review && (
+          <div className="space-y-2 break-words text-sm">
+            <p>Sesión #{shortId(review.sessionId)}</p>
+            <p>
+              {CASH_MOVEMENT_TYPE_LABELS[review.type]} · {formatCashAmount(review.amount)}
+            </p>
+            {review.direction && <p>{CASH_MOVEMENT_DIRECTION_LABELS[review.direction]}</p>}
+            {review.reason && <p>Motivo: {review.reason}</p>}
+          </div>
+        )}
+      </ConfirmActionDialog>
     </Card>
   );
 }

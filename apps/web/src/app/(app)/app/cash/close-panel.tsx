@@ -19,10 +19,14 @@ import {
   formatSignedWireAmount,
   shortId,
 } from "./cash-display";
+import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
+import { normalizeCashAmountInput } from "./cash-validation";
+import { userFacingCashError } from "./cash-api";
 import { CashErrorAlert } from "./cash-outcome";
 import { cashCountedAmountError } from "./cash-validation";
 
 interface ClosePanelProps {
+  readonly commandsBlocked?: boolean;
   /** The selected session, or `null` before one is chosen. */
   readonly session: CashSession | null;
   readonly onClose: (input: CloseCashSessionInput) => Promise<void>;
@@ -52,29 +56,29 @@ export function CloseOutcome({ session }: CloseOutcomeProps): JSX.Element {
   return (
     <div data-testid="close-outcome" data-outcome={outcome ?? "UNKNOWN"} className="space-y-3">
       <div>
-        <p className="font-medium text-foreground">Session closed</p>
+        <p className="font-medium text-foreground">Sesión cerrada</p>
         <p className="text-sm text-muted-foreground">
-          {`The API computed these amounts when session #${shortId(session.id)} closed. Closed is terminal: a new session is opened instead of reopening this one.`}
+          {`Importes confirmados al cerrar la sesión #${shortId(session.id)}. Para operar nuevamente, abrí otra sesión.`}
         </p>
       </div>
 
       <dl className="space-y-2 text-sm">
         <div className="flex items-center justify-between gap-4 border-b border-border pb-2">
-          <dt className="text-muted-foreground">Expected amount</dt>
+          <dt className="text-muted-foreground">Importe esperado</dt>
           <dd data-testid="close-expected" className="text-right font-medium text-foreground">
-            {expectedAmount === null ? "Not reported" : formatCashAmount(expectedAmount)}
+            {expectedAmount === null ? "No informado" : formatCashAmount(expectedAmount)}
           </dd>
         </div>
         <div className="flex items-center justify-between gap-4 border-b border-border pb-2">
-          <dt className="text-muted-foreground">Counted amount</dt>
+          <dt className="text-muted-foreground">Importe contado</dt>
           <dd data-testid="close-counted" className="text-right font-medium text-foreground">
-            {countedAmount === null ? "Not reported" : formatCashAmount(countedAmount)}
+            {countedAmount === null ? "No informado" : formatCashAmount(countedAmount)}
           </dd>
         </div>
         <div className="flex items-center justify-between gap-4">
-          <dt className="text-muted-foreground">Difference</dt>
+          <dt className="text-muted-foreground">Diferencia</dt>
           <dd data-testid="close-difference" className="text-right font-medium text-foreground">
-            {differenceAmount === null ? "Not reported" : formatSignedWireAmount(differenceAmount)}
+            {differenceAmount === null ? "No informado" : formatSignedWireAmount(differenceAmount)}
           </dd>
         </div>
       </dl>
@@ -101,6 +105,7 @@ export function CloseOutcome({ session }: CloseOutcomeProps): JSX.Element {
  * retryable failure, and the panel says so instead of inviting a retry.
  */
 export function ClosePanel({
+  commandsBlocked = false,
   session,
   onClose,
   isClosing,
@@ -109,40 +114,34 @@ export function ClosePanel({
   const [countedAmount, setCountedAmount] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
 
-  async function submitClose(): Promise<void> {
+  const [review, setReview] = useState<CloseCashSessionInput | null>(null);
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    if (commandsBlocked || isClosing || review !== null || session?.status !== "OPEN") return;
     const error = cashCountedAmountError(countedAmount);
     if (error !== null) {
       setLocalError(error);
       return;
     }
+    const amount = normalizeCashAmountInput(countedAmount);
+    if (amount === null) return;
     setLocalError(null);
-    try {
-      await onClose({ countedAmount: countedAmount.trim() });
-      setCountedAmount("");
-    } catch {
-      // The refusal is rendered from `closeError`; the counted amount is kept so
-      // the operator can correct it instead of retyping it.
-    }
-  }
-
-  function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
-    event.preventDefault();
-    void submitClose();
+    setReview({ countedAmount: amount });
   }
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Close session</CardTitle>
+        <CardTitle>Cerrar sesión</CardTitle>
         <CardDescription>
-          Closing compares the drawer with what the ledger expects. It is a one-way command: a
-          closed session is never reopened.
+          El cierre compara el efectivo contado con el esperado. Una sesión cerrada no se puede
+          reabrir.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {session === null ? (
           <p data-testid="close-no-session" className="text-sm text-muted-foreground">
-            Select a session above to close it.
+            Seleccioná una sesión para cerrarla.
           </p>
         ) : session.status === "CLOSED" ? (
           <CloseOutcome session={session} />
@@ -153,7 +152,7 @@ export function ClosePanel({
             <form onSubmit={handleSubmit} className="space-y-3">
               <div className="space-y-2">
                 <label htmlFor="cash-close-counted-amount" className="text-sm font-medium">
-                  Counted amount
+                  Importe contado
                 </label>
                 <input
                   id="cash-close-counted-amount"
@@ -162,13 +161,13 @@ export function ClosePanel({
                   autoComplete="off"
                   value={countedAmount}
                   onChange={(event) => setCountedAmount(event.target.value)}
-                  disabled={isClosing}
-                  placeholder="0.00"
+                  disabled={isClosing || commandsBlocked}
+                  placeholder="0,00"
                   className={cashInputClassName}
                 />
                 <p className="text-xs text-muted-foreground">
-                  The physical count of the drawer, as an exact decimal with at most 2 decimals. The
-                  API computes the expected amount and the difference.
+                  Efectivo contado en la caja, con hasta dos decimales. Usá coma decimal y punto
+                  para los miles. El servidor calcula el esperado y la diferencia.
                 </p>
               </div>
 
@@ -182,13 +181,37 @@ export function ClosePanel({
                 </p>
               )}
 
-              <Button type="submit" disabled={isClosing}>
-                {isClosing ? "Closing session..." : "Close session"}
+              <Button type="submit" disabled={isClosing || commandsBlocked}>
+                {isClosing ? "Cerrando sesión…" : "Cerrar sesión"}
               </Button>
             </form>
           </>
         )}
       </CardContent>
+      <ConfirmActionDialog
+        open={review !== null}
+        onOpenChange={(open) => {
+          if (!open) setReview(null);
+        }}
+        title="Revisar cierre"
+        description="La sesión quedará cerrada y no podrá reabrirse. El servidor calculará el importe esperado y la diferencia."
+        confirmLabel="Confirmar cierre"
+        cancelLabel="Volver"
+        pending={isClosing}
+        confirmDisabled={commandsBlocked || session?.status !== "OPEN"}
+        errorMessage={closeError ? userFacingCashError(closeError) : undefined}
+        onConfirm={async () => {
+          if (commandsBlocked || !review || isClosing || session?.status !== "OPEN") return;
+          await onClose(review);
+          setCountedAmount("");
+        }}
+      >
+        {review && (
+          <p className="text-sm">
+            Sesión #{shortId(session?.id ?? "")} · Contado: {formatCashAmount(review.countedAmount)}
+          </p>
+        )}
+      </ConfirmActionDialog>
     </Card>
   );
 }
