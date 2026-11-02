@@ -101,12 +101,12 @@ describe.skipIf(!url)("Clinical idempotent creation — disposable PostgreSQL", 
 
   const cases: {
     kind: string;
-    create: (p: string, key?: string, different?: boolean) => Promise<{ id: string }>;
+    create: (p: string, key: string, different?: boolean) => Promise<{ id: string }>;
     action: string;
   }[] = [
     {
       kind: "treatment",
-      create: (p: string, key?: string, different = false) =>
+      create: (p: string, key: string, different = false) =>
         service.createTreatment(
           p,
           {
@@ -120,7 +120,7 @@ describe.skipIf(!url)("Clinical idempotent creation — disposable PostgreSQL", 
     },
     {
       kind: "study",
-      create: (p: string, key?: string, different = false) =>
+      create: (p: string, key: string, different = false) =>
         service.createStudy(
           p,
           {
@@ -134,7 +134,7 @@ describe.skipIf(!url)("Clinical idempotent creation — disposable PostgreSQL", 
     },
     {
       kind: "weight",
-      create: (p: string, key?: string, different = false) =>
+      create: (p: string, key: string, different = false) =>
         service.createWeight(p, { ...input, quantity: different ? "0.001" : "9999999.999" }, key),
       action: "clinical_weight.created",
     },
@@ -231,13 +231,30 @@ describe.skipIf(!url)("Clinical idempotent creation — disposable PostgreSQL", 
         await prisma.auditLog.count({ where: { targetId: result.id, action: c.action } })
       ).toBe(1);
     });
-    it("keeps legacy no-key creation non-deduplicating and rejects invalid keys", async () => {
-      const a = await run(() => c.create(patient));
-      const b = await run(() => c.create(patient));
-      expect(a.id).not.toBe(b.id);
-      await expect(run(() => c.create(patient, "clinical text"))).rejects.toMatchObject({
-        code: "VALIDATION_FAILED",
-      });
+    it("rejects missing and invalid creation keys with zero effects", async () => {
+      const counts = () =>
+        Promise.all([
+          prisma.clinicalTreatment.count(),
+          prisma.clinicalStudy.count(),
+          prisma.clinicalWeight.count(),
+          prisma.auditLog.count(),
+          prisma.$queryRaw`SELECT count(*) FROM clinical_creation_receipt`,
+        ]);
+      const before = await counts();
+      for (const key of [
+        undefined,
+        null,
+        "",
+        "clinical text",
+        123,
+        {},
+        "22222222-2222-2222-2222",
+      ]) {
+        await expect(run(() => c.create(patient, key as string))).rejects.toMatchObject({
+          code: "VALIDATION_FAILED",
+        });
+        expect(await counts()).toEqual(before);
+      }
     });
   });
   it("rolls back the clinical row and audit if receipt persistence fails after both writes", async () => {
@@ -278,9 +295,27 @@ describe.skipIf(!url)("Clinical idempotent creation — disposable PostgreSQL", 
     const key = randomUUID();
     const results = await Promise.all(cases.map((c) => run(() => c.create(patient, key))));
     expect(new Set(results.map((r) => r.id)).size).toBe(3);
-    await run(() => service.updateTreatment(patient, results[0].id, { description: "Corrected" }));
-    await run(() => service.updateStudy(patient, results[1].id, { result: "Corrected" }));
-    await run(() => service.updateWeight(patient, results[2].id, { quantity: "0.125" }));
+    await run(() =>
+      service.updateTreatment(patient, results[0].id, {
+        expectedVersion: 1,
+        correctionReason: "Synthetic correction",
+        description: "Corrected",
+      })
+    );
+    await run(() =>
+      service.updateStudy(patient, results[1].id, {
+        expectedVersion: 1,
+        correctionReason: "Synthetic correction",
+        result: "Corrected",
+      })
+    );
+    await run(() =>
+      service.updateWeight(patient, results[2].id, {
+        expectedVersion: 1,
+        correctionReason: "Synthetic correction",
+        quantity: "0.125",
+      })
+    );
     expect(await Promise.all(cases.map((c) => run(() => c.create(patient, key))))).toEqual(results);
   });
   it("canonicalizes exact quantities, instants and absent nullable context without losing unit semantics", async () => {

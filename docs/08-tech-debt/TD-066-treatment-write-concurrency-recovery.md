@@ -2,7 +2,7 @@
 id: TD-066
 type: tech-debt
 title: Clinical record write concurrency and uncertain response recovery
-status: open
+status: resolved
 severity: medium
 owner: engineering
 related_stories:
@@ -17,6 +17,7 @@ related_stories:
     UX-022,
     UX-023,
     UX-024,
+    UX-026,
   ]
 created: 2026-10-30
 updated: 2026-10-31
@@ -217,7 +218,7 @@ aprobados; QA de navegador separa selecciones y no declara una lane completa
 verde. La deuda no se cierra: DEC-085 pendiente y TD-067 abierta; cierre UX-024
 depende de sus gates.
 
-## Cierre de navegación y pendiente actual — UX-025, 2026-10-31
+## Estado histórico al cierre de navegación — UX-025, 2026-10-31
 
 UX-025 retiró la barrera global de carga redundante tras reproducción en el
 décimo contexto nuevo. Dos lanes completas independientes 26/26 (25 flujos
@@ -233,3 +234,25 @@ contratos backend/ BFF y actualizar consumidores/fixtures/pruebas conjuntamente.
 Aún no está activo en código; esta deuda permanece open por ese pendiente. No
 cambia precisión, unidades desconocidas, DTO de peso, retención o datos ya
 guardados.
+
+## Contratos implementados — UX-026 / DEC-085, 2026-10-31
+
+Se retira la opcionalidad de POST/PUT para tratamientos/estudios/pesos en
+HTTP/BFF y servicios. Cada creación exige UUID propio; cada corrección exige
+versión original y motivo no vacío hasta 2000. Se adapta el censo local de
+consumidores, pruebas/scripts/fixtures sin afirmar verificación de integraciones
+externas. No generación server/proxy ni relectura que reemplace un baseline.
+
+Las nueve suites de PostgreSQL desechable aprobaron 160 casos: creación 25,
+corrección/historial 53, borradores 23 y entrada/búsqueda 59. Se comprueban
+omisiones/valores inválidos sin efectos, replay original, carreras, auditoría
+única, CAS, aislamiento, permisos, rollback e históricos no informados. Sin
+migraciones nuevas, retención o purga; DTO de peso/GET-only intacto.
+
+Gates completos: 140 API simulados, 467 web/BFF y 160 PG reales; lint/tipos y
+builds aislados aprobados. Lane real 29/29, retries=0, 50 contextos nuevos y
+tres capturas desktop/móvil inspeccionadas. UX-026 done; TD-066 resolved para
+estos contratos, historial y recuperación manual privada, con límites de
+navegador/ retención documentados. Ver [[UX-026-VALIDATION-2026-10-31]]. TD-068
+es separada: expectativas antiguas fuera del alcance especializado, no pérdida
+de protecciones.

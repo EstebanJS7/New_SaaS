@@ -4,7 +4,7 @@ version: "1.3"
 status: approved-baseline
 vertical: veterinary
 market: Paraguay
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 # PRD Technical v1.3 — SaaS Core + Veterinary + Branding
@@ -615,21 +615,22 @@ transfieren autoridad del cliente ni alteran registros confirmados.
 El servicio de la cita solo puede sugerirse desde catálogo vigente y requiere
 aceptación del operador. El cliente de la venta se selecciona explícitamente.
 Cerrar consulta, completar cita y cobrar permanecen operaciones independientes.
-No se infiere el autor de la consulta a partir del profesional agendado.
-No se permite revinculación silenciosa; los vínculos existentes se preservan.
+No se infiere el autor de la consulta a partir del profesional agendado. No se
+permite revinculación silenciosa; los vínculos existentes se preservan.
 
 ### 13.2. Historial de correcciones especializadas — DEC-086 (2026-10-30)
 
 Tratamientos, estudios y pesos conservan revisiones inmutables de las
-correcciones futuras: valores anteriores/posteriores exactos, versiones, actor
-y momento. La captura comparte transacción con registro y auditoría. Conflicto
-o rollback no deja revisión; replay de creación no añade historial.
+correcciones futuras: valores anteriores/posteriores exactos, versiones, actor y
+momento. La captura comparte transacción con registro y auditoría. Conflicto o
+rollback no deja revisión; replay de creación no añade historial.
 
-La UI staff exige motivo al corregir; API legada conserva omisión compatible
-mostrada como Sin motivo informado. Consultar historial por registro exige
-lectura clínica y permiso específico vet.clinical.history_read, inicialmente
-asignado a OWNER/ADMIN/VETERINARIAN, además de tenant/veterinary. Solo lectura,
-sin restauración, edición, borrado o exportación de revisiones.
+Las correcciones nuevas exigen motivo en UI, BFF y API conforme a DEC-085 /
+UX-026. Los datos históricos sin motivo conservan Sin motivo informado.
+Consultar historial por registro exige lectura clínica y permiso específico
+vet.clinical.history_read, inicialmente asignado a OWNER/ADMIN/VETERINARIAN,
+además de tenant/veterinary. Solo lectura, sin restauración, edición, borrado o
+exportación de revisiones.
 
 No reconstruir cambios previos al mecanismo ni inferir unidad de pesos. Datos
 históricos/snapshots/motivo/actor son CONFIDENTIAL, sin logging/URLs/Storage de
@@ -651,11 +652,34 @@ se rebasa tras recargar. Creación usa su misma clave, nunca comparación de
 valores; peso con ID confirmado solo relee la proyección staff.
 
 Completar/descartar retira lógicamente la copia de la lista recuperable y
-conserva su contenido en servidor hasta aprobar una política de retención,
-sin purga automática ni promesa de borrado físico/de backups. Contenido,
-baseline, motivo, claves y asociación del autor son CONFIDENTIAL, sin
-almacenamiento persistente del navegador, URLs o logs de payloads. No
-autoguardado, borradores compartidos, Portal u otros formularios.
+conserva su contenido en servidor hasta aprobar una política de retención, sin
+purga automática ni promesa de borrado físico/de backups. Contenido, baseline,
+motivo, claves y asociación del autor son CONFIDENTIAL, sin almacenamiento
+persistente del navegador, URLs o logs de payloads. No autoguardado, borradores
+compartidos, Portal u otros formularios.
+
+### 13.4. Contratos obligatorios preproductivos — DEC-085 / UX-026 (2026-10-31)
+
+Crear tratamientos, estudios y pesos exige idempotencyKey UUID válido. Corregir
+exige expectedVersion entero 1..2147483647 de la lectura original y
+correctionReason no vacío ni solo espacios, máximo 2000 caracteres. Backend, BFF
+y servicios de aplicación rechazan omisiones/valores inválidos antes de
+cualquier escritura. Consumidores controlados, fixtures y scripts se actualizan
+juntos; no hay transición prolongada para comandos sin protecciones.
+
+No generar claves en servidor/proxy ni releer versiones para reemplazar el
+baseline de un intento enviado. Replay devuelve registro/DTO original con una
+sola auditoría; contenido diferente con la misma clave y CAS obsoleto responden
+409 sin efectos. Registro, recibo/historial y auditoría siguen transaccionales.
+No vuelve idempotente una corrección: pendiente/incierta sigue bloqueada tras
+recarga. Peso confirmado conserva DTO y reintenta solo GET staff para unidad.
+
+Preservar precisión Decimal(10,3), unidades/motivos históricos no informados,
+aislamiento y permisos, recuperación temporal y borradores privados manuales.
+Claves/baselines/motivos son CONFIDENTIAL; sin URLs/logs/Storage de contenido,
+purga, retención nueva o eliminación de recibos/historial. Solo estos tres
+tipos; no cambia consultas cerradas, otros registros clínicos, Portal o
+finanzas.
 
 ## 14. Scheduling
 

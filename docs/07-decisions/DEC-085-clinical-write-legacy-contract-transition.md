@@ -22,12 +22,13 @@ comandos/consumidores locales, fixtures/scripts y pruebas, sin claves generadas
 por servidor/proxy ni lecturas para reemplazar baselines de comandos enviados.
 
 No se afirma desde un censo local que se verificaron integraciones externas; no
-hay un despliegue/corte operativo autorizado o ejecutado aquí. El contrato
-vigente permanece opcional hasta implementar UX-026. Actualizar PRD de manera
-explícita al iniciar esa Story. No añadir dependencias, alterar DTO de respuesta
-de peso, reinterpretar unidades desconocidas, purgar recibos/historial o migrar
-bases configuradas/dev. Las secciones siguientes conservan el contexto y la
-propuesta histórica del 2026-10-30; prevalece esta revisión aceptada.
+hay un despliegue/corte operativo autorizado o ejecutado aquí. Al aceptar esta
+revisión, el contrato permanecía opcional hasta implementar UX-026. PRD debía
+actualizarse explícitamente al iniciar esa Story. No añadir dependencias,
+alterar DTO de respuesta de peso, reinterpretar unidades desconocidas, purgar
+recibos/historial o migrar bases configuradas/dev. Las secciones siguientes
+conservan el contexto y la propuesta histórica del 2026-10-30; prevalece esta
+revisión aceptada.
 
 ## Contexto y pregunta
 
@@ -95,3 +96,13 @@ sintéticas y PostgreSQL temporal. TD-066 conserva este corte como pendiente.
 Propuesta para la futura obligatoriedad pública. La etapa local compatible está
 autorizada e implementada en UX-022; no equivale a aprobar esta decisión ni a
 cerrar la transición de consumidores externos.
+
+## Implementación de la revisión aceptada — UX-026, 2026-10-31
+
+UX-026 done: obligatoriedad en HTTP/BFF/aplicación para los tres tipos, sin
+transición prolongada de consumidores controlados. PRD §§13.2/13.4 actualizado
+explícitamente antes de código, fixtures/comandos de aplicación migrados y 767
+pruebas especializadas + 29/29 E2E reales aprobados, sin retries. Ver
+[[UX-026-VALIDATION-2026-10-31]]. TD-066 resolved; sin migraciones nuevas,
+backfill, retención/purga, DTO de peso cambiado, CI remota o despliegue. Las
+secciones de propuesta original arriba son contexto histórico sustituido.

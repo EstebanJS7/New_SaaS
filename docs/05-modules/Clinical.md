@@ -2,7 +2,7 @@
 type: module
 module: clinical
 status: implemented
-updated: 2026-10-31
+updated: 2026-11-01
 ---
 
 # Module — Clinical
@@ -850,8 +850,51 @@ paciente retenida comprobados. TD-067 resolved para esta reproducción, sin
 certificación universal. Ver [[UX-024-VALIDATION-2026-10-31]] y
 [[UX-025-VALIDATION-2026-10-31]]; fallos iniciales conservados.
 
-DEC-085 revisada y aceptada antes de producción: exigir clave en creación y
-baseline/motivo en corrección será UX-026 (planned), sin transición prolongada
-para consumidores controlados. Hasta su implementación, API/BFF actuales
-mantienen opcionalidad documentada. No retirar fallback histórico de motivo/
-unidad, alterar DTO de peso ni aplicar migraciones sobre base dev.
+Al cerrar UX-025, UX-026 estaba planned para implementar DEC-085 revisada y
+aceptada antes de producción. La siguiente sección documenta su implementación;
+las menciones anteriores de opcionalidad conservan el contexto histórico.
+
+## Contratos obligatorios — UX-026 / DEC-085, 2026-10-31
+
+Esta etapa sustituye la opcionalidad histórica de UX-019/020/022/023 para
+comandos nuevos de tratamientos, estudios y pesos. POST exige idempotencyKey
+UUID; PUT exige expectedVersion entero 1..2147483647 de la lectura original y
+correctionReason no vacío ni solo espacios, máximo 2000. HTTP y servicios
+rechazan omisiones/valores inválidos con VALIDATION_FAILED (400 HTTP) sin
+efectos; BFF rechaza antes de upstream, incluidos submits de borradores. No
+genera claves, relee baselines ni cambia los bytes de comandos válidos.
+
+Replay conserva ID/DTO original y auditoría única; clave con contenido diferente
+y CAS obsoleto dan 409 sin nuevas escrituras. Creación mantiene recibo, registro
+y auditoría atómicos; corrección mantiene registro, captura inmutable y
+auditoría atómicos. No-op clínico con guardias válidas comprueba baseline sin
+incrementar versión/auditoría. Autorización, entitlement, paciente/tipo y 404
+ajeno intactos.
+
+UX-018/024, creación congelada y corrección incierta bloqueada tras reload
+siguen vigentes. Peso conserva Decimal(10,3), KG/null, DTO sin unidad y
+relectura staff: ID confirmado implica solo GET ante fallo. Históricos sin
+motivo/unidad siguen visibles explícitamente; no conversión, backfill, purga ni
+retención nueva. Fixtures Prisma/SQL directos preparan datos sintéticos; cada
+comando de aplicación probado usa guardias explícitas o se prueba como rechazo
+sin efectos.
+
+PRD §§13.2/13.4 actualizado explícitamente conforme a DEC-085. No migración ni
+rutas nuevas. Ver [[UX-026-VALIDATION-2026-10-31]] para gates y límites; las
+secciones anteriores conservan evidencia histórica de cada transición.
+
+UX-026 done: 767 pruebas especializadas + 29/29 E2E reales, lint/tipos/builds
+aislados y revisión visual acotada aprobados. TD-066 resolved; TD-068 registra
+expectativas antiguas de tests fuera de alcance. Sin CI remota o despliegue.
+
+
+## Contexto y retorno de atención — UX-030, 2026-11-01
+
+POS ofrece volver a la consulta exacta después de leer sus vínculos con acceso
+autorizado, incluso sin cita. El origen persistido tiene prioridad sobre el hint
+de navegación y no se muestra ID de cita sin permiso de lectura de agenda.
+Errores de lectura ofrecen GET explícito; asociar queda bloqueado durante
+revalidación. No se edita la consulta cerrada ni se alteran comandos clínicos,
+recuperación UX-018/024, historial o DTO de pesos. Vínculos existentes siguen
+explícitos, confirmados, inmutables y auditados según DEC-083/UX-006.
+Evidencia real y límites en [[UX-030-VALIDATION-2026-11-01]].

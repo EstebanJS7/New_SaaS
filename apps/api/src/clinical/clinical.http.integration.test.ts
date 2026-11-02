@@ -66,11 +66,19 @@ interface RouteCase {
  * references pass Zod and reach the tenant-scoped record lookup.
  */
 const RECORD_UPDATE_BODY: Readonly<Record<string, Record<string, unknown>>> = {
-  treatments: { description: "Foreign update attempt" },
+  treatments: {
+    expectedVersion: 1,
+    correctionReason: "Synthetic correction",
+    description: "Foreign update attempt",
+  },
   vaccinations: { vaccine: "Foreign update attempt" },
   deworming: { product: "Foreign update attempt" },
-  studies: { result: "Foreign update attempt" },
-  weights: { quantity: "99.999" },
+  studies: {
+    expectedVersion: 1,
+    correctionReason: "Synthetic correction",
+    result: "Foreign update attempt",
+  },
+  weights: { expectedVersion: 1, correctionReason: "Synthetic correction", quantity: "99.999" },
 };
 
 const encounterPath = (patientId: string, suffix = ""): string =>
@@ -137,14 +145,18 @@ const ROUTE_CASES: readonly RouteCase[] = [
     label: "create treatment",
     permission: "create",
     path: (p) => recordPath("treatments")(p),
-    body: { description: "Antibiotic", administeredAt: ISO },
+    body: { idempotencyKey: randomUUID(), description: "Antibiotic", administeredAt: ISO },
   },
   {
     method: "put",
     label: "update treatment",
     permission: "update",
     path: (p, r) => recordPath("treatments")(p, `/${r}`),
-    body: { description: "Antibiotic 2" },
+    body: {
+      expectedVersion: 1,
+      correctionReason: "Synthetic correction",
+      description: "Antibiotic 2",
+    },
   },
   {
     method: "get",
@@ -200,14 +212,18 @@ const ROUTE_CASES: readonly RouteCase[] = [
     label: "create study",
     permission: "create",
     path: (p) => recordPath("studies")(p),
-    body: { studyType: "X-Ray", performedAt: ISO, result: "Clear" },
+    body: { idempotencyKey: randomUUID(), studyType: "X-Ray", performedAt: ISO, result: "Clear" },
   },
   {
     method: "put",
     label: "update study",
     permission: "update",
     path: (p, r) => recordPath("studies")(p, `/${r}`),
-    body: { result: "Clear (reviewed)" },
+    body: {
+      expectedVersion: 1,
+      correctionReason: "Synthetic correction",
+      result: "Clear (reviewed)",
+    },
   },
   {
     method: "get",
@@ -221,14 +237,14 @@ const ROUTE_CASES: readonly RouteCase[] = [
     label: "create weight",
     permission: "create",
     path: (p) => recordPath("weights")(p),
-    body: { quantity: "12.500", measuredAt: ISO },
+    body: { idempotencyKey: randomUUID(), quantity: "12.500", measuredAt: ISO },
   },
   {
     method: "put",
     label: "update weight",
     permission: "update",
     path: (p, r) => recordPath("weights")(p, `/${r}`),
-    body: { quantity: "13.250" },
+    body: { expectedVersion: 1, correctionReason: "Synthetic correction", quantity: "13.250" },
   },
 ];
 
@@ -241,7 +257,12 @@ interface RecordCase {
 const RECORD_CREATE_CASES: readonly RecordCase[] = [
   {
     kind: "treatments",
-    body: { description: "Antibiotic", administeredAt: ISO, context: "post-op" },
+    body: {
+      idempotencyKey: randomUUID(),
+      description: "Antibiotic",
+      administeredAt: ISO,
+      context: "post-op",
+    },
     keys: [
       "id",
       "tenantId",
@@ -283,7 +304,7 @@ const RECORD_CREATE_CASES: readonly RecordCase[] = [
   },
   {
     kind: "studies",
-    body: { studyType: "X-Ray", performedAt: ISO, result: "Clear" },
+    body: { idempotencyKey: randomUUID(), studyType: "X-Ray", performedAt: ISO, result: "Clear" },
     keys: [
       "id",
       "tenantId",
@@ -297,7 +318,7 @@ const RECORD_CREATE_CASES: readonly RecordCase[] = [
   },
   {
     kind: "weights",
-    body: { quantity: "12.500", measuredAt: ISO },
+    body: { idempotencyKey: randomUUID(), quantity: "12.500", measuredAt: ISO },
     keys: ["id", "tenantId", "patientId", "quantity", "measuredAt", "createdAt", "updatedAt"],
   },
 ];
@@ -323,6 +344,41 @@ describe("Clinical HTTP boundary (WU3)", () => {
 
   const server = () => booted.app.getHttpServer();
   it.each(["treatments", "studies", "weights"])(
+    "rejects missing/invalid %s guards before effects",
+    async (kind) => {
+      const { patient } = fixture.patient.createPatientA();
+      const record = RECORD_CREATE_CASES.find((c) => c.kind === kind)!;
+      const before = () => ({
+        records: Object.values(fixture.tables).map((t) => t.size),
+        audits: booted.db.tables.audits.size,
+      });
+      const snapshot = before();
+      const invalid = [
+        ...[undefined, null, "", "invalid", 42, {}, []].map((idempotencyKey) => ({
+          method: "post" as const,
+          body: { ...record.body, idempotencyKey },
+        })),
+        ...[undefined, null, 0, -1, 1.5, "1", 2147483648].map((expectedVersion) => ({
+          method: "put" as const,
+          body: { expectedVersion, correctionReason: "Synthetic correction" },
+        })),
+        ...[undefined, null, "", "  ", "x".repeat(2001), 42, {}, []].map((correctionReason) => ({
+          method: "put" as const,
+          body: { expectedVersion: 1, correctionReason },
+        })),
+      ];
+      for (const c of invalid) {
+        const response = await supertest(server())
+          [c.method](recordPath(kind)(patient.id, c.method === "put" ? "/" + randomUUID() : ""))
+          .set("Cookie", fixture.patient.a.actor.cookie)
+          .send(c.body);
+        expect(response.status).toBe(400);
+        expect(response.body).toMatchObject({ error: { code: "VALIDATION_FAILED" } });
+        expect(before()).toEqual(snapshot);
+      }
+    }
+  );
+  it.each(["treatments", "studies", "weights"])(
     "strictly validates %s expectedVersion before a mutation",
     async (kind) => {
       const { patient } = fixture.patient.createPatientA();
@@ -330,14 +386,14 @@ describe("Clinical HTTP boundary (WU3)", () => {
         const response = await supertest(server())
           .put(recordPath(kind)(patient.id, "/" + randomUUID()))
           .set("Cookie", fixture.patient.a.actor.cookie)
-          .send({ expectedVersion });
+          .send({ expectedVersion, correctionReason: "Synthetic correction" });
         expect(response.status).toBe(400);
         expect(response.body).toMatchObject({ error: { code: "VALIDATION_FAILED" } });
       }
     }
   );
   it.each(["treatments", "studies", "weights"])(
-    "validates optional %s creation keys before writing and rejects keys on PUT",
+    "validates required %s creation keys before writing and rejects keys on PUT",
     async (kind) => {
       const record = RECORD_CREATE_CASES.find((c) => c.kind === kind);
       if (!record) throw Error("Missing fixture");
@@ -527,7 +583,7 @@ describe("Clinical HTTP boundary (WU3)", () => {
       const response = await supertest(server())
         .post(`/patients/${patient.id}/clinical/weights`)
         .set("Cookie", fixture.patient.a.actor.cookie)
-        .send({ quantity, measuredAt: ISO });
+        .send({ idempotencyKey: randomUUID(), quantity, measuredAt: ISO });
       expect(response.status, quantity).toBe(400);
       expect((response.body as ErrorDto).error.code, quantity).toBe("VALIDATION_FAILED");
       expect(fixture.tables.clinicalWeight.size, quantity).toBe(before);

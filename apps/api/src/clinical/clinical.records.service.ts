@@ -88,8 +88,8 @@ export interface CreateTreatmentInput {
 }
 
 export interface UpdateTreatmentInput {
-  correctionReason?: string;
-  readonly expectedVersion?: number;
+  readonly correctionReason: string;
+  readonly expectedVersion: number;
   readonly description?: string;
   readonly administeredAt?: string;
   readonly context?: string | null;
@@ -130,8 +130,8 @@ export interface CreateStudyInput {
 }
 
 export interface UpdateStudyInput {
-  correctionReason?: string;
-  readonly expectedVersion?: number;
+  readonly correctionReason: string;
+  readonly expectedVersion: number;
   readonly studyType?: string;
   readonly performedAt?: string;
   readonly result?: string;
@@ -145,8 +145,8 @@ export interface CreateWeightInput {
 }
 
 export interface UpdateWeightInput {
-  correctionReason?: string;
-  readonly expectedVersion?: number;
+  readonly correctionReason: string;
+  readonly expectedVersion: number;
   readonly quantity?: string;
   readonly unit?: "KG";
   readonly measuredAt?: string;
@@ -363,8 +363,7 @@ const studyReceipt = receiptBase
 const weightReceipt = receiptBase.extend({ quantity: z.string(), measuredAt: z.string() }).strict();
 
 /** UUID only: never put clinical text in an idempotency key. */
-export function clinicalCreationKey(value: unknown): string | undefined {
-  if (value === undefined) return undefined;
+export function clinicalCreationKey(value: unknown): string {
   const parsed = z.string().uuid().safeParse(value);
   if (!parsed.success) throw new DomainError("VALIDATION_FAILED", "Invalid clinical creation key.");
   return parsed.data.toLowerCase();
@@ -426,7 +425,7 @@ export class ClinicalRecordsService extends ClinicalServiceBase<ClinicalRecordsP
   async createTreatment(
     patientId: string,
     input: CreateTreatmentInput,
-    idempotencyKey?: string
+    idempotencyKey: string
   ): Promise<ClinicalTreatmentResponse> {
     const tenantId = await this.requireTenantContext();
     await this.requirePermission(CLINICAL_PERMISSIONS.create);
@@ -501,9 +500,7 @@ export class ClinicalRecordsService extends ClinicalServiceBase<ClinicalRecordsP
       data,
       changedFields,
       { action: "clinical_treatment.updated", targetType: "clinical_treatment" },
-      input.expectedVersion === undefined
-        ? undefined
-        : { table: "clinical_treatment", version: input.expectedVersion },
+      { table: "clinical_treatment", version: input.expectedVersion },
       input.correctionReason
     );
     return toTreatmentResponse(row);
@@ -695,7 +692,7 @@ export class ClinicalRecordsService extends ClinicalServiceBase<ClinicalRecordsP
   async createStudy(
     patientId: string,
     input: CreateStudyInput,
-    idempotencyKey?: string
+    idempotencyKey: string
   ): Promise<ClinicalStudyResponse> {
     const tenantId = await this.requireTenantContext();
     await this.requirePermission(CLINICAL_PERMISSIONS.create);
@@ -770,9 +767,7 @@ export class ClinicalRecordsService extends ClinicalServiceBase<ClinicalRecordsP
       data,
       changedFields,
       { action: "clinical_study.updated", targetType: "clinical_study" },
-      input.expectedVersion === undefined
-        ? undefined
-        : { table: "clinical_study", version: input.expectedVersion },
+      { table: "clinical_study", version: input.expectedVersion },
       input.correctionReason
     );
     return toStudyResponse(row);
@@ -796,7 +791,7 @@ export class ClinicalRecordsService extends ClinicalServiceBase<ClinicalRecordsP
   async createWeight(
     patientId: string,
     input: CreateWeightInput,
-    idempotencyKey?: string
+    idempotencyKey: string
   ): Promise<ClinicalWeightResponse> {
     const tenantId = await this.requireTenantContext();
     await this.requirePermission(CLINICAL_PERMISSIONS.create);
@@ -881,9 +876,7 @@ export class ClinicalRecordsService extends ClinicalServiceBase<ClinicalRecordsP
       data,
       changedFields,
       { action: "clinical_weight.updated", targetType: "clinical_weight" },
-      input.expectedVersion === undefined
-        ? undefined
-        : { table: "clinical_weight", version: input.expectedVersion },
+      { table: "clinical_weight", version: input.expectedVersion },
       input.correctionReason
     );
     return toWeightResponse(row);
@@ -900,13 +893,12 @@ export class ClinicalRecordsService extends ClinicalServiceBase<ClinicalRecordsP
     tenantId: string,
     patientId: string,
     kind: string,
-    key: string | undefined,
+    key: string,
     input: unknown,
     schema: ZodType<T>,
-    work: (tx?: ClinicalRecordsTransaction) => Promise<T>
+    work: (tx: ClinicalRecordsTransaction) => Promise<T>
   ): Promise<T> {
     key = clinicalCreationKey(key);
-    if (key === undefined) return work();
     const requestHash = createHash("sha256").update(JSON.stringify(input)).digest("hex");
     const scope = JSON.stringify([tenantId, patientId, kind, key]);
     return this.prisma.$transaction(
@@ -973,6 +965,11 @@ export class ClinicalRecordsService extends ClinicalServiceBase<ClinicalRecordsP
     },
     correctionReason?: string
   ): Promise<TRow> {
+    const specialized = ["clinical_treatment", "clinical_study", "clinical_weight"].includes(
+      audit.targetType
+    );
+    if (specialized && (!expected || correctionReason === undefined))
+      throw new DomainError("VALIDATION_FAILED", "Clinical correction guards are required.");
     if (
       expected &&
       (!Number.isInteger(expected.version) || expected.version < 1 || expected.version > 2147483647)
@@ -1006,9 +1003,6 @@ export class ClinicalRecordsService extends ClinicalServiceBase<ClinicalRecordsP
           return existing;
         }
         // Specific Clinical trigger context, transaction-local: no cross-request leakage.
-        const specialized = ["clinical_treatment", "clinical_study", "clinical_weight"].includes(
-          audit.targetType
-        );
         const revisionId = specialized ? randomUUID() : undefined;
         if (revisionId) {
           if (!tx.$queryRaw) throw new Error("Clinical history requires transactional SQL.");

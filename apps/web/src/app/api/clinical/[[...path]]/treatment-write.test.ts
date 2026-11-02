@@ -7,7 +7,13 @@ vi.mock("next/headers", () => ({ cookies: cookiesMock }));
 import { POST, PUT } from "./route";
 const fetchMock = vi.fn<typeof fetch>();
 const base = "/api/clinical/11111111-1111-4111-8111-111111111111/treatments";
-function request(method: "POST" | "PUT", body = "{}", query = "") {
+function request(
+  method: "POST" | "PUT",
+  body = method === "POST"
+    ? '{"idempotencyKey":"33333333-3333-4333-8333-333333333333"}'
+    : '{"expectedVersion":1,"correctionReason":"Synthetic correction"}',
+  query = ""
+) {
   return new NextRequest(
     `http://localhost${base}${method === "PUT" ? "/22222222-2222-4222-8222-222222222222" : ""}${query}`,
     {
@@ -33,7 +39,10 @@ describe.each(["POST", "PUT"] as const)("Treatment %s proxy", (method) => {
   const call = method === "POST" ? POST : PUT;
   it("keeps exact bytes, only staff authority, private caching and no abort of uncertain commands", async () => {
     fetchMock.mockResolvedValue(new Response('{"id":"synthetic"}', { status: 200 }));
-    const body = '{ "description": "Synthetic clinical text", "context": null }';
+    const body =
+      method === "POST"
+        ? '{ "description": "Synthetic clinical text", "context": null , "idempotencyKey": "33333333-3333-4333-8333-333333333333" }'
+        : '{ "description": "Synthetic clinical text", "context": null , "expectedVersion": 1, "correctionReason": "Synthetic correction" }';
     const response = await call(request(method, body));
     expect(fetchMock.mock.calls[0][1]).toEqual({
       method,

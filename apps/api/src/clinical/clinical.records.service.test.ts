@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 import type { AuditAppendInput, AuditWriter } from "../audit/audit-writer.service.js";
@@ -29,7 +30,7 @@ import type {
 
 const PATIENT_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
 const ACTOR = "11111111-1111-4111-8111-111111111100";
-const TENANT_A = "tenant-1";
+const TENANT_A = "11111111-1111-4111-8111-111111111101";
 
 const ALL_CLINICAL_PERMISSIONS = new Set<string>(Object.values(CLINICAL_PERMISSIONS));
 
@@ -77,7 +78,7 @@ describe("ClinicalRecordsService (WU2B specialized records)", () => {
     TUpdateData,
   >(
     map: Map<string, TRow>,
-    prefix: string
+    _prefix: string
   ): ClinicalRecordDelegate<TRow, TCreateData, TUpdateData> {
     return {
       findMany: ({ where, orderBy }) => {
@@ -101,7 +102,7 @@ describe("ClinicalRecordsService (WU2B specialized records)", () => {
         const now = new Date();
         const created = {
           ...data,
-          id: `${prefix}-${map.size + 1}`,
+          id: randomUUID(),
           createdAt: now,
           updatedAt: now,
         } as unknown as TRow;
@@ -148,9 +149,24 @@ describe("ClinicalRecordsService (WU2B specialized records)", () => {
         "wgt"
       ),
       auditLog: { create: vi.fn().mockResolvedValue({ id: "audit-1" }) },
+      $executeRaw: () => Promise.resolve(1),
       $queryRaw: <T>(query: import("@newsaas/database").Prisma.Sql): Promise<T> =>
         Promise.resolve(
-          (query.sql.includes("SELECT h.id") ? [{ id: query.values[0] }] : []) as unknown as T
+          (query.sql.includes("SELECT h.id")
+            ? [{ id: query.values[0] }]
+            : query.sql.includes("SELECT version FROM")
+              ? (() => {
+                  const row = [treatments, studies, weights]
+                    .flatMap((m) => [...m.values()])
+                    .find(
+                      (r) =>
+                        r.id === query.values[0] &&
+                        r.tenantId === query.values[1] &&
+                        r.patientId === query.values[2]
+                    );
+                  return row ? [{ version: 1 }] : [];
+                })()
+              : []) as unknown as T
         ),
     };
 
@@ -268,15 +284,23 @@ describe("ClinicalRecordsService (WU2B specialized records)", () => {
 
   it("updates a treatment in place and audits once", async () => {
     const created = await withContext(() =>
-      service.createTreatment(PATIENT_A, {
-        description: "Antibiotic",
-        administeredAt: "2026-02-01T00:00:00.000Z",
-      })
+      service.createTreatment(
+        PATIENT_A,
+        {
+          description: "Antibiotic",
+          administeredAt: "2026-02-01T00:00:00.000Z",
+        },
+        randomUUID()
+      )
     );
     appendMock.mockClear();
 
     const updated = await withContext(() =>
-      service.updateTreatment(PATIENT_A, created.id, { description: "Antibiotic (adjusted)" })
+      service.updateTreatment(PATIENT_A, created.id, {
+        expectedVersion: 1,
+        correctionReason: "Synthetic correction",
+        description: "Antibiotic (adjusted)",
+      })
     );
 
     expect(updated.description).toBe("Antibiotic (adjusted)");
@@ -413,11 +437,15 @@ describe("ClinicalRecordsService (WU2B specialized records)", () => {
 
   it("records and updates a study with its performed date and result", async () => {
     const created = await withContext(() =>
-      service.createStudy(PATIENT_A, {
-        studyType: "Blood panel",
-        performedAt: "2026-02-02T00:00:00.000Z",
-        result: "Within range",
-      })
+      service.createStudy(
+        PATIENT_A,
+        {
+          studyType: "Blood panel",
+          performedAt: "2026-02-02T00:00:00.000Z",
+          result: "Within range",
+        },
+        randomUUID()
+      )
     );
     expect(created).toMatchObject({
       studyType: "Blood panel",
@@ -427,7 +455,11 @@ describe("ClinicalRecordsService (WU2B specialized records)", () => {
     appendMock.mockClear();
 
     const updated = await withContext(() =>
-      service.updateStudy(PATIENT_A, created.id, { result: "Mild anemia" })
+      service.updateStudy(PATIENT_A, created.id, {
+        expectedVersion: 1,
+        correctionReason: "Synthetic correction",
+        result: "Mild anemia",
+      })
     );
     expect(updated.result).toBe("Mild anemia");
     expect(appendMock).toHaveBeenCalledTimes(1);
@@ -442,16 +474,24 @@ describe("ClinicalRecordsService (WU2B specialized records)", () => {
 
   it("records and updates a weight preserving exact decimal text", async () => {
     const created = await withContext(() =>
-      service.createWeight(PATIENT_A, {
-        quantity: "12.500",
-        measuredAt: "2026-02-01T00:00:00.000Z",
-      })
+      service.createWeight(
+        PATIENT_A,
+        {
+          quantity: "12.500",
+          measuredAt: "2026-02-01T00:00:00.000Z",
+        },
+        randomUUID()
+      )
     );
     expect(created.quantity).toBe("12.500");
     appendMock.mockClear();
 
     const updated = await withContext(() =>
-      service.updateWeight(PATIENT_A, created.id, { quantity: "13.250" })
+      service.updateWeight(PATIENT_A, created.id, {
+        expectedVersion: 1,
+        correctionReason: "Synthetic correction",
+        quantity: "13.250",
+      })
     );
     expect(updated.quantity).toBe("13.250");
     expect(appendMock).toHaveBeenCalledTimes(1);
@@ -460,15 +500,23 @@ describe("ClinicalRecordsService (WU2B specialized records)", () => {
   it("rejects a non-positive or non-numeric weight with VALIDATION_FAILED and persists nothing", async () => {
     await expect(
       withContext(() =>
-        service.createWeight(PATIENT_A, { quantity: "0", measuredAt: "2026-02-01T00:00:00.000Z" })
+        service.createWeight(
+          PATIENT_A,
+          { quantity: "0", measuredAt: "2026-02-01T00:00:00.000Z" },
+          randomUUID()
+        )
       )
     ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
     await expect(
       withContext(() =>
-        service.createWeight(PATIENT_A, {
-          quantity: "not-a-number",
-          measuredAt: "2026-02-01T00:00:00.000Z",
-        })
+        service.createWeight(
+          PATIENT_A,
+          {
+            quantity: "not-a-number",
+            measuredAt: "2026-02-01T00:00:00.000Z",
+          },
+          randomUUID()
+        )
       )
     ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
 

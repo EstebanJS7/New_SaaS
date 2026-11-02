@@ -215,6 +215,66 @@ async function privacy(page: Page, c: Case) {
 }
 test.afterAll(() => db.$disconnect());
 for (const c of cases) {
+  test(
+    c.kind + " — required guards reject API/BFF requests with zero PostgreSQL effects",
+    async ({ page }) => {
+      const p = await patient();
+      await open(page, p);
+      const body =
+        c.kind === "weight"
+          ? { quantity: "0.125", unit: "KG", measuredAt: "2026-10-20T15:00:00Z" }
+          : c.kind === "study"
+            ? { studyType: "Synthetic", result: "", performedAt: "2026-10-20T15:00:00Z" }
+            : { description: "Synthetic", administeredAt: "2026-10-20T15:00:00Z" };
+      const bff = "/api/clinical/" + p.id + "/" + c.path;
+      const api = process.env.CLINICAL_E2E_API_URL! + "/patients/" + p.id + "/clinical/" + c.path;
+      for (const url of [api, bff]) {
+        for (const idempotencyKey of [undefined, null, "", "invalid", 42]) {
+          const response = await page.request.post(url, { data: { ...body, idempotencyKey } });
+          expect(response.status()).toBe(400);
+          expect(object(await response.json()).error).toMatchObject({ code: "VALIDATION_FAILED" });
+        }
+      }
+      expect(await counts(c, p.id)).toEqual({ rows: [], created: 0, updated: 0 });
+      const created = await page.request.post(bff, {
+        data: { ...body, idempotencyKey: randomUUID() },
+      });
+      expect(created.status()).toBe(201);
+      const id = object(await created.json()).id as string;
+      const baseline = await counts(c, p.id);
+      for (const url of [api, bff]) {
+        for (const data of [
+          {},
+          { expectedVersion: 1 },
+          { correctionReason: "Synthetic correction" },
+          ...[null, 0, -1, 1.5, "1", 2147483648].map((expectedVersion) => ({
+            expectedVersion,
+            correctionReason: "Synthetic correction",
+          })),
+          ...[null, "", "  ", "x".repeat(2001), 42].map((correctionReason) => ({
+            expectedVersion: 1,
+            correctionReason,
+          })),
+        ]) {
+          expect((await page.request.put(url + "/" + id, { data })).status()).toBe(400);
+        }
+      }
+      expect(await counts(c, p.id)).toEqual(baseline);
+      const revisions = await db.$queryRawUnsafe<{ count: bigint }[]>(
+        "SELECT count(*) FROM " + c.table + "_revision WHERE record_id=$1::uuid",
+        id
+      );
+      expect(revisions[0].count).toBe(0n);
+      const receipts = await db.$queryRawUnsafe<{ count: bigint }[]>(
+        "SELECT count(*) FROM clinical_creation_receipt WHERE patient_id=$1::uuid",
+        p.id
+      );
+      expect(receipts[0].count).toBe(1n);
+    }
+  );
+}
+
+for (const c of cases) {
   test(c.kind + " — desktop create/correct, keyboard and exact data", async ({ page }) => {
     const p = await patient();
     await open(page, p);
@@ -345,7 +405,9 @@ for (const c of cases) {
           c.kind === "weight"
             ? { quantity: "9.999", unit: "KG", expectedVersion: 1 }
             : { [c.field]: "Cambio remoto sintético", expectedVersion: 1 };
-        const remote = await page.request.put(path, { data: body });
+        const remote = await page.request.put(path, {
+          data: { ...body, correctionReason: "Corrección remota sintética" },
+        });
         expect(remote.ok()).toBe(true);
         await route.fulfill({ response });
       });

@@ -132,7 +132,7 @@ export const createTreatmentBody = z
     description: recordText,
     administeredAt: isoDate,
     context: encounterTextField,
-    idempotencyKey: z.string().uuid().optional(),
+    idempotencyKey: z.string().uuid(),
   })
   .strict();
 export const updateTreatmentBody = z
@@ -141,9 +141,8 @@ export const updateTreatmentBody = z
       .string()
       .min(1)
       .max(2000)
-      .refine((text) => text.trim().length > 0)
-      .optional(),
-    expectedVersion: z.number().int().min(1).max(2147483647).optional(),
+      .refine((text) => text.trim().length > 0),
+    expectedVersion: z.number().int().min(1).max(2147483647),
     description: recordText.optional(),
     administeredAt: isoDate.optional(),
     context: encounterTextField,
@@ -177,7 +176,7 @@ export const createStudyBody = z
     studyType: recordText,
     performedAt: isoDate,
     result: z.string().max(10_000),
-    idempotencyKey: z.string().uuid().optional(),
+    idempotencyKey: z.string().uuid(),
   })
   .strict();
 export const updateStudyBody = z
@@ -186,9 +185,8 @@ export const updateStudyBody = z
       .string()
       .min(1)
       .max(2000)
-      .refine((text) => text.trim().length > 0)
-      .optional(),
-    expectedVersion: z.number().int().min(1).max(2147483647).optional(),
+      .refine((text) => text.trim().length > 0),
+    expectedVersion: z.number().int().min(1).max(2147483647),
     studyType: recordText.optional(),
     performedAt: isoDate.optional(),
     result: z.string().max(10_000).optional(),
@@ -200,7 +198,7 @@ export const createWeightBody = z
     quantity: positiveDecimal,
     measuredAt: isoDate,
     unit: z.literal("KG").optional(),
-    idempotencyKey: z.string().uuid().optional(),
+    idempotencyKey: z.string().uuid(),
   })
   .strict();
 export const updateWeightBody = z
@@ -209,9 +207,8 @@ export const updateWeightBody = z
       .string()
       .min(1)
       .max(2000)
-      .refine((text) => text.trim().length > 0)
-      .optional(),
-    expectedVersion: z.number().int().min(1).max(2147483647).optional(),
+      .refine((text) => text.trim().length > 0),
+    expectedVersion: z.number().int().min(1).max(2147483647),
     quantity: positiveDecimal.optional(),
     measuredAt: isoDate.optional(),
     unit: z.literal("KG").optional(),

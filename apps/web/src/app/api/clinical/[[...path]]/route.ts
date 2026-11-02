@@ -11,6 +11,21 @@ const CLINICAL_PATH_PREFIX = "/api/clinical";
 /** Canonical UUID shape required by the upstream clinical route params. */
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Validate caller-owned guards without generating keys or reading a replacement baseline. */
+function validWriteGuards(input: unknown, method: "POST" | "PUT"): boolean {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return false;
+  const command = input as Record<string, unknown>;
+  return method === "POST"
+    ? typeof command.idempotencyKey === "string" && UUID_PATTERN.test(command.idempotencyKey)
+    : typeof command.expectedVersion === "number" &&
+        Number.isInteger(command.expectedVersion) &&
+        command.expectedVersion >= 1 &&
+        command.expectedVersion <= 2147483647 &&
+        typeof command.correctionReason === "string" &&
+        command.correctionReason.trim().length > 0 &&
+        command.correctionReason.length <= 2000;
+}
+
 type ClinicalMethod = "GET" | "POST" | "PUT";
 
 /** Placeholder marking a UUID identifier slot in a route shape. */
@@ -234,7 +249,17 @@ async function proxyClinicalRequest(
       typeof draftInput !== "object" ||
       draftInput === null ||
       Array.isArray(draftInput) ||
-      Object.keys(draftInput).some((key) => !keys.includes(key))
+      Object.keys(draftInput).some((key) => !keys.includes(key)) ||
+      (resolution.path.endsWith("/submit") &&
+        (!("command" in draftInput) ||
+          !validWriteGuards(
+            draftInput.command,
+            typeof draftInput.command === "object" &&
+              draftInput.command !== null &&
+              "idempotencyKey" in draftInput.command
+              ? "POST"
+              : "PUT"
+          )))
     )
       return NextResponse.json(
         { error: { code: "VALIDATION_FAILED", message: "Invalid clinical draft input." } },
@@ -281,6 +306,15 @@ async function proxyClinicalRequest(
     )
       return NextResponse.json(
         { error: { code: "VALIDATION_FAILED", message: "Invalid clinical record search input." } },
+        { status: 400, headers: privateHeaders }
+      );
+  }
+
+  if (treatmentWrite || studyWrite || weightWrite) {
+    const input: unknown = JSON.parse(bodyText ?? "null");
+    if (!validWriteGuards(input, method === "POST" ? "POST" : "PUT"))
+      return NextResponse.json(
+        { error: { code: "VALIDATION_FAILED", message: "Invalid clinical write guards." } },
         { status: 400, headers: privateHeaders }
       );
   }

@@ -54,7 +54,8 @@ describe.skipIf(!url)("Weight commands — disposable PostgreSQL", () => {
       return work();
     });
   }
-  const create = (patientId = patient) => run(() => service.createWeight(patientId, input));
+  const create = (patientId = patient) =>
+    run(() => service.createWeight(patientId, input, randomUUID()));
   beforeAll(async () => {
     if (!url || !/^\/newsaas_weight_entry_test_[a-f0-9]{32}$/.test(new URL(url).pathname))
       throw new Error("Disposable database required.");
@@ -109,7 +110,11 @@ describe.skipIf(!url)("Weight commands — disposable PostgreSQL", () => {
   afterAll(() => prisma.$disconnect());
   it("keeps a nullable unit with no database default and legacy output shape", async () => {
     const row = await run(() =>
-      service.createWeight(patient, { quantity: "0.125", measuredAt: input.measuredAt })
+      service.createWeight(
+        patient,
+        { quantity: "0.125", measuredAt: input.measuredAt },
+        randomUUID()
+      )
     );
     expect(row).not.toHaveProperty("unit");
     expect((await run(() => reads.get(patient, row.id))).unit).toBeNull();
@@ -120,9 +125,19 @@ describe.skipIf(!url)("Weight commands — disposable PostgreSQL", () => {
   });
   it("confirms KG on an unknown value explicitly, preserving exact quantity and timestamp with one audit", async () => {
     const row = await run(() =>
-      service.createWeight(patient, { quantity: "0.125", measuredAt: input.measuredAt })
+      service.createWeight(
+        patient,
+        { quantity: "0.125", measuredAt: input.measuredAt },
+        randomUUID()
+      )
     );
-    await run(() => service.updateWeight(patient, row.id, { unit: "KG" }));
+    await run(() =>
+      service.updateWeight(patient, row.id, {
+        expectedVersion: 1,
+        correctionReason: "Synthetic correction",
+        unit: "KG",
+      })
+    );
     expect(await run(() => reads.get(patient, row.id))).toEqual({
       version: 2,
       id: row.id,
@@ -138,29 +153,54 @@ describe.skipIf(!url)("Weight commands — disposable PostgreSQL", () => {
   });
   it("does not silently attach KG to an unqualified legacy quantity correction", async () => {
     const row = await create();
-    await run(() => service.updateWeight(patient, row.id, { measuredAt: "2026-10-21T15:00:00Z" }));
+    await run(() =>
+      service.updateWeight(patient, row.id, {
+        expectedVersion: 1,
+        correctionReason: "Synthetic correction",
+        measuredAt: "2026-10-21T15:00:00Z",
+      })
+    );
     expect((await run(() => reads.get(patient, row.id))).unit).toBe("KG");
-    await run(() => service.updateWeight(patient, row.id, { quantity: "0.001" }));
+    await run(() =>
+      service.updateWeight(patient, row.id, {
+        expectedVersion: 2,
+        correctionReason: "Synthetic correction",
+        quantity: "0.001",
+      })
+    );
     expect(await run(() => reads.get(patient, row.id))).toMatchObject({
       quantity: "0.001",
       unit: null,
     });
   });
   it("validates unit and precision at HTTP schema and direct service boundaries without rounding", async () => {
-    expect(createWeightBody.parse({ ...input, quantity: "9999999.999" }).unit).toBe("KG");
+    expect(
+      createWeightBody.parse({ idempotencyKey: randomUUID(), ...input, quantity: "9999999.999" })
+        .unit
+    ).toBe("KG");
     for (const quantity of ["0", "-1", "0.0001", "10000000", "NaN", "1e2"]) {
-      expect(() => createWeightBody.parse({ ...input, quantity })).toThrow();
+      expect(() =>
+        createWeightBody.parse({ idempotencyKey: randomUUID(), ...input, quantity })
+      ).toThrow();
       await expect(
-        run(() => service.createWeight(patient, { ...input, quantity }))
+        run(() => service.createWeight(patient, { ...input, quantity }, randomUUID()))
       ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
     }
     for (const unit of ["LB", null])
-      expect(() => createWeightBody.parse({ ...input, unit })).toThrow();
+      expect(() =>
+        createWeightBody.parse({ idempotencyKey: randomUUID(), ...input, unit })
+      ).toThrow();
   });
   it("filters KG and unspecified values separately, preserving legacy unqualified ranges", async () => {
-    const known = await run(() => service.createWeight(patient, { ...input, quantity: "777.123" }));
+    const known = await run(() =>
+      service.createWeight(patient, { ...input, quantity: "777.123" }, randomUUID())
+    );
     const unknown = await run(() =>
-      service.createWeight(patient, { quantity: "777.123", measuredAt: input.measuredAt })
+      service.createWeight(
+        patient,
+        { quantity: "777.123", measuredAt: input.measuredAt },
+        randomUUID()
+      )
     );
     const search = (body: object) => run(() => reads.search(patient, weightSearchBody.parse(body)));
     expect(
@@ -204,7 +244,12 @@ describe.skipIf(!url)("Weight commands — disposable PostgreSQL", () => {
   it("updates only supplied fields, preserving precise measurement date", async () => {
     const row = await create();
     const updated = await run(() =>
-      service.updateWeight(patient, row.id, { quantity: "0.125", unit: "KG" })
+      service.updateWeight(patient, row.id, {
+        expectedVersion: 1,
+        correctionReason: "Synthetic correction",
+        quantity: "0.125",
+        unit: "KG",
+      })
     );
     expect(updated).toMatchObject({
       quantity: "0.125",
@@ -218,7 +263,14 @@ describe.skipIf(!url)("Weight commands — disposable PostgreSQL", () => {
   });
   it("does not audit or mutate an empty update", async () => {
     const row = await create();
-    expect(await run(() => service.updateWeight(patient, row.id, {}))).toEqual(row);
+    expect(
+      await run(() =>
+        service.updateWeight(patient, row.id, {
+          expectedVersion: 1,
+          correctionReason: "Synthetic correction",
+        })
+      )
+    ).toEqual(row);
     expect(await prisma.auditLog.count({ where: { targetId: row.id } })).toBe(1);
   });
   it("isolates create anchors and update records/patients without audit side effects", async () => {
@@ -241,7 +293,14 @@ describe.skipIf(!url)("Weight commands — disposable PostgreSQL", () => {
       [patient, randomUUID()],
     ])
       await expect(
-        run(() => service.updateWeight(p, id, { quantity: "0.125", unit: "KG" }))
+        run(() =>
+          service.updateWeight(p, id, {
+            expectedVersion: 1,
+            correctionReason: "Synthetic correction",
+            quantity: "0.125",
+            unit: "KG",
+          })
+        )
       ).rejects.toMatchObject({ code: "NOT_FOUND" });
     expect(await prisma.auditLog.count()).toBe(count);
     expect(
@@ -253,18 +312,36 @@ describe.skipIf(!url)("Weight commands — disposable PostgreSQL", () => {
     keys = new Set(["vet.clinical.read"]);
     await expect(create()).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(
-      run(() => service.updateWeight(patient, row.id, { unit: "KG" }))
+      run(() =>
+        service.updateWeight(patient, row.id, {
+          expectedVersion: 1,
+          correctionReason: "Synthetic correction",
+          unit: "KG",
+        })
+      )
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
     keys = new Set(["vet.clinical.create"]);
     await expect(
-      run(() => service.updateWeight(patient, row.id, { unit: "KG" }))
+      run(() =>
+        service.updateWeight(patient, row.id, {
+          expectedVersion: 1,
+          correctionReason: "Synthetic correction",
+          unit: "KG",
+        })
+      )
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
     keys = new Set(["vet.clinical.update"]);
     await expect(create()).rejects.toMatchObject({ code: "FORBIDDEN" });
     entitled = false;
     await expect(create()).rejects.toMatchObject({ code: "FEATURE_NOT_ENTITLED" });
     await expect(
-      run(() => service.updateWeight(patient, row.id, { unit: "KG" }))
+      run(() =>
+        service.updateWeight(patient, row.id, {
+          expectedVersion: 1,
+          correctionReason: "Synthetic correction",
+          unit: "KG",
+        })
+      )
     ).rejects.toMatchObject({ code: "FEATURE_NOT_ENTITLED" });
   });
   it("rolls back create when audit append fails", async () => {
@@ -283,7 +360,14 @@ describe.skipIf(!url)("Weight commands — disposable PostgreSQL", () => {
     const spy = vi.spyOn(audit, "append").mockRejectedValue(new Error("Synthetic audit failure"));
     try {
       await expect(
-        run(() => service.updateWeight(patient, row.id, { quantity: "0.125", unit: "KG" }))
+        run(() =>
+          service.updateWeight(patient, row.id, {
+            expectedVersion: 1,
+            correctionReason: "Synthetic correction",
+            quantity: "0.125",
+            unit: "KG",
+          })
+        )
       ).rejects.toThrow("Synthetic audit failure");
     } finally {
       spy.mockRestore();

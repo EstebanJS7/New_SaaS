@@ -16,7 +16,7 @@ afterEach(() => vi.unstubAllGlobals());
 describe.each(["treatments", "studies", "weights"])("%s CAS proxy", (kind) => {
   const url = "http://localhost/api/clinical/11111111-1111-4111-8111-111111111111/" + kind;
   it("forwards the exact conditional body and returns private 409 without aborting the command", async () => {
-    const body = '{ "expectedVersion": 1 }';
+    const body = '{ "expectedVersion": 1, "correctionReason": "Synthetic correction" }';
     const response = await PUT(
       new NextRequest(url + "/22222222-2222-4222-8222-222222222222", { method: "PUT", body })
     );

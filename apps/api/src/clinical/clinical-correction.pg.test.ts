@@ -138,41 +138,62 @@ describe.skipIf(!url)("Clinical correction concurrency — disposable PostgreSQL
     kind: string;
     table: string;
     create: (p: string) => Promise<{ id: string }>;
-    update: (p: string, id: string, v?: number, text?: string) => Promise<{ id: string }>;
+    update: (p: string, id: string, v: number, text?: string) => Promise<{ id: string }>;
     read: (p: string, id: string) => Promise<{ id: string; version: number }>;
   }[] = [
     {
       kind: "treatment",
       table: "clinical_treatment",
       create: (p) =>
-        service.createTreatment(p, {
-          description: "Original",
-          context: null,
-          administeredAt: input.measuredAt,
-        }),
+        service.createTreatment(
+          p,
+          {
+            description: "Original",
+            context: null,
+            administeredAt: input.measuredAt,
+          },
+          randomUUID()
+        ),
       update: (p, id, v, text = "Corrected") =>
-        service.updateTreatment(p, id, { description: text, expectedVersion: v }),
+        service.updateTreatment(p, id, {
+          correctionReason: "Synthetic correction",
+          description: text,
+          expectedVersion: v,
+        }),
       read: (p, id) => reads[0].get(p, id),
     },
     {
       kind: "study",
       table: "clinical_study",
       create: (p) =>
-        service.createStudy(p, {
-          studyType: "Original",
-          result: "",
-          performedAt: input.measuredAt,
-        }),
+        service.createStudy(
+          p,
+          {
+            studyType: "Original",
+            result: "",
+            performedAt: input.measuredAt,
+          },
+          randomUUID()
+        ),
       update: (p, id, v, text = "Corrected") =>
-        service.updateStudy(p, id, { result: text, expectedVersion: v }),
+        service.updateStudy(p, id, {
+          correctionReason: "Synthetic correction",
+          result: text,
+          expectedVersion: v,
+        }),
       read: (p, id) => reads[1].get(p, id),
     },
     {
       kind: "weight",
       table: "clinical_weight",
-      create: (p) => service.createWeight(p, input),
+      create: (p) => service.createWeight(p, input, randomUUID()),
       update: (p, id, v, text = "0.125") =>
-        service.updateWeight(p, id, { quantity: text, unit: "KG", expectedVersion: v }),
+        service.updateWeight(p, id, {
+          correctionReason: "Synthetic correction",
+          quantity: text,
+          unit: "KG",
+          expectedVersion: v,
+        }),
       read: (p, id) => reads[2].get(p, id),
     },
   ];
@@ -181,7 +202,7 @@ describe.skipIf(!url)("Clinical correction concurrency — disposable PostgreSQL
       c.kind === "study" ? "studies" : c.kind === "treatment" ? "treatments" : "weights";
     const searchHistory = (id: string, cursor?: number) =>
       run(() => history.search(patient, id, kind, { beforeVersion: cursor }));
-    it("captures exact before/after and historical actor, preserves legacy reasons, and links one audit", async () => {
+    it("captures exact before/after and historical actor, preserves reasons, and links one audit", async () => {
       const row = await run(() => c.create(patient));
       expect((await searchHistory(row.id)).items).toEqual([]);
       await run<{ id: string }>(() =>
@@ -229,10 +250,10 @@ describe.skipIf(!url)("Clinical correction concurrency — disposable PostgreSQL
       });
       expect(auditRow.metadata).toMatchObject({ revisionId: first.id });
       expect(auditRow.metadata).not.toHaveProperty("correctionReason");
-      await run(() => c.update(patient, row.id));
+      await run(() => c.update(patient, row.id, 2));
       const items = (await searchHistory(row.id)).items;
       expect(items.map((x) => x.afterVersion)).toEqual([3, 2]);
-      expect(items[0].reason).toBeNull();
+      expect(items[0].reason).toBe("Synthetic correction");
       expect(items[0].before).toEqual(first.after);
       await expect(run(() => history.search(otherPatient, row.id, kind, {}))).rejects.toMatchObject(
         { code: "NOT_FOUND" }
@@ -243,6 +264,64 @@ describe.skipIf(!url)("Clinical correction concurrency — disposable PostgreSQL
       await expect(
         run(() => history.search(patient, row.id, kind, {}), other)
       ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    });
+    it("retains unattributed historical reasons after a protected correction", async () => {
+      const row = await run(() => c.create(patient));
+      // Direct synthetic SQL models pre-contract history, not an application command.
+      await prisma.$executeRaw(
+        Prisma.sql`UPDATE ${Prisma.raw(c.table)} SET updated_at=now() WHERE id=${row.id}::uuid`
+      );
+      await run(() => c.update(patient, row.id, 2));
+      const items = (await searchHistory(row.id)).items;
+      expect(items.map((x) => x.reason)).toEqual(["Synthetic correction", null]);
+      expect(items[1].actorName).toBeNull();
+    });
+    it("rejects missing and invalid correction guards without record, history or audit effects", async () => {
+      const row = await run(() => c.create(patient));
+      const baseline = await run(() => c.read(patient, row.id));
+      const command = {
+        expectedVersion: baseline.version,
+        correctionReason: "Synthetic correction",
+      };
+      const invalid: unknown[] = [
+        {},
+        { expectedVersion: 1 },
+        { correctionReason: "Synthetic correction" },
+        ...[undefined, null, 0, -1, 1.5, "1", 2147483648, {}, true].map((v) => ({
+          ...command,
+          expectedVersion: v,
+        })),
+        ...[undefined, null, "", "   ", "x".repeat(2001), 1, {}, []].map((v) => ({
+          ...command,
+          correctionReason: v,
+        })),
+      ];
+      const update = (input: unknown): Promise<{ id: string }> =>
+        c.kind === "treatment"
+          ? service.updateTreatment(
+              patient,
+              row.id,
+              input as import("./clinical.records.service.js").UpdateTreatmentInput
+            )
+          : c.kind === "study"
+            ? service.updateStudy(
+                patient,
+                row.id,
+                input as import("./clinical.records.service.js").UpdateStudyInput
+              )
+            : service.updateWeight(
+                patient,
+                row.id,
+                input as import("./clinical.records.service.js").UpdateWeightInput
+              );
+      for (const input of invalid) {
+        await expect(run(() => update(input))).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+        expect(await run(() => c.read(patient, row.id))).toEqual(baseline);
+        expect((await searchHistory(row.id)).items).toEqual([]);
+        expect(
+          await prisma.auditLog.count({ where: { targetId: row.id, action: c.table + ".updated" } })
+        ).toBe(0);
+      }
     });
     it("requires both history and ordinary read permissions plus veterinary", async () => {
       const row = await run(() => c.create(patient));
@@ -326,7 +405,7 @@ describe.skipIf(!url)("Clinical correction concurrency — disposable PostgreSQL
     });
     it("records direct SQL as unattributed without leaking prior transaction actor/reason", async () => {
       const row = await run(() => c.create(patient));
-      await run(() => c.update(patient, row.id));
+      await run(() => c.update(patient, row.id, 1));
       await prisma.$executeRaw(
         Prisma.sql`UPDATE ${Prisma.raw(c.table)} SET updated_at=now() WHERE id=${row.id}::uuid`
       );
@@ -335,11 +414,11 @@ describe.skipIf(!url)("Clinical correction concurrency — disposable PostgreSQL
     });
     it("paginates a bounded immutable version cursor without duplicates on new corrections", async () => {
       const row = await run(() => c.create(patient));
-      for (let i = 0; i < 22; i++) await run(() => c.update(patient, row.id));
+      for (let i = 0; i < 22; i++) await run(() => c.update(patient, row.id, i + 1));
       const first = await searchHistory(row.id);
       expect(first.items).toHaveLength(20);
       expect(first.nextCursor).toBe(4);
-      await run(() => c.update(patient, row.id));
+      await run(() => c.update(patient, row.id, 23));
       const second = await searchHistory(row.id, first.nextCursor!);
       expect(second.items.map((x) => x.afterVersion)).toEqual([3, 2]);
       expect(second.nextCursor).toBeNull();
@@ -378,10 +457,10 @@ describe.skipIf(!url)("Clinical correction concurrency — disposable PostgreSQL
         await prisma.auditLog.count({ where: { targetId: row.id, action: c.table + ".updated" } })
       ).toBe(1);
     });
-    it("rejects stale version after a legacy write, even when values are identical", async () => {
+    it("rejects stale version after protected writes, even when values are identical", async () => {
       const row = await run(() => c.create(patient));
-      await run(() => c.update(patient, row.id));
-      await run(() => c.update(patient, row.id));
+      await run(() => c.update(patient, row.id, 1));
+      await run(() => c.update(patient, row.id, 2));
       const baseline = await run(() => c.read(patient, row.id));
       expect(baseline.version).toBe(3);
       await expect(run(() => c.update(patient, row.id, 1))).rejects.toMatchObject({
@@ -466,29 +545,52 @@ describe.skipIf(!url)("Clinical correction concurrency — disposable PostgreSQL
     });
   });
   it("validates expectedVersion strictly at HTTP schemas and direct service boundaries", async () => {
-    const row = await run(() => service.createWeight(patient, input));
+    const row = await run(() => service.createWeight(patient, input, randomUUID()));
     for (const value of [0, -1, 1.2, "1", null, 2147483648]) {
       for (const schema of [updateTreatmentBody, updateStudyBody, updateWeightBody])
         expect(() => schema.parse({ expectedVersion: value })).toThrow();
       await expect(
-        run(() => service.updateWeight(patient, row.id, { expectedVersion: value as number }))
+        run(() =>
+          service.updateWeight(patient, row.id, {
+            correctionReason: "Synthetic correction",
+            expectedVersion: value as number,
+          })
+        )
       ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
     }
   });
   it("no-op bodies check the baseline without advancing version or auditing", async () => {
     const row = await run(() =>
-      service.createTreatment(patient, {
-        description: "Original",
-        administeredAt: input.measuredAt,
+      service.createTreatment(
+        patient,
+        {
+          description: "Original",
+          administeredAt: input.measuredAt,
+        },
+        randomUUID()
+      )
+    );
+    await run(() =>
+      service.updateTreatment(patient, row.id, {
+        correctionReason: "Synthetic correction",
+        expectedVersion: 1,
       })
     );
-    await run(() => service.updateTreatment(patient, row.id, { expectedVersion: 1 }));
     expect((await run(() => reads[0].get(patient, row.id))).version).toBe(1);
     await run(() =>
-      service.updateTreatment(patient, row.id, { description: "Changed", expectedVersion: 1 })
+      service.updateTreatment(patient, row.id, {
+        correctionReason: "Synthetic correction",
+        description: "Changed",
+        expectedVersion: 1,
+      })
     );
     await expect(
-      run(() => service.updateTreatment(patient, row.id, { expectedVersion: 1 }))
+      run(() =>
+        service.updateTreatment(patient, row.id, {
+          correctionReason: "Synthetic correction",
+          expectedVersion: 1,
+        })
+      )
     ).rejects.toMatchObject({ code: "CONFLICT" });
     expect(
       await prisma.auditLog.count({

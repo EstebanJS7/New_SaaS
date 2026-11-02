@@ -21,7 +21,7 @@ describe.each([
   {
     method: "POST",
     path: id + "/submit",
-    body: { version: 1, command: {} },
+    body: { version: 1, command: { idempotencyKey: id } },
     handler: POST,
     read: false,
   },

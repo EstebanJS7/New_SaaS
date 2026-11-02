@@ -348,7 +348,11 @@ describe.skipIf(!url)("Author-private clinical drafts — disposable PostgreSQL"
   });
   it("keeps a correction uncertain after lost response and never sends it twice", async () => {
     const original = await run(() =>
-      records.createTreatment(patient, { description: "Before", context: null, administeredAt: at })
+      records.createTreatment(
+        patient,
+        { description: "Before", context: null, administeredAt: at },
+        randomUUID()
+      )
     );
     const id = randomUUID(),
       c: ClinicalDraftCopy = {
@@ -422,14 +426,22 @@ describe.skipIf(!url)("Author-private clinical drafts — disposable PostgreSQL"
       const created =
         kind === "study"
           ? await run(() =>
-              records.createStudy(patient, {
-                studyType: "Before",
-                result: "Before",
-                performedAt: at,
-              })
+              records.createStudy(
+                patient,
+                {
+                  studyType: "Before",
+                  result: "Before",
+                  performedAt: at,
+                },
+                randomUUID()
+              )
             )
           : await run(() =>
-              records.createWeight(patient, { quantity: "12.345", unit: "KG", measuredAt: at })
+              records.createWeight(
+                patient,
+                { quantity: "12.345", unit: "KG", measuredAt: at },
+                randomUUID()
+              )
             );
       const c: ClinicalDraftCopy =
         kind === "study"

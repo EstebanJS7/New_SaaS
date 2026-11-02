@@ -138,5 +138,25 @@ export function seedClinicalHttp(db: IsolationDatabase): ClinicalHttpFixture {
     prismaRecord[model] = makeClinicalStore(table);
   }
 
+  // Simulated SQL acknowledgements only; PostgreSQL suites own locks/atomic receipts.
+  const sqlBoundary = db.prisma as unknown as {
+    $queryRaw: (query: unknown, ...values: unknown[]) => Promise<unknown>;
+    $executeRaw: (query: unknown) => Promise<number>;
+  };
+  const originalQuery = sqlBoundary.$queryRaw.bind(db.prisma);
+  sqlBoundary.$queryRaw = (query, ...values) => {
+    const q = query as { sql?: string; values?: unknown[] };
+    if (q.sql?.includes("clinical_creation_receipt")) return Promise.resolve([]);
+    if (q.sql?.includes("pg_advisory_xact_lock")) return Promise.resolve([]);
+    if (q.sql?.includes("SELECT version FROM") && q.values) {
+      const [id, tenantId, patientId] = q.values;
+      const row = Object.values(tables)
+        .flatMap((table) => [...table.values()])
+        .find((r) => r.id === id && r.tenantId === tenantId && r.patientId === patientId);
+      return Promise.resolve(row ? [{ version: row.version ?? 1 }] : []);
+    }
+    return originalQuery(query, ...values);
+  };
+  sqlBoundary.$executeRaw = () => Promise.resolve(1);
   return { patient, tables };
 }

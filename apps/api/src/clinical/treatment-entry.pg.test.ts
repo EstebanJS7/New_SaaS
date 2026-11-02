@@ -49,7 +49,8 @@ describe.skipIf(!url)("Treatment commands — disposable PostgreSQL", () => {
       return work();
     });
   }
-  const create = (patientId = patient) => run(() => service.createTreatment(patientId, input));
+  const create = (patientId = patient) =>
+    run(() => service.createTreatment(patientId, input, randomUUID()));
   beforeAll(async () => {
     if (!url || !/^\/newsaas_treatment_entry_test_[a-f0-9]{32}$/.test(new URL(url).pathname))
       throw new Error("Disposable database required.");
@@ -120,7 +121,11 @@ describe.skipIf(!url)("Treatment commands — disposable PostgreSQL", () => {
   it("updates only supplied fields, preserving precise date and unrelated context", async () => {
     const row = await create();
     const updated = await run(() =>
-      service.updateTreatment(patient, row.id, { description: "Corrected synthetic treatment" })
+      service.updateTreatment(patient, row.id, {
+        expectedVersion: 1,
+        correctionReason: "Synthetic correction",
+        description: "Corrected synthetic treatment",
+      })
     );
     expect(updated).toMatchObject({
       description: "Corrected synthetic treatment",
@@ -135,7 +140,13 @@ describe.skipIf(!url)("Treatment commands — disposable PostgreSQL", () => {
   });
   it("clears context explicitly with null without changing other fields", async () => {
     const row = await create();
-    const updated = await run(() => service.updateTreatment(patient, row.id, { context: null }));
+    const updated = await run(() =>
+      service.updateTreatment(patient, row.id, {
+        expectedVersion: 1,
+        correctionReason: "Synthetic correction",
+        context: null,
+      })
+    );
     expect(updated).toMatchObject({
       context: null,
       description: input.description,
@@ -149,7 +160,14 @@ describe.skipIf(!url)("Treatment commands — disposable PostgreSQL", () => {
   });
   it("does not audit or mutate an empty update", async () => {
     const row = await create();
-    expect(await run(() => service.updateTreatment(patient, row.id, {}))).toEqual(row);
+    expect(
+      await run(() =>
+        service.updateTreatment(patient, row.id, {
+          expectedVersion: 1,
+          correctionReason: "Synthetic correction",
+        })
+      )
+    ).toEqual(row);
     expect(await prisma.auditLog.count({ where: { targetId: row.id } })).toBe(1);
   });
   it("isolates create anchors and update records/patients without audit side effects", async () => {
@@ -172,7 +190,13 @@ describe.skipIf(!url)("Treatment commands — disposable PostgreSQL", () => {
       [patient, randomUUID()],
     ])
       await expect(
-        run(() => service.updateTreatment(p, id, { description: "Forbidden" }))
+        run(() =>
+          service.updateTreatment(p, id, {
+            expectedVersion: 1,
+            correctionReason: "Synthetic correction",
+            description: "Forbidden",
+          })
+        )
       ).rejects.toMatchObject({ code: "NOT_FOUND" });
     expect(await prisma.auditLog.count()).toBe(count);
     expect(
@@ -184,18 +208,36 @@ describe.skipIf(!url)("Treatment commands — disposable PostgreSQL", () => {
     keys = new Set(["vet.clinical.read"]);
     await expect(create()).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(
-      run(() => service.updateTreatment(patient, row.id, { context: null }))
+      run(() =>
+        service.updateTreatment(patient, row.id, {
+          expectedVersion: 1,
+          correctionReason: "Synthetic correction",
+          context: null,
+        })
+      )
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
     keys = new Set(["vet.clinical.create"]);
     await expect(
-      run(() => service.updateTreatment(patient, row.id, { context: null }))
+      run(() =>
+        service.updateTreatment(patient, row.id, {
+          expectedVersion: 1,
+          correctionReason: "Synthetic correction",
+          context: null,
+        })
+      )
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
     keys = new Set(["vet.clinical.update"]);
     await expect(create()).rejects.toMatchObject({ code: "FORBIDDEN" });
     entitled = false;
     await expect(create()).rejects.toMatchObject({ code: "FEATURE_NOT_ENTITLED" });
     await expect(
-      run(() => service.updateTreatment(patient, row.id, { context: null }))
+      run(() =>
+        service.updateTreatment(patient, row.id, {
+          expectedVersion: 1,
+          correctionReason: "Synthetic correction",
+          context: null,
+        })
+      )
     ).rejects.toMatchObject({ code: "FEATURE_NOT_ENTITLED" });
   });
   it("rolls back create when audit append fails", async () => {
@@ -214,7 +256,13 @@ describe.skipIf(!url)("Treatment commands — disposable PostgreSQL", () => {
     const spy = vi.spyOn(audit, "append").mockRejectedValue(new Error("Synthetic audit failure"));
     try {
       await expect(
-        run(() => service.updateTreatment(patient, row.id, { description: "Must roll back" }))
+        run(() =>
+          service.updateTreatment(patient, row.id, {
+            expectedVersion: 1,
+            correctionReason: "Synthetic correction",
+            description: "Must roll back",
+          })
+        )
       ).rejects.toThrow("Synthetic audit failure");
     } finally {
       spy.mockRestore();

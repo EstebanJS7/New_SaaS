@@ -259,11 +259,11 @@ function renderRecords(
 }
 
 async function openVaccinationForm(): Promise<void> {
-  fireEvent.click(await screen.findByRole("button", { name: "Record vaccination" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Registrar vacuna" }));
 }
 
 async function openDewormingForm(): Promise<void> {
-  fireEvent.click(await screen.findByRole("button", { name: "Record deworming" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Registrar desparasitación" }));
 }
 
 describe("clinical record entry surface", () => {
@@ -279,8 +279,8 @@ describe("clinical record entry surface", () => {
 
     renderRecords();
 
-    expect(await screen.findByText("Loading vaccinations...")).toBeInTheDocument();
-    expect(await screen.findByText("Loading deworming treatments...")).toBeInTheDocument();
+    expect(await screen.findByText("Cargando vacunas…")).toBeInTheDocument();
+    expect(await screen.findByText("Cargando desparasitaciones…")).toBeInTheDocument();
   });
 
   it("renders the empty state with a create affordance for both kinds", async () => {
@@ -289,13 +289,13 @@ describe("clinical record entry surface", () => {
     renderRecords();
 
     expect(
-      await screen.findByText("No vaccinations recorded for this patient yet.")
+      await screen.findByText("Este paciente todavía no tiene vacunas registradas.")
     ).toBeInTheDocument();
     expect(
-      await screen.findByText("No deworming treatments recorded for this patient yet.")
+      await screen.findByText("Este paciente todavía no tiene desparasitaciones registradas.")
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Record vaccination" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Record deworming" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Registrar vacuna" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Registrar desparasitación" })).toBeInTheDocument();
   });
 
   it("lists a vaccination with its administered date and its due date", async () => {
@@ -307,7 +307,7 @@ describe("clinical record entry surface", () => {
     expect(await within(list).findByText("Rabies")).toBeInTheDocument();
     expect(within(list).getByText(formatRecordedDate(ADMINISTERED_AT))).toBeInTheDocument();
     expect(within(list).getByText(formatRecordedDate(DUE_AT))).toBeInTheDocument();
-    expect(within(list).queryByText("No due date recorded")).not.toBeInTheDocument();
+    expect(within(list).queryByText("Sin fecha indicada")).not.toBeInTheDocument();
   });
 
   it("says a vaccination has no due date instead of rendering blank", async () => {
@@ -316,7 +316,7 @@ describe("clinical record entry surface", () => {
     renderRecords();
 
     const list = await screen.findByTestId("vaccination-records");
-    expect(await within(list).findByText("No due date recorded")).toBeInTheDocument();
+    expect(await within(list).findByText("Sin fecha indicada")).toBeInTheDocument();
   });
 
   it("says a deworming treatment has no due date instead of rendering blank", async () => {
@@ -325,7 +325,7 @@ describe("clinical record entry surface", () => {
     renderRecords();
 
     const list = await screen.findByTestId("deworming-records");
-    expect(await within(list).findByText("No due date recorded")).toBeInTheDocument();
+    expect(await within(list).findByText("Sin fecha indicada")).toBeInTheDocument();
     expect(within(list).getByText("Praziquantel")).toBeInTheDocument();
     expect(within(list).getByText(formatRecordedDate(ADMINISTERED_AT))).toBeInTheDocument();
   });
@@ -360,7 +360,7 @@ describe("clinical record entry surface", () => {
     renderRecords();
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "You do not have permission to manage clinical records."
+      "No tenés permiso para gestionar fichas clínicas."
     );
   });
 
@@ -374,7 +374,7 @@ describe("clinical record entry surface", () => {
     const list = await screen.findByTestId("deworming-records");
     await waitFor(() => {
       expect(within(list).getByRole("alert")).toHaveTextContent(
-        "You do not have permission to manage clinical records."
+        "No tenés permiso para gestionar fichas clínicas."
       );
     });
   });
@@ -384,16 +384,16 @@ describe("clinical record entry surface", () => {
 
     renderRecords();
     await openVaccinationForm();
-    fireEvent.change(screen.getByLabelText("Vaccine"), { target: { value: "Rabies" } });
+    fireEvent.change(screen.getByLabelText("Vacuna"), { target: { value: "Rabies" } });
     fireEvent.change(screen.getByLabelText("Administered on"), {
       target: { value: "2026-10-19" },
     });
-    fireEvent.change(screen.getByLabelText("Next dose due (optional)"), {
+    fireEvent.change(screen.getByLabelText("Próxima dosis (opcional)"), {
       target: { value: "2027-10-19" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save vaccination" }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar vacuna" }));
 
-    expect(await screen.findByText("Vaccination recorded.")).toBeInTheDocument();
+    expect(await screen.findByText("Vacuna registrada.")).toBeInTheDocument();
 
     const created = calls(fetchMock, `/vaccinations`, "POST");
     expect(created).toHaveLength(1);
@@ -417,11 +417,11 @@ describe("clinical record entry surface", () => {
 
     renderRecords();
     await openVaccinationForm();
-    fireEvent.change(screen.getByLabelText("Vaccine"), { target: { value: "Rabies" } });
+    fireEvent.change(screen.getByLabelText("Vacuna"), { target: { value: "Rabies" } });
     fireEvent.change(screen.getByLabelText("Administered on"), {
       target: { value: "2026-10-19" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save vaccination" }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar vacuna" }));
 
     await waitFor(() => expect(calls(fetchMock, `/vaccinations`, "POST")).toHaveLength(1));
 
@@ -435,21 +435,21 @@ describe("clinical record entry surface", () => {
     expect(body).not.toHaveProperty("nextDueAt");
 
     const list = await screen.findByTestId("vaccination-records");
-    expect(await within(list).findByText("No due date recorded")).toBeInTheDocument();
+    expect(await within(list).findByText("Sin fecha indicada")).toBeInTheDocument();
   });
 
   it("corrects a vaccination's due date and lists the new instant", async () => {
     const fetchMock = mockRecords({}, { vaccinations: [VACCINATION] });
 
     renderRecords();
-    fireEvent.click(await screen.findByRole("button", { name: "Correct" }));
-    fireEvent.change(screen.getByLabelText("Vaccine"), { target: { value: "Rabies (booster)" } });
-    fireEvent.change(screen.getByLabelText("Next dose due (optional)"), {
+    fireEvent.click(await screen.findByRole("button", { name: "Corregir" }));
+    fireEvent.change(screen.getByLabelText("Vacuna"), { target: { value: "Rabies (booster)" } });
+    fireEvent.change(screen.getByLabelText("Próxima dosis (opcional)"), {
       target: { value: CORRECTED_DUE_INPUT },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
 
-    expect(await screen.findByText("Vaccination corrected.")).toBeInTheDocument();
+    expect(await screen.findByText("Vacuna corregida.")).toBeInTheDocument();
 
     const updated = calls(fetchMock, `/vaccinations/${VACCINATION_ID}`, "PUT");
     expect(updated).toHaveLength(1);
@@ -471,10 +471,10 @@ describe("clinical record entry surface", () => {
     const list = await screen.findByTestId("vaccination-records");
     expect(await within(list).findByText(formatRecordedDate(DUE_AT))).toBeInTheDocument();
 
-    fireEvent.click(within(list).getByRole("button", { name: "Correct" }));
-    fireEvent.click(screen.getByRole("button", { name: "Clear due date" }));
+    fireEvent.click(within(list).getByRole("button", { name: "Corregir" }));
+    fireEvent.click(screen.getByRole("button", { name: "Quitar próxima fecha" }));
 
-    expect(await screen.findByText("Due date removed.")).toBeInTheDocument();
+    expect(await screen.findByText("Próxima fecha quitada.")).toBeInTheDocument();
 
     const updated = calls(fetchMock, `/vaccinations/${VACCINATION_ID}`, "PUT");
     expect(updated).toHaveLength(1);
@@ -483,7 +483,7 @@ describe("clinical record entry surface", () => {
     expect(updated[0]?.body).toEqual({ nextDueAt: null });
 
     await waitFor(() => {
-      expect(within(list).getByText("No due date recorded")).toBeInTheDocument();
+      expect(within(list).getByText("Sin fecha indicada")).toBeInTheDocument();
     });
     expect(within(list).queryByText(formatRecordedDate(DUE_AT))).not.toBeInTheDocument();
   });
@@ -493,16 +493,16 @@ describe("clinical record entry surface", () => {
 
     renderRecords();
     await openDewormingForm();
-    fireEvent.change(screen.getByLabelText("Product"), { target: { value: "Praziquantel" } });
+    fireEvent.change(screen.getByLabelText("Producto"), { target: { value: "Praziquantel" } });
     fireEvent.change(screen.getByLabelText("Administered on"), {
       target: { value: "2026-10-19" },
     });
-    fireEvent.change(screen.getByLabelText("Next treatment due (optional)"), {
+    fireEvent.change(screen.getByLabelText("Próxima desparasitación (opcional)"), {
       target: { value: "2027-01-19" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save deworming" }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar desparasitación" }));
 
-    expect(await screen.findByText("Deworming treatment recorded.")).toBeInTheDocument();
+    expect(await screen.findByText("Desparasitación registrada.")).toBeInTheDocument();
 
     const created = calls(fetchMock, `/deworming`, "POST");
     expect(created).toHaveLength(1);
@@ -523,8 +523,8 @@ describe("clinical record entry surface", () => {
     const list = await screen.findByTestId("deworming-records");
     expect(await within(list).findByText(formatRecordedDate(DUE_AT))).toBeInTheDocument();
 
-    fireEvent.click(within(list).getByRole("button", { name: "Correct" }));
-    fireEvent.click(screen.getByRole("button", { name: "Clear due date" }));
+    fireEvent.click(within(list).getByRole("button", { name: "Corregir" }));
+    fireEvent.click(screen.getByRole("button", { name: "Quitar próxima fecha" }));
 
     await waitFor(() =>
       expect(calls(fetchMock, `/deworming/${DEWORMING_ID}`, "PUT")).toHaveLength(1)
@@ -534,7 +534,7 @@ describe("clinical record entry surface", () => {
     });
 
     await waitFor(() => {
-      expect(within(list).getByText("No due date recorded")).toBeInTheDocument();
+      expect(within(list).getByText("Sin fecha indicada")).toBeInTheDocument();
     });
   });
 
@@ -545,9 +545,11 @@ describe("clinical record entry surface", () => {
 
     expect(await screen.findByText("Rabies")).toBeInTheDocument();
     expect(screen.getByText("Praziquantel")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Record vaccination" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Record deworming" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Correct" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Registrar vacuna" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Registrar desparasitación" })
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Corregir" })).not.toBeInTheDocument();
   });
 
   it("shows the create actions when the write permissions are granted", async () => {
@@ -557,8 +559,8 @@ describe("clinical record entry surface", () => {
       permissions: ["vet.clinical.read", "vet.clinical.create", "vet.clinical.update"],
     });
 
-    expect(await screen.findByRole("button", { name: "Record vaccination" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Record deworming" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Registrar vacuna" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Registrar desparasitación" })).toBeInTheDocument();
   });
 
   it("keeps the actions when the caller's permissions are unknown, leaving the API authoritative", async () => {
@@ -566,7 +568,7 @@ describe("clinical record entry surface", () => {
 
     renderRecords();
 
-    expect(await screen.findByRole("button", { name: "Record vaccination" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Registrar vacuna" })).toBeInTheDocument();
   });
 
   it("announces a refused create and withdraws the action", async () => {
@@ -577,17 +579,17 @@ describe("clinical record entry surface", () => {
 
     renderRecords();
     await openVaccinationForm();
-    fireEvent.change(screen.getByLabelText("Vaccine"), { target: { value: "Rabies" } });
+    fireEvent.change(screen.getByLabelText("Vacuna"), { target: { value: "Rabies" } });
     fireEvent.change(screen.getByLabelText("Administered on"), {
       target: { value: "2026-10-19" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save vaccination" }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar vacuna" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "You do not have permission to manage clinical records."
+      "No tenés permiso para gestionar fichas clínicas."
     );
     await waitFor(() => {
-      expect(screen.queryByRole("button", { name: "Record vaccination" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Registrar vacuna" })).not.toBeInTheDocument();
     });
   });
 
@@ -602,11 +604,11 @@ describe("clinical record entry surface", () => {
 
     renderRecords();
     await openVaccinationForm();
-    fireEvent.change(screen.getByLabelText("Vaccine"), { target: { value: "Rabies" } });
+    fireEvent.change(screen.getByLabelText("Vacuna"), { target: { value: "Rabies" } });
     fireEvent.change(screen.getByLabelText("Administered on"), {
       target: { value: "2026-10-19" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save vaccination" }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar vacuna" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Invalid vaccination body.");
   });
@@ -622,11 +624,11 @@ describe("clinical record entry surface", () => {
 
     renderRecords();
     await openDewormingForm();
-    fireEvent.change(screen.getByLabelText("Product"), { target: { value: "Praziquantel" } });
+    fireEvent.change(screen.getByLabelText("Producto"), { target: { value: "Praziquantel" } });
     fireEvent.change(screen.getByLabelText("Administered on"), {
       target: { value: "2026-10-19" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save deworming" }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar desparasitación" }));
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("The record changed elsewhere.");
@@ -639,11 +641,11 @@ describe("clinical record entry surface", () => {
     renderRecords();
     await openVaccinationForm();
     // A tenant-looking value typed into the form is a NAME, never an authority.
-    fireEvent.change(screen.getByLabelText("Vaccine"), { target: { value: TENANT_ID } });
+    fireEvent.change(screen.getByLabelText("Vacuna"), { target: { value: TENANT_ID } });
     fireEvent.change(screen.getByLabelText("Administered on"), {
       target: { value: "2026-10-19" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save vaccination" }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar vacuna" }));
 
     await waitFor(() => expect(calls(fetchMock, `/vaccinations`, "POST")).toHaveLength(1));
 
@@ -657,8 +659,8 @@ describe("clinical record entry surface", () => {
 
 describe("clinical record date helpers", () => {
   it("renders the stored instant as the calendar date staff chose", () => {
-    expect(formatRecordedDate(ADMINISTERED_AT)).toBe("2026-10-19");
-    expect(formatRecordedDate(ADMINISTERED_AT)).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(formatRecordedDate(ADMINISTERED_AT)).toBe("19 oct. 2026");
+    expect(formatRecordedDate("2026-01-05T12:00:00.000Z")).toBe("5 ene. 2026");
   });
 
   it("pins a chosen date to noon UTC, so the TENANT day is the day staff typed", () => {

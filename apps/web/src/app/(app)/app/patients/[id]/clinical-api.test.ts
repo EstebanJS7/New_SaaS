@@ -197,7 +197,7 @@ describe("clinical-api contract", () => {
     expect((error as ApiRequestError).status).toBe(403);
     expect(isClinicalPermissionDenied(error as Error)).toBe(true);
     expect(userFacingClinicalError(error as Error)).toBe(
-      "You do not have permission to manage clinical records."
+      "No tenés permiso para gestionar fichas clínicas."
     );
   });
 
@@ -532,9 +532,7 @@ describe("clinical specialized record contract", () => {
 
     expect(error.status).toBe(403);
     expect(isClinicalPermissionDenied(error)).toBe(true);
-    expect(userFacingClinicalError(error)).toBe(
-      "You do not have permission to manage clinical records."
-    );
+    expect(userFacingClinicalError(error)).toBe("No tenés permiso para gestionar fichas clínicas.");
   });
 
   it("distinguishes a 409 conflict from a validation failure", async () => {

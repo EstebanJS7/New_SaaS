@@ -46,7 +46,7 @@ describe.each(["treatments", "studies", "weights"])("%s creation key proxy", (ki
       expect(new Headers(init?.headers).has("Idempotency-Key")).toBe(false);
   });
 
-  it("preserves legacy POST and PUT bodies without manufacturing protection", async () => {
+  it("rejects unprotected POST and PUT bodies without manufacturing protection", async () => {
     for (const [method, handler, suffix] of [
       ["POST", POST, ""],
       ["PUT", PUT, "/" + key],
@@ -58,10 +58,9 @@ describe.each(["treatments", "studies", "weights"])("%s creation key proxy", (ki
           body,
         })
       );
-      expect(response.status).toBe(201);
+      expect(response.status).toBe(400);
       expect(response.headers.get("cache-control")).toBe("private, no-store");
-      expect(fetchMock.mock.calls.at(-1)?.[1]?.body).toBe(body);
     }
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
