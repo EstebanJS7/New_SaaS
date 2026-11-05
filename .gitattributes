@@ -1,0 +1,5 @@
+# Los scripts que corren en Linux (VPS y contenedores) necesitan fin de línea LF
+# aunque el repositorio se clone en Windows.
+*.sh text eol=lf
+infra/deploy/Caddyfile text eol=lf
+infra/deploy/postgres/* text eol=lf

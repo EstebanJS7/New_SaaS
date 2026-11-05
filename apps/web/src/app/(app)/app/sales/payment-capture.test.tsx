@@ -159,6 +159,7 @@ describe("PaymentCapture", () => {
     fireEvent.click(screen.getByRole("button", { name: "Agregar medio de pago" }));
     fireEvent.change(screen.getByLabelText("Medio de pago 2"), { target: { value: "QR" } });
     fireEvent.change(screen.getByLabelText("Importe del pago 2"), { target: { value: "500,00" } });
+    fireEvent.change(screen.getByLabelText("Tipo de QR"), { target: { value: "WALLET" } });
 
     expect(screen.getByTestId("payment-sum")).toHaveTextContent("Suma de pagos: Gs. 1.500.");
 
@@ -166,7 +167,7 @@ describe("PaymentCapture", () => {
 
     expect(onSubmit).toHaveBeenCalledWith([
       { method: "CASH", amount: "1000.00" },
-      { method: "QR", amount: "500.00" },
+      { method: "QR", amount: "500.00", qrKind: "WALLET" },
     ]);
   });
 
@@ -177,12 +178,55 @@ describe("PaymentCapture", () => {
     fireEvent.change(screen.getByLabelText("Importe del pago 1"), { target: { value: "0,10" } });
     fireEvent.click(screen.getByRole("button", { name: "Agregar medio de pago" }));
     fireEvent.change(screen.getByLabelText("Importe del pago 2"), { target: { value: "0,20" } });
+    fireEvent.change(screen.getByLabelText("Tipo de tarjeta"), { target: { value: "DEBIT" } });
+    fireEvent.change(screen.getByLabelText("Marca de la tarjeta"), { target: { value: "CABAL" } });
 
     await confirmSale();
 
     expect(onSubmit).toHaveBeenCalledWith([
       { method: "CASH", amount: "0.10" },
-      { method: "CARD", amount: "0.20" },
+      { method: "CARD", amount: "0.20", card: { type: "DEBIT", brand: "CABAL" } },
+    ]);
+  });
+
+  it("holds a card payment until its type and brand are chosen (PAY-DET-001)", () => {
+    render(<PaymentCapture total={TOTAL} currency="PYG" onSubmit={vi.fn()} isPending={false} />);
+    fireEvent.change(screen.getByLabelText("Medio de pago 1"), { target: { value: "CARD" } });
+
+    expect(screen.getByRole("button", { name: "Revisar venta" })).toBeDisabled();
+    expect(screen.getByText(/crédito o de débito, y su marca/)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Tipo de tarjeta"), { target: { value: "CREDIT" } });
+    fireEvent.change(screen.getByLabelText("Marca de la tarjeta"), { target: { value: "OTHER" } });
+    expect(screen.getByRole("button", { name: "Revisar venta" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Nombre de la marca"), { target: { value: "Bancard" } });
+
+    expect(screen.getByRole("button", { name: "Revisar venta" })).toBeEnabled();
+  });
+
+  it("sends a cheque's number and bank, and an 'other' payment's description", async () => {
+    const onSubmit = vi.fn();
+    render(<PaymentCapture total={TOTAL} currency="PYG" onSubmit={onSubmit} isPending={false} />);
+    fireEvent.change(screen.getByLabelText("Medio de pago 1"), { target: { value: "CHECK" } });
+    fireEvent.change(screen.getByLabelText("Importe del pago 1"), {
+      target: { value: "1.000,00" },
+    });
+    fireEvent.change(screen.getByLabelText("Número de cheque"), { target: { value: "1234" } });
+    fireEvent.change(screen.getByLabelText("Banco del cheque"), {
+      target: { value: "Banco Basa" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Agregar medio de pago" }));
+    fireEvent.change(screen.getByLabelText("Medio de pago 2"), { target: { value: "OTHER" } });
+    fireEvent.change(screen.getByLabelText("Importe del pago 2"), { target: { value: "500,00" } });
+    fireEvent.change(screen.getByLabelText("Descripción del medio de pago"), {
+      target: { value: "Canje de puntos" },
+    });
+
+    await confirmSale();
+
+    expect(onSubmit).toHaveBeenCalledWith([
+      { method: "CHECK", amount: "1000.00", check: { number: "1234", bank: "Banco Basa" } },
+      { method: "OTHER", amount: "500.00", otherDescription: "Canje de puntos" },
     ]);
   });
 

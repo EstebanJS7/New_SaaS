@@ -19,7 +19,11 @@ type CashMethod = "GET" | "POST";
  * Shapes of the cash API surface this proxy serves: the register, session and
  * movement sub-collections plus the terminal session-close command.
  */
-type CashPathShape = "registers" | "sessions" | "movements" | "sessionClose";
+type CashPathShape =
+  "registers" | "sessions" | "movements" | "sessionClose" | "sessionAttempt" | "movementAttempt";
+
+/** UX-035: an attempt key is the UUID the browser minted for that attempt. */
+const ATTEMPT_KEY_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * The seven routes this proxy serves, matching the API's own cash surface
@@ -71,6 +75,8 @@ const CASH_QUERY_KEYS: Readonly<Record<CashPathShape, readonly string[]>> = {
   sessions: ["status"],
   movements: ["sessionId"],
   sessionClose: [],
+  sessionAttempt: [],
+  movementAttempt: [],
 };
 
 /**
@@ -85,8 +91,9 @@ const CASH_QUERY_KEYS: Readonly<Record<CashPathShape, readonly string[]>> = {
  * schemas deliberately exclude — `tenantId` (server-resolved, never caller
  * authority), the server-owned `status` and `isActive`, the server-resolved
  * `openedByMembershipId` instead of any caller identity, the server-derived
- * movement `registerId`, and the non-existent `currency` and `branchId`
- * (DEC-020: there is no currency column and no Branch dimension). The refusal
+ * movement `registerId`, the non-existent `currency`, and a `branchId` on any
+ * shape but the register create (MB-002: a session and a movement follow their
+ * register's branch). The refusal
  * reuses the API's own stable `VALIDATION_FAILED` envelope and message for the
  * shape, so a caller cannot tell a proxy refusal from an API refusal by shape or
  * by text ([[TD-013]]).
@@ -99,10 +106,13 @@ const CASH_QUERY_KEYS: Readonly<Record<CashPathShape, readonly string[]>> = {
  * validator.
  */
 const CASH_BODY_KEYS: Readonly<Record<CashPathShape, readonly string[]>> = {
-  registers: ["name"],
+  // MB-002 (DEC-094 §9): a register may name its branch; the API checks it.
+  registers: ["name", "branchId"],
   sessions: ["registerId", "openingAmount"],
   movements: ["sessionId", "type", "amount", "reason", "direction"],
   sessionClose: ["countedAmount"],
+  sessionAttempt: [],
+  movementAttempt: [],
 };
 
 /**
@@ -116,6 +126,8 @@ const CASH_BODY_MESSAGES: Readonly<Record<CashPathShape, string>> = {
   sessions: "Invalid cash session open body.",
   movements: "Invalid cash movement create body.",
   sessionClose: "Invalid cash session close body.",
+  sessionAttempt: "Invalid cash attempt request.",
+  movementAttempt: "Invalid cash attempt request.",
 };
 
 /** Uniform not-found: this boundary never reveals whether a path exists. */
@@ -198,6 +210,16 @@ function cashPathShape(segments: readonly string[], method: CashMethod): CashPat
   }
   if (segments.length === 3 && segments[0] === "sessions" && segments[2] === "close") {
     return method === "POST" ? "sessionClose" : null;
+  }
+  // UX-035 / TD-073: `GET /cash/{sessions|movements}/attempts/:key`, read-only.
+  if (
+    segments.length === 3 &&
+    segments[1] === "attempts" &&
+    method === "GET" &&
+    ATTEMPT_KEY_PATTERN.test(segments[2] ?? "")
+  ) {
+    if (segments[0] === "sessions") return "sessionAttempt";
+    if (segments[0] === "movements") return "movementAttempt";
   }
   return null;
 }
@@ -418,7 +440,8 @@ async function proxyCashRequest(request: NextRequest, method: CashMethod): Promi
   // never mints, rewrites or reuses one — and forwards it on NO other shape, so
   // the read paths stay exactly as header-thin as before. An absent (or empty)
   // key stays absent, so the API answers its own stable `400`.
-  if (resolution.shape === "movements" && method === "POST") {
+  // UX-035: the session open takes an OPTIONAL key, forwarded the same way.
+  if ((resolution.shape === "movements" || resolution.shape === "sessions") && method === "POST") {
     const idempotencyKey = request.headers.get("Idempotency-Key");
     if (idempotencyKey) {
       headers["Idempotency-Key"] = idempotencyKey;

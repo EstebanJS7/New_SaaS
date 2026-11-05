@@ -144,3 +144,43 @@ describe("the reset form", () => {
     expect(screen.getByTestId("reset-problem").textContent).not.toContain("network down");
   });
 });
+
+describe("the activation variant (ONB-001)", () => {
+  function fillActivation(password: string): void {
+    fireEvent.change(screen.getByLabelText("Contraseña"), { target: { value: password } });
+    fireEvent.change(screen.getByLabelText("Repetí la contraseña"), {
+      target: { value: password },
+    });
+  }
+
+  it("speaks of activating an account, not of replacing a password", () => {
+    render(<ResetPasswordForm token={TOKEN} activation />);
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Activá tu cuenta");
+    expect(screen.getByRole("button", { name: "Activar cuenta" })).toBeInTheDocument();
+  });
+
+  it("posts to the same endpoint and confirms the account is active", async () => {
+    const calls: string[] = [];
+    installFetch((url) => {
+      calls.push(url);
+      return jsonResponse({ status: "reset" });
+    });
+    render(<ResetPasswordForm token={TOKEN} activation />);
+    fillActivation("a-long-enough-password");
+    fireEvent.click(screen.getByRole("button", { name: "Activar cuenta" }));
+
+    expect(await screen.findByTestId("reset-done")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Cuenta activada");
+    expect(calls).toEqual(["/api/auth/password-reset"]);
+  });
+
+  it("tells an invitee whose link is unusable where to get a new one", async () => {
+    installFetch(() => jsonResponse({ error: { code: "UNAUTHENTICATED", message: "x" } }, 401));
+    render(<ResetPasswordForm token={TOKEN} activation />);
+    fillActivation("a-long-enough-password");
+    fireEvent.click(screen.getByRole("button", { name: "Activar cuenta" }));
+
+    const problem = await screen.findByTestId("reset-problem");
+    expect(problem.textContent).toContain("¿Olvidaste tu contraseña?");
+  });
+});

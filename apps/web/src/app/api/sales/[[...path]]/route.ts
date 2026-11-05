@@ -24,7 +24,8 @@ type SaleMethod = "GET" | "POST" | "PUT";
  * apart is what lets a known path reached with a wrong method answer with a
  * method refusal instead of being conflated with an unknown path.
  */
-type SalePathShape = "list" | "item" | "cancel" | "complete" | "search";
+type SalePathShape =
+  "list" | "item" | "cancel" | "complete" | "search" | "reverse" | "reversal" | "attempt";
 
 /**
  * Method-aware allowlist for the sale proxy (EPIC-12 POS-004).
@@ -49,8 +50,10 @@ type SalePathShape = "list" | "item" | "cancel" | "complete" | "search";
  * commands may change.
  */
 const ALLOWED_SALE_ROUTES: Readonly<Record<SaleMethod, ReadonlySet<SalePathShape>>> = {
-  GET: new Set<SalePathShape>(["list", "item"]),
-  POST: new Set<SalePathShape>(["list", "cancel", "complete", "search"]),
+  // SAL-REV-001: `POST /sales/:uuid/reverse` and its read `GET /sales/:uuid/reversal`.
+  // UX-035 / TD-071: `GET /sales/attempts/:key`, the draft a create attempt recorded.
+  GET: new Set<SalePathShape>(["list", "item", "reversal", "attempt"]),
+  POST: new Set<SalePathShape>(["list", "cancel", "complete", "search", "reverse"]),
   PUT: new Set<SalePathShape>(["item"]),
 };
 
@@ -88,10 +91,14 @@ const SALE_LIST_QUERY_KEYS = ["status"] as const;
  */
 const SALE_BODY_KEYS: Readonly<Record<SalePathShape, readonly string[]>> = {
   search: ["q", "page", "status", "sort"],
-  list: ["customerId", "lines"],
+  // MB-002 (DEC-094 §9): a new sale may name its branch; editing a draft may not.
+  list: ["customerId", "branchId", "lines"],
   item: ["customerId", "lines"],
   cancel: [],
   complete: ["payments"],
+  reverse: ["reason"],
+  reversal: [],
+  attempt: [],
 };
 
 /**
@@ -108,6 +115,9 @@ const SALE_BODY_MESSAGES: Readonly<Record<SalePathShape, string>> = {
   item: "Invalid sale update body.",
   cancel: "Invalid sale cancel body.",
   complete: "Invalid sale completion body.",
+  reverse: "Invalid sale reversal body.",
+  reversal: "Invalid sale reversal request.",
+  attempt: "Invalid sale attempt request.",
 };
 
 /**
@@ -207,12 +217,22 @@ function salePathShape(segments: readonly string[]): SalePathShape | null {
   }
   if (segments.length === 2) {
     const [first, second] = segments;
+    // UX-035: the attempt key is the UUID the browser minted for that attempt.
+    if (first === "attempts" && second !== undefined && UUID_PATTERN.test(second)) {
+      return "attempt";
+    }
     if (first !== undefined && UUID_PATTERN.test(first)) {
       if (second === "cancel") {
         return "cancel";
       }
       if (second === "complete") {
         return "complete";
+      }
+      if (second === "reverse") {
+        return "reverse";
+      }
+      if (second === "reversal") {
+        return "reversal";
       }
     }
   }
@@ -426,7 +446,13 @@ async function proxySaleRequest(request: NextRequest, method: SaleMethod): Promi
   // beyond the credential: it crosses on that shape verbatim and is dropped
   // everywhere else, exactly as every other non-allowlisted browser header is. It
   // is never generated, reused or derived by the proxy.
-  if (resolution.shape === "complete") {
+  // UX-035 / TD-071: the create command (`POST` on the list shape) takes an
+  // OPTIONAL key too, forwarded verbatim and never minted here.
+  if (
+    resolution.shape === "complete" ||
+    resolution.shape === "reverse" ||
+    (resolution.shape === "list" && method === "POST")
+  ) {
     const idempotencyKey = request.headers.get(IDEMPOTENCY_KEY_HEADER);
     if (idempotencyKey !== null) {
       headers[IDEMPOTENCY_KEY_HEADER] = idempotencyKey;

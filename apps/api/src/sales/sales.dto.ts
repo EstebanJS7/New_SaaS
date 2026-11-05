@@ -62,6 +62,8 @@ export interface SaleResponse {
    * substitute for it.
    */
   readonly completedAt: string | null;
+  /** MB-002 (DEC-094 §9): the branch the sale belongs to. */
+  readonly branchId: string;
   readonly createdAt: string;
   readonly updatedAt: string;
 }

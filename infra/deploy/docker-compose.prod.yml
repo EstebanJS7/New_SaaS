@@ -1,0 +1,257 @@
+# Stack de producción de NewSaaS para un VPS único (piloto).
+#
+#   cd /opt/newsaas
+#   docker compose -f docker-compose.prod.yml --env-file env.production pull
+#   docker compose -f docker-compose.prod.yml --env-file env.production up -d
+#
+# Solo Caddy publica puertos (80/443). PostgreSQL, Redis y MinIO quedan en la red
+# interna; `backup` respalda PostgreSQL hacia almacenamiento externo. Las imágenes de la app se publican en GHCR desde GitHub Actions
+# (.github/workflows/deploy.yml); IMAGE_TAG elige la versión.
+
+# DEC-093: seguimiento de errores (Sentry). Vacío = apagado.
+x-error-tracking-env: &error-tracking-env
+  SENTRY_DSN: ${SENTRY_DSN:-}
+  SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
+  SENTRY_RELEASE: ${IMAGE_TAG}
+
+x-app-env: &app-env
+  NODE_ENV: production
+  TZ: UTC
+  DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+  REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+  STORAGE_S3_BUCKET: ${STORAGE_S3_BUCKET:-newsaas}
+  STORAGE_S3_REGION: ${STORAGE_S3_REGION:-us-east-1}
+  STORAGE_S3_ENDPOINT: http://minio:9000
+  AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+  AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+  SECRET_STORE_MASTER_KEYS: ${SECRET_STORE_MASTER_KEYS:?definir SECRET_STORE_MASTER_KEYS}
+  # Las variables enum no aceptan cadena vacía: la API y el worker no arrancan.
+  FISCAL_PROVIDER: ${FISCAL_PROVIDER:?definir FISCAL_PROVIDER (fake o sifen-direct)}
+  SIFEN_ENVIRONMENT: ${SIFEN_ENVIRONMENT:-TEST}
+  BRANDING_ASSETS_ENABLED: ${BRANDING_ASSETS_ENABLED:-true}
+  <<: *error-tracking-env
+
+# pgBackRest (respaldos + PITR). Las mismas variables en `postgres`, que archiva
+# el WAL de forma continua, y en `backup`, que toma los respaldos programados.
+# Repositorio: almacenamiento S3 externo (Backblaze B2, Cloudflare R2, etc.),
+# cifrado con BACKUP_CIPHER_PASS. BACKUP_REPO_TYPE=posix solo para pruebas
+# locales: deja el repositorio en un volumen del mismo servidor.
+x-pgbackrest-env: &pgbackrest-env
+  PGBACKREST_STANZA: newsaas
+  # Comando que pgBackRest escribe en restore_command al restaurar: el envoltorio,
+  # no /usr/bin/pgbackrest, para que también ignore las variables vacías.
+  PGBACKREST_CMD: /usr/local/bin/pgbackrest
+  PGBACKREST_PG1_PATH: /var/lib/postgresql/data
+  # El superusuario de la imagen es POSTGRES_USER, no `postgres`.
+  PGBACKREST_PG1_USER: ${POSTGRES_USER}
+  PGBACKREST_REPO1_TYPE: ${BACKUP_REPO_TYPE:-s3}
+  PGBACKREST_REPO1_PATH: ${BACKUP_REPO_PATH:-/newsaas}
+  PGBACKREST_REPO1_S3_BUCKET: ${BACKUP_S3_BUCKET:-}
+  PGBACKREST_REPO1_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:-}
+  PGBACKREST_REPO1_S3_REGION: ${BACKUP_S3_REGION:-}
+  PGBACKREST_REPO1_S3_KEY: ${BACKUP_S3_KEY:-}
+  PGBACKREST_REPO1_S3_KEY_SECRET: ${BACKUP_S3_KEY_SECRET:-}
+  PGBACKREST_REPO1_CIPHER_TYPE: aes-256-cbc
+  PGBACKREST_REPO1_CIPHER_PASS: ${BACKUP_CIPHER_PASS:?definir BACKUP_CIPHER_PASS}
+  # 4 completos semanales retenidos: unas 4 semanas de recuperación a un momento dado.
+  PGBACKREST_REPO1_RETENTION_FULL: ${BACKUP_RETENTION_FULL:-4}
+  PGBACKREST_COMPRESS_TYPE: zst
+  PGBACKREST_START_FAST: "y"
+  PGBACKREST_PROCESS_MAX: "2"
+  PGBACKREST_LOG_LEVEL_CONSOLE: info
+  PGBACKREST_LOG_LEVEL_FILE: "off"
+
+x-app-image: &app-image
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: { max-size: "20m", max-file: "5" }
+
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+      API_DOMAIN: ${API_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      web: { condition: service_healthy }
+      api: { condition: service_healthy }
+
+  web:
+    <<: *app-image
+    image: ${IMAGE_REGISTRY}/newsaas-web:${IMAGE_TAG}
+    environment:
+      <<: *error-tracking-env
+      NODE_ENV: production
+    depends_on:
+      api: { condition: service_healthy }
+
+  api:
+    <<: *app-image
+    image: ${IMAGE_REGISTRY}/newsaas-api:${IMAGE_TAG}
+    environment:
+      <<: *app-env
+      API_HOST: 0.0.0.0
+      API_PORT: "3001"
+      API_CORS_ALLOWED_ORIGINS: https://${APP_DOMAIN}
+      BRANDING_ASSET_URL_SECRET: ${BRANDING_ASSET_URL_SECRET}
+      BRANDING_ASSET_PUBLIC_BASE_URL: https://${API_DOMAIN}
+      # DEC-093: Caddy y la web viven en esta red; solo ellos pueden decir cuál
+      # es la dirección del cliente (límite de intentos de inicio de sesión).
+      API_TRUSTED_PROXIES: 172.30.0.0/24
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      minio: { condition: service_healthy }
+
+  worker:
+    <<: *app-image
+    image: ${IMAGE_REGISTRY}/newsaas-worker:${IMAGE_TAG}
+    environment:
+      <<: *app-env
+      WEB_APP_BASE_URL: https://${APP_DOMAIN}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:?definir EMAIL_PROVIDER (fake o smtp)}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      NOTIFICATION_EMAIL_FROM: ${NOTIFICATION_EMAIL_FROM:-}
+      WHATSAPP_PROVIDER: ${WHATSAPP_PROVIDER:?definir WHATSAPP_PROVIDER (fake o whatsapp-cloud)}
+      WHATSAPP_CLOUD_TOKEN: ${WHATSAPP_CLOUD_TOKEN:-}
+      WHATSAPP_CLOUD_PHONE_NUMBER_ID: ${WHATSAPP_CLOUD_PHONE_NUMBER_ID:-}
+      WHATSAPP_CLOUD_TEMPLATE_NAME: ${WHATSAPP_CLOUD_TEMPLATE_NAME:-}
+      WHATSAPP_CLOUD_TEMPLATE_LANGUAGE: ${WHATSAPP_CLOUD_TEMPLATE_LANGUAGE:-}
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      minio: { condition: service_healthy }
+
+  # Corre una vez en cada `up`: migraciones + datos de referencia, y termina.
+  migrate:
+    image: ${IMAGE_REGISTRY}/newsaas-migrate:${IMAGE_TAG}
+    restart: "no"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+      # Lo usa `prisma/provision-tenant.ts` para armar el enlace de activación.
+      WEB_APP_BASE_URL: https://${APP_DOMAIN}
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  postgres:
+    image: ${IMAGE_REGISTRY}/newsaas-postgres:${IMAGE_TAG}
+    restart: unless-stopped
+    shm_size: 256mb
+    # Archivo continuo del WAL (docs/09-operations/BACKUP-RECOVERY.md §3).
+    # pgBackRest nunca sobrescribe un segmento ya archivado.
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=pgbackrest archive-push %p
+      - -c
+      - archive_timeout=300
+    environment:
+      <<: *pgbackrest-env
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - postgres-socket:/var/run/postgresql
+      - pgbackrest-repo:/var/lib/pgbackrest
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Respaldos programados: completo semanal, diferencial diario
+  # (infra/deploy/postgres/backup-loop.sh). Sano mientras el último respaldo
+  # exitoso tenga menos de 26 horas.
+  backup:
+    image: ${IMAGE_REGISTRY}/newsaas-postgres:${IMAGE_TAG}
+    restart: unless-stopped
+    user: postgres
+    entrypoint: ["/usr/local/bin/backup-loop.sh"]
+    environment:
+      <<: *pgbackrest-env
+      BACKUP_HOUR_UTC: ${BACKUP_HOUR_UTC:-6}
+      BACKUP_FULL_WEEKDAY: ${BACKUP_FULL_WEEKDAY:-7}
+      # DEC-093: URL de "heartbeat" (Healthchecks.io, Better Stack, etc.). Se
+      # llama al terminar cada respaldo; con /fail al final si falló.
+      BACKUP_HEARTBEAT_URL: ${BACKUP_HEARTBEAT_URL:-}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - postgres-socket:/var/run/postgresql
+      - pgbackrest-repo:/var/lib/pgbackrest
+    healthcheck:
+      test:
+        ["CMD-SHELL", "test $$(( $$(date +%s) - $$(cat /tmp/pgbackrest/last-success) )) -lt 93600"]
+      interval: 5m
+      timeout: 10s
+      start_period: 2h
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", 'redis-cli -a "$$REDIS_PASSWORD" --no-auth-warning ping | grep PONG']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+
+  # Misma imagen que docker-compose.yml y la CI (TD-061: fijar una versión
+  # cuando se resuelva esa deuda).
+  minio:
+    image: bitnamilegacy/minio:latest
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_DEFAULT_BUCKETS: ${STORAGE_S3_BUCKET:-newsaas}
+    volumes:
+      - minio-data:/bitnami/minio/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+# DEC-093: red interna con rango fijo, para que la API sepa qué saltos son de
+# confianza (API_TRUSTED_PROXIES).
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  caddy-data:
+  caddy-config:
+  postgres-data:
+  postgres-socket:
+  pgbackrest-repo:
+  redis-data:
+  minio-data:

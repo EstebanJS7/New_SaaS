@@ -5,6 +5,8 @@ import {
   hashPasswordResetToken,
   PASSWORD_RESET_TOKEN_TTL_MS,
   staffRecoveryUrl,
+  staffActivationUrl,
+  ACCOUNT_ACTIVATION_TOKEN_TTL_MS,
   TENANT_TIME_ZONE,
 } from "@newsaas/shared";
 import { portalRecoveryUrl } from "@newsaas/notifications";
@@ -80,7 +82,7 @@ export interface NotificationContentClient {
     // generated delegate is not assignable to one. `id` is also genuinely selected.
     findFirst(
       args: Prisma.UserProfileFindFirstArgs
-    ): Promise<{ id: string; credential?: unknown } | null>;
+    ): Promise<{ id: string; credential?: unknown; memberships?: unknown } | null>;
   };
   /**
    * The recovery branch MINTS the token it puts in the message.
@@ -290,13 +292,40 @@ async function buildStaffRecovery(
     // delivery's tenant is the platform one, which owns the message rather than the
     // person.
     where: { id: userProfileId },
-    select: { id: true, credential: { select: { userProfileId: true } } },
+    select: {
+      id: true,
+      credential: { select: { userProfileId: true } },
+      // The ACTIVATION gate ([[ONB-001]]): a profile with no credential gets a link only
+      // while it still belongs, actively, to an active clinic. Read NOW, like every gate
+      // in this file: an invitation revoked after it was scheduled sends nothing.
+      memberships: {
+        where: { status: "ACTIVE", tenant: { status: "ACTIVE" } },
+        select: { tenant: { select: { name: true } } },
+      },
+    },
   });
+  if (profile === null || profile === undefined) {
+    return unavailable(NOTIFICATION_DELIVERY_REASON.SOURCE_UNAVAILABLE);
+  }
+
   // Falsy rather than `=== null`: a client that does not model the relation answers
   // `undefined`, and a strict null check would read "no credentials" as "has
   // credentials" and mail a link for a password that does not exist.
-  if (!profile?.credential) return unavailable(NOTIFICATION_DELIVERY_REASON.SOURCE_UNAVAILABLE);
+  if (profile.credential) {
+    return buildRecoveryMessage(client, webAppBaseUrl, userProfileId);
+  }
 
+  const clinics = activeClinicNames(profile.memberships);
+  if (clinics.length === 0) return unavailable(NOTIFICATION_DELIVERY_REASON.SOURCE_UNAVAILABLE);
+  return buildActivationMessage(client, webAppBaseUrl, userProfileId, clinics);
+}
+
+/** The password-recovery message proper (DAT-007): a profile that already has a password. */
+async function buildRecoveryMessage(
+  client: NotificationContentClient,
+  webAppBaseUrl: string,
+  userProfileId: string
+): Promise<NotificationContentOutcome> {
   const token = generatePasswordResetToken();
   const now = new Date();
   await client.passwordResetToken.create({
@@ -320,6 +349,52 @@ async function buildStaffRecovery(
     body: `Podés elegir una contraseña nueva con este enlace: ${url}`,
     parameters: [url],
   };
+}
+
+/**
+ * The account-activation message ([[ONB-001]]): an invited profile choosing its FIRST
+ * password. Same token, same table and same single use as recovery; only the lifetime
+ * and the words differ. It names the clinic, because the person did not ask for this
+ * mail and needs to know who invited them before trusting the link.
+ */
+async function buildActivationMessage(
+  client: NotificationContentClient,
+  webAppBaseUrl: string,
+  userProfileId: string,
+  clinics: readonly string[]
+): Promise<NotificationContentOutcome> {
+  const token = generatePasswordResetToken();
+  const now = new Date();
+  await client.passwordResetToken.create({
+    data: {
+      userProfileId,
+      tokenHash: hashPasswordResetToken(token),
+      expiresAt: new Date(now.getTime() + ACCOUNT_ACTIVATION_TOKEN_TTL_MS),
+    },
+    select: { id: true },
+  });
+
+  const url = staffActivationUrl(webAppBaseUrl, token);
+  const where = clinics.join(", ");
+  return {
+    outcome: "READY",
+    subject: `Invitación a ${where}`,
+    body:
+      `Te invitaron a ${where}. Para activar tu cuenta, elegí una contraseña con este ` +
+      `enlace (vale 72 horas y un solo uso): ${url}`,
+    parameters: [where, url],
+  };
+}
+
+/** The names of the active clinics a profile belongs to, narrowed from the select above. */
+function activeClinicNames(memberships: unknown): string[] {
+  if (!Array.isArray(memberships)) return [];
+  const names: string[] = [];
+  for (const membership of memberships as unknown[]) {
+    const name = (membership as { tenant?: { name?: unknown } } | null)?.tenant?.name;
+    if (typeof name === "string" && name.length > 0 && !names.includes(name)) names.push(name);
+  }
+  return names;
 }
 
 /**

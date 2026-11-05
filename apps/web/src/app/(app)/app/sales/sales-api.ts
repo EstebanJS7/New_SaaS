@@ -134,6 +134,8 @@ export interface SaleLineInput {
  */
 export interface CreateSaleInput {
   readonly customerId?: string | null;
+  /** MB-002: the sale's branch; omitted means the caller's only branch. */
+  readonly branchId?: string;
   readonly lines: SaleLineInput[];
 }
 
@@ -148,11 +150,29 @@ export interface UpdateSaleInput {
   readonly lines: SaleLineInput[];
 }
 
-/** One submitted payment: its PRD §19 method and its exact positive amount. */
+export type PaymentCardType = "CREDIT" | "DEBIT";
+export type PaymentCardBrand =
+  "VISA" | "MASTERCARD" | "AMERICAN_EXPRESS" | "MAESTRO" | "PANAL" | "CABAL" | "OTHER";
+export type PaymentQrKind = "WALLET" | "BANK_APP";
+
+/**
+ * One submitted payment: its PRD §19 method, its exact positive amount and, per
+ * method, the detail the factura electrónica needs (PAY-DET-001, DEC-091): a
+ * card's type and brand, a QR's kind, a cheque's number and bank, an "other"
+ * payment's description.
+ */
 export interface SalePaymentInput {
   readonly method: PaymentMethod;
   /** Exact fixed-scale (2 decimals) positive literal. */
   readonly amount: string;
+  readonly card?: {
+    readonly type: PaymentCardType;
+    readonly brand: PaymentCardBrand;
+    readonly brandName?: string;
+  };
+  readonly qrKind?: PaymentQrKind;
+  readonly check?: { readonly number: string; readonly bank: string };
+  readonly otherDescription?: string;
 }
 
 /**
@@ -371,8 +391,36 @@ export function getSale(id: string): Promise<Sale> {
  * Creates a `DRAFT` sale. The draft is not a sale yet: it moves stock and cash
  * only when {@link completeSale} succeeds.
  */
-export function createSale(input: CreateSaleInput): Promise<Sale> {
-  return postJson("", input);
+export async function createSale(
+  input: CreateSaleInput,
+  options: { readonly idempotencyKey?: string } = {}
+): Promise<Sale> {
+  // UX-035 / TD-071: with a key, a retry of a lost answer replays the SAME draft.
+  if (options.idempotencyKey === undefined) return postJson("", input);
+  const response = await fetch("/api/sales", {
+    method: "POST",
+    headers: { "content-type": "application/json", "idempotency-key": options.idempotencyKey },
+    body: JSON.stringify(input),
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  return response.json() as Promise<Sale>;
+}
+
+/**
+ * UX-035 / TD-071: the draft an earlier create attempt recorded under `key`, or
+ * `null` when the API recorded nothing under it. Asked after an answer was lost,
+ * never to guess a draft by its values.
+ */
+export async function getSaleCreateAttempt(key: string): Promise<Sale | null> {
+  try {
+    return await getJson<Sale>(`/attempts/${key}`);
+  } catch (error) {
+    if (error instanceof ApiRequestError && error.code === "NOT_FOUND") return null;
+    throw error;
+  }
 }
 
 /**
@@ -661,4 +709,105 @@ export function userFacingSaleError(error: Error): string {
     default:
       return error.message;
   }
+}
+
+// ---------------------------------------------------------------------------
+// SAL-REV-001: reversal of a COMPLETED sale (DEC-089).
+// ---------------------------------------------------------------------------
+
+export interface SalePaymentRefund {
+  readonly paymentId: string;
+  readonly method: PaymentMethod;
+  readonly amount: string;
+}
+
+export interface SaleReversal {
+  readonly id: string;
+  readonly saleId: string;
+  readonly reason: string;
+  readonly reversedAt: string;
+  readonly reversedByUserProfileId: string;
+  readonly cashSessionId: string | null;
+  readonly refunds: readonly SalePaymentRefund[];
+  /** NCE-001: the credit note issued because the sale's invoice was approved by SIFEN. */
+  readonly creditNote?: SaleCreditNote | null;
+}
+
+export interface SaleCreditNote {
+  readonly id: string;
+  /** `001-002-0000003`, as printed on the KuDE. */
+  readonly number: string;
+  readonly issuedAt: string;
+  readonly fiscalStatus: string | null;
+}
+
+/** What the clinic needs to know about the note's trip through SIFEN. */
+export const CREDIT_NOTE_STATUS_LABELS: Readonly<Record<string, string>> = Object.freeze({
+  PENDING: "Pendiente de envío",
+  QUEUED: "Pendiente de envío",
+  SIGNING: "Enviándose a SIFEN",
+  SENDING: "Enviándose a SIFEN",
+  SUBMITTED: "Enviada, esperando la respuesta de SIFEN",
+  APPROVED: "Aprobada por SIFEN",
+  REJECTED: "Rechazada por SIFEN: revisala en Facturación electrónica",
+  ERROR: "No se pudo enviar: revisala en Facturación electrónica",
+  CANCEL_PENDING: "Cancelación en curso",
+  CANCELLED: "Cancelada",
+});
+
+/** The reason the API requires: 3 to 500 characters once trimmed. */
+export const SALE_REVERSAL_REASON_MIN = 3;
+export const SALE_REVERSAL_REASON_MAX = 500;
+
+/**
+ * Reverses a completed sale. The caller keeps ONE key per attempt and re-sends it on a
+ * retry, so a reversal whose answer was lost replays instead of being refused as
+ * "already reversed".
+ */
+export async function reverseSale(
+  id: string,
+  reason: string,
+  options: { readonly idempotencyKey?: string } = {}
+): Promise<SaleReversal> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (options.idempotencyKey !== undefined) headers["idempotency-key"] = options.idempotencyKey;
+  const response = await fetch(`/api/sales/${id}/reverse`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ reason }),
+    cache: "no-store",
+  });
+  if (!response.ok) throw await parseError(response);
+  return response.json() as Promise<SaleReversal>;
+}
+
+/** The reversal of a sale, or `null` when it has none (a cancelled DRAFT, for one). */
+export async function getSaleReversal(id: string): Promise<SaleReversal | null> {
+  try {
+    return await getJson<SaleReversal>(`/${id}/reversal`);
+  } catch (error) {
+    if (error instanceof ApiRequestError && error.code === "NOT_FOUND") return null;
+    throw error;
+  }
+}
+
+/** What a person can act on after a refused or failed reversal. */
+export function userFacingReversalError(error: Error): string {
+  if (!(error instanceof ApiRequestError)) {
+    return "No se pudo conectar con el servidor. Consultá la venta antes de reintentar: puede que la anulación se haya registrado.";
+  }
+  if (error.code === "FORBIDDEN") {
+    return "No tenés permiso para anular ventas. Solo Propietario y Administración pueden hacerlo.";
+  }
+  if (error.message === SALE_CASH_SESSION_REQUIRED_MESSAGE) {
+    return "Para devolver el efectivo tiene que haber una caja abierta en la sucursal de la venta. Abrí una y volvé a intentar.";
+  }
+  if (error.message === SALE_CASH_SESSIONS_AMBIGUOUS_MESSAGE) {
+    return "Hay más de una caja abierta en la sucursal de la venta: cerrá las que sobran para saber de cuál sale el efectivo.";
+  }
+  if (error.code === "VALIDATION_FAILED") {
+    return `Escribí un motivo de ${SALE_REVERSAL_REASON_MIN} a ${SALE_REVERSAL_REASON_MAX} caracteres.`;
+  }
+  // The reversal's own refusals (already reversed, invoiced, not completed) are Spanish.
+  return userFacingSaleError(error);
 }

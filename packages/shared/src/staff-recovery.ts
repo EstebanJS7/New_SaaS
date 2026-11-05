@@ -26,6 +26,17 @@ import { createHash, randomBytes } from "node:crypto";
  */
 export const PASSWORD_RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
 
+/**
+ * How long an ACCOUNT ACTIVATION link stays usable ([[ONB-001]]).
+ *
+ * An activation link is the same token as a recovery link — same table, same digest,
+ * same single use — sent to a profile that has NO credential yet: an invited staff
+ * member, or a clinic owner a provisioning operator just created. Seventy-two hours
+ * rather than thirty minutes because the person did not ask for this mail and may not
+ * read it the same day; the link still dies on first use and with any newer one.
+ */
+export const ACCOUNT_ACTIVATION_TOKEN_TTL_MS = 72 * 60 * 60 * 1000;
+
 /** 32 random bytes, base64url — the `generateSessionToken` convention. */
 export function generatePasswordResetToken(): string {
   return randomBytes(32).toString("base64url");
@@ -46,4 +57,12 @@ export function hashPasswordResetToken(token: string): string {
 export function staffRecoveryUrl(baseUrl: string, token: string): string {
   const trimmed = baseUrl.replace(/\/+$/, "");
   return `${trimmed}/reset-password?token=${encodeURIComponent(token)}`;
+}
+
+/**
+ * The link an activation message carries: the recovery page, told it is a first
+ * password so its copy can say so. The token is the only thing the page trusts.
+ */
+export function staffActivationUrl(baseUrl: string, token: string): string {
+  return `${staffRecoveryUrl(baseUrl, token)}&activate=1`;
 }

@@ -289,6 +289,39 @@ async function openRequestPanel(): Promise<void> {
 }
 
 describe("Agenda", () => {
+  it("MB-001: offers only active branches and the professionals who work there", async () => {
+    const NORTE = "99999999-9999-4999-8999-999999999991";
+    const VIEJA = "99999999-9999-4999-8999-999999999992";
+    const OTHER_VET = "99999999-9999-4999-8999-999999999993";
+    mockAgendaFetch({
+      options: () =>
+        jsonResponse({
+          branches: [
+            { id: BRANCH_ID, name: "Main", isActive: true },
+            { id: NORTE, name: "Norte", isActive: true },
+            { id: VIEJA, name: "Vieja", isActive: false },
+          ],
+          professionals: [
+            { membershipId: MEMBERSHIP_ID, displayName: "Dra. Prueba", branchIds: [BRANCH_ID] },
+            { membershipId: OTHER_VET, displayName: "Dr. Norte", branchIds: [NORTE] },
+          ],
+        }),
+    });
+    renderAgenda();
+    fireEvent.click(await screen.findByRole("button", { name: "Nuevo turno" }));
+    const branch = screen.getByRole("combobox", { name: "Sucursal" });
+    const professional = screen.getByRole("combobox", { name: "Profesional" });
+    await within(branch).findByRole("option", { name: "Norte" });
+    expect(within(branch).queryByRole("option", { name: "Vieja" })).toBeNull();
+
+    fireEvent.change(branch, { target: { value: NORTE } });
+    expect(within(professional).queryByRole("option", { name: "Dra. Prueba" })).toBeNull();
+    expect(professional).toHaveValue(OTHER_VET);
+
+    fireEvent.change(branch, { target: { value: BRANCH_ID } });
+    expect(within(professional).queryByRole("option", { name: "Dr. Norte" })).toBeNull();
+    expect(professional).toHaveValue(MEMBERSHIP_ID);
+  });
   it("uses professional names in selectors and list while submitting membership IDs", async () => {
     mockAgendaFetch({
       appointments: () => jsonResponse([APPOINTMENT]),

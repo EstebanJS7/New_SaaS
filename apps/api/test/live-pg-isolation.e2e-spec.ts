@@ -589,6 +589,8 @@ const CATALOG_ITEM_DTO_KEYS = [
 
 /** Exact allowlisted key set of one stock-movement response DTO. */
 const STOCK_MOVEMENT_DTO_KEYS = [
+  "branchId",
+  "transferId",
   "catalogItemId",
   "createdAt",
   "id",
@@ -602,6 +604,8 @@ const STOCK_MOVEMENT_DTO_KEYS = [
 
 /** Exact allowlisted key set of one stock-balance response DTO. */
 const STOCK_BALANCE_DTO_KEYS = [
+  "branchId",
+  "branchName",
   "catalogItemId",
   "createdAt",
   "id",
@@ -634,6 +638,7 @@ const SUPPLIER_DTO_KEYS = [
 
 /** Exact allowlisted key set of the purchase response DTO (EPIC-11 contract). */
 const PURCHASE_DTO_KEYS = [
+  "branchId",
   "createdAt",
   "id",
   "lines",
@@ -649,6 +654,7 @@ const PURCHASE_LINE_DTO_KEYS = ["catalogItemId", "id", "quantity", "unitCost"].s
 
 /** Exact allowlisted key set of the sale response DTO (EPIC-12 contract). */
 const SALE_DTO_KEYS = [
+  "branchId",
   "completedAt",
   "createdAt",
   "currency",
@@ -680,7 +686,15 @@ const COMPLETED_SALE_DTO_KEYS = [...SALE_DTO_KEYS, "payments", "replay"].sort();
 const SALE_PAYMENT_DTO_KEYS = ["amount", "id", "method"].sort();
 
 /** Exact allowlisted key set of the cash register response DTO. */
-const CASH_REGISTER_DTO_KEYS = ["createdAt", "id", "isActive", "name", "updatedAt"].sort();
+const CASH_REGISTER_DTO_KEYS = [
+  "branchId",
+  "branchName",
+  "createdAt",
+  "id",
+  "isActive",
+  "name",
+  "updatedAt",
+].sort();
 
 /**
  * Exact allowlisted key set of the cash session response DTO. Carries the three
@@ -1472,7 +1486,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       data: { email: "owner-b@live.test", displayName: "Owner B", status: "active" },
     });
 
-    await prisma.tenantMembership.create({
+    const membershipA = await prisma.tenantMembership.create({
       data: {
         tenantId: tenantA.id,
         userProfileId: ownerA.id,
@@ -1480,7 +1494,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         status: "ACTIVE",
       },
     });
-    await prisma.tenantMembership.create({
+    const membershipB = await prisma.tenantMembership.create({
       data: {
         tenantId: tenantB.id,
         userProfileId: ownerB.id,
@@ -1488,6 +1502,17 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         status: "ACTIVE",
       },
     });
+    // MB-002 (DEC-094 §6): like provisioning, each clinic has a first branch and
+    // its owner works there, so registers and sales have somewhere to belong.
+    for (const [tenantId, membershipId] of [
+      [tenantA.id, membershipA.id],
+      [tenantB.id, membershipB.id],
+    ] as const) {
+      const branch = await prisma.branch.create({ data: { tenantId, name: "Casa central" } });
+      await prisma.membershipBranch.create({
+        data: { tenantId, membershipId, branchId: branch.id },
+      });
+    }
 
     const sessionService = app.get(SessionService);
     const sessionA = await sessionService.issue(ownerA.id);
@@ -4815,7 +4840,12 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       // reconstructed 64-bit key, so an unrelated lock waiter can never satisfy
       // it: the interleaving is decided by the database, never by wall-clock
       // timing.
-      const lockKey = stockSerializationLockKey(tenantAId, raceItemId);
+      // MB-003: the lock is per (item, branch) — tenant A's first branch.
+      const raceBranch = await prisma.branch.findFirstOrThrow({
+        where: { tenantId: tenantAId },
+        orderBy: { createdAt: "asc" },
+      });
+      const lockKey = stockSerializationLockKey(tenantAId, raceItemId, raceBranch.id);
       let releaseBarrier!: () => void;
       const barrierReleased = new Promise<void>((resolve) => {
         releaseBarrier = resolve;
@@ -4947,8 +4977,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       const checkItemId = await createStockedItem(ownerACookie, "Live CHECK probe");
       await expect(
         prisma.$executeRaw`
-          INSERT INTO "stock_balance" ("tenant_id", "catalog_item_id", "quantity")
-          VALUES (${tenantAId}::uuid, ${checkItemId}::uuid, -1.000)
+          INSERT INTO "stock_balance" ("tenant_id", "branch_id", "catalog_item_id", "quantity")
+          VALUES (${tenantAId}::uuid, (SELECT b."id" FROM "branch" b WHERE b."tenant_id" = ${tenantAId}::uuid ORDER BY b."created_at", b."id" LIMIT 1), ${checkItemId}::uuid, -1.000)
         `
       ).rejects.toThrow(/stock_balance_quantity_non_negative/);
       expect(await rawBalanceText(tenantAId, checkItemId)).toBeNull();
@@ -4956,8 +4986,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       // The signed-quantity CHECK is real too: a zero movement is not a movement.
       await expect(
         prisma.$executeRaw`
-          INSERT INTO "stock_movement" ("tenant_id", "catalog_item_id", "type", "quantity", "reason")
-          VALUES (${tenantAId}::uuid, ${checkItemId}::uuid, 'ADJUSTMENT'::stock_movement_type, 0.000, 'Zero probe')
+          INSERT INTO "stock_movement" ("tenant_id", "branch_id", "catalog_item_id", "type", "quantity", "reason")
+          VALUES (${tenantAId}::uuid, (SELECT b."id" FROM "branch" b WHERE b."tenant_id" = ${tenantAId}::uuid ORDER BY b."created_at", b."id" LIMIT 1), ${checkItemId}::uuid, 'ADJUSTMENT'::stock_movement_type, 0.000, 'Zero probe')
         `
       ).rejects.toThrow(/stock_movement_quantity_non_zero/);
       expect(await prisma.stockMovement.count({ where: { catalogItemId: checkItemId } })).toBe(0);
@@ -4966,8 +4996,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       // never reference another tenant's item, whatever the application does.
       await expect(
         prisma.$executeRaw`
-          INSERT INTO "stock_movement" ("tenant_id", "catalog_item_id", "type", "quantity", "reason")
-          VALUES (${tenantAId}::uuid, ${foreignItemBId}::uuid, 'ADJUSTMENT'::stock_movement_type, 1.000, 'Composite FK probe')
+          INSERT INTO "stock_movement" ("tenant_id", "branch_id", "catalog_item_id", "type", "quantity", "reason")
+          VALUES (${tenantAId}::uuid, (SELECT b."id" FROM "branch" b WHERE b."tenant_id" = ${tenantAId}::uuid ORDER BY b."created_at", b."id" LIMIT 1), ${foreignItemBId}::uuid, 'ADJUSTMENT'::stock_movement_type, 1.000, 'Composite FK probe')
         `
       ).rejects.toThrow(/stock_movement_tenant_id_catalog_item_id_fkey/);
       expect(await prisma.stockMovement.count({ where: { catalogItemId: checkItemId } })).toBe(0);
@@ -5569,8 +5599,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     ): Promise<string> => {
       const id = randomUUID();
       await tx.$executeRaw`
-        INSERT INTO "purchase" ("id", "tenant_id", "supplier_id", "status")
-        VALUES (${id}::uuid, ${tenantId}::uuid, ${supplierId}::uuid, ${status}::purchase_status)
+        INSERT INTO "purchase" ("id", "tenant_id", "branch_id", "supplier_id", "status")
+        VALUES (${id}::uuid, ${tenantId}::uuid, (SELECT b."id" FROM "branch" b WHERE b."tenant_id" = ${tenantId}::uuid ORDER BY b."created_at", b."id" LIMIT 1), ${supplierId}::uuid, ${status}::purchase_status)
       `;
       return id;
     };
@@ -5879,8 +5909,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       const purchaseId = randomUUID();
       const lineId = randomUUID();
       await prisma.$executeRaw`
-        INSERT INTO "purchase" ("id", "tenant_id", "supplier_id", "status")
-        VALUES (${purchaseId}::uuid, ${tenantAId}::uuid, ${supplierAId}::uuid, 'RECEIVED'::purchase_status)
+        INSERT INTO "purchase" ("id", "tenant_id", "branch_id", "supplier_id", "status")
+        VALUES (${purchaseId}::uuid, ${tenantAId}::uuid, (SELECT b."id" FROM "branch" b WHERE b."tenant_id" = ${tenantAId}::uuid ORDER BY b."created_at", b."id" LIMIT 1), ${supplierAId}::uuid, 'RECEIVED'::purchase_status)
       `;
       await prisma.$executeRaw`
         INSERT INTO "purchase_line" ("id", "tenant_id", "purchase_id", "catalog_item_id", "quantity", "unit_cost")
@@ -5941,8 +5971,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       await inRolledBackTransaction(async (tx) => {
         const message = await captureDatabaseMessage(
           () => tx.$executeRaw`
-            INSERT INTO "purchase" ("tenant_id", "supplier_id")
-            VALUES (${tenantAId}::uuid, ${supplierBId}::uuid)
+            INSERT INTO "purchase" ("tenant_id", "branch_id", "supplier_id")
+            VALUES (${tenantAId}::uuid, (SELECT b."id" FROM "branch" b WHERE b."tenant_id" = ${tenantAId}::uuid ORDER BY b."created_at", b."id" LIMIT 1), ${supplierBId}::uuid)
           `
         );
         expect(message).toContain("purchase_tenant_id_supplier_id_fkey");
@@ -6723,9 +6753,9 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     ): Promise<string> => {
       const id = randomUUID();
       await tx.$executeRaw`
-        INSERT INTO "sale" ("id", "tenant_id", "customer_id", "currency", "status")
+        INSERT INTO "sale" ("id", "tenant_id", "branch_id", "customer_id", "currency", "status")
         VALUES (
-          ${id}::uuid, ${tenantAId}::uuid, ${options.customerId ?? null}::uuid, 'PYG',
+          ${id}::uuid, ${tenantAId}::uuid, (SELECT b."id" FROM "branch" b WHERE b."tenant_id" = ${tenantAId}::uuid ORDER BY b."created_at", b."id" LIMIT 1), ${options.customerId ?? null}::uuid, 'PYG',
           ${status}::sale_status
         )
       `;
@@ -7768,8 +7798,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     ): Promise<string> => {
       const id = randomUUID();
       await tx.$executeRaw`
-        INSERT INTO "cash_register" ("id", "tenant_id", "name")
-        VALUES (${id}::uuid, ${tenantId}::uuid, ${name})
+        INSERT INTO "cash_register" ("id", "tenant_id", "branch_id", "name")
+        VALUES (${id}::uuid, ${tenantId}::uuid, (SELECT b."id" FROM "branch" b WHERE b."tenant_id" = ${tenantId}::uuid ORDER BY b."created_at", b."id" LIMIT 1), ${name})
       `;
       return id;
     };
@@ -9267,9 +9297,21 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     const complete = (
       cookie: string,
       saleId: string,
-      payments: { method: string; amount: string }[],
+      payments: ({ method: string; amount: string } & Record<string, unknown>)[],
       options: { requestId?: string; idempotencyKey?: string } = {}
     ) => {
+      // PAY-DET-001: every card/QR/cheque/other payment carries its fiscal detail;
+      // a case that pins its own detail keeps it.
+      const DEFAULT_DETAIL: Record<string, Record<string, unknown>> = {
+        CARD: { card: { type: "CREDIT", brand: "VISA" } },
+        QR: { qrKind: "WALLET" },
+        CHECK: { check: { number: "00001234", bank: "Banco Basa" } },
+        OTHER: { otherDescription: "Canje de puntos" },
+      };
+      payments = payments.map((payment) => ({
+        ...(DEFAULT_DETAIL[payment.method] ?? {}),
+        ...payment,
+      }));
       let request = supertest(serverUrl).post(`/sales/${saleId}/complete`).set("Cookie", cookie);
       if (options.requestId !== undefined) {
         request = request.set("X-Request-Id", options.requestId);
@@ -9355,8 +9397,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     ): Promise<string> => {
       const id = randomUUID();
       await tx.$executeRaw`
-        INSERT INTO "sale" ("id", "tenant_id", "currency", "status")
-        VALUES (${id}::uuid, ${tenantId}::uuid, 'PYG', ${status}::sale_status)
+        INSERT INTO "sale" ("id", "tenant_id", "branch_id", "currency", "status")
+        VALUES (${id}::uuid, ${tenantId}::uuid, (SELECT b."id" FROM "branch" b WHERE b."tenant_id" = ${tenantId}::uuid ORDER BY b."created_at", b."id" LIMIT 1), 'PYG', ${status}::sale_status)
       `;
       return id;
     };
@@ -9667,8 +9709,9 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         completionCookie,
         saleId,
         [
-          { method: "CARD", amount: "3000.00" },
-          { method: "QR", amount: "1600.00" },
+          // PAY-DET-001: card and QR payments carry their fiscal detail.
+          { method: "CARD", amount: "3000.00", card: { type: "DEBIT", brand: "MASTERCARD" } },
+          { method: "QR", amount: "1600.00", qrKind: "WALLET" },
         ],
         { requestId }
       );
@@ -12998,8 +13041,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     ): Promise<string> => {
       const id = randomUUID();
       await tx.$executeRaw`
-        INSERT INTO "sale" ("id", "tenant_id", "currency", "status")
-        VALUES (${id}::uuid, ${tenantId}::uuid, 'PYG', ${status}::sale_status)
+        INSERT INTO "sale" ("id", "tenant_id", "branch_id", "currency", "status")
+        VALUES (${id}::uuid, ${tenantId}::uuid, (SELECT b."id" FROM "branch" b WHERE b."tenant_id" = ${tenantId}::uuid ORDER BY b."created_at", b."id" LIMIT 1), 'PYG', ${status}::sale_status)
       `;
       return id;
     };
@@ -14452,8 +14495,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     ): Promise<string> => {
       const saleId = randomUUID();
       await prisma.$executeRaw`
-        INSERT INTO "sale" ("id", "tenant_id", "currency", "status")
-        VALUES (${saleId}::uuid, ${tenantId}::uuid, 'PYG', 'COMPLETED'::sale_status)
+        INSERT INTO "sale" ("id", "tenant_id", "branch_id", "currency", "status")
+        VALUES (${saleId}::uuid, ${tenantId}::uuid, (SELECT b."id" FROM "branch" b WHERE b."tenant_id" = ${tenantId}::uuid ORDER BY b."created_at", b."id" LIMIT 1), 'PYG', 'COMPLETED'::sale_status)
       `;
       for (const line of lines) {
         await prisma.$executeRaw`
@@ -15201,8 +15244,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       }
       const saleId = randomUUID();
       await prisma.$executeRaw`
-        INSERT INTO "sale" ("id", "tenant_id", "currency", "status")
-        VALUES (${saleId}::uuid, ${tenantId}::uuid, 'PYG', 'COMPLETED'::sale_status)
+        INSERT INTO "sale" ("id", "tenant_id", "branch_id", "currency", "status")
+        VALUES (${saleId}::uuid, ${tenantId}::uuid, (SELECT b."id" FROM "branch" b WHERE b."tenant_id" = ${tenantId}::uuid ORDER BY b."created_at", b."id" LIMIT 1), 'PYG', 'COMPLETED'::sale_status)
       `;
       await prisma.$executeRaw`
         INSERT INTO "sale_line" (
@@ -15869,8 +15912,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     ): Promise<string> => {
       const id = randomUUID();
       await tx.$executeRaw`
-        INSERT INTO "sale" ("id", "tenant_id", "currency", "status")
-        VALUES (${id}::uuid, ${tenantId}::uuid, 'PYG', ${status}::sale_status)
+        INSERT INTO "sale" ("id", "tenant_id", "branch_id", "currency", "status")
+        VALUES (${id}::uuid, ${tenantId}::uuid, (SELECT b."id" FROM "branch" b WHERE b."tenant_id" = ${tenantId}::uuid ORDER BY b."created_at", b."id" LIMIT 1), 'PYG', ${status}::sale_status)
       `;
       return id;
     };
@@ -18450,9 +18493,9 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
           )
         `;
         await tx.$executeRaw`
-          INSERT INTO "sale" ("id", "tenant_id", "currency", "status")
+          INSERT INTO "sale" ("id", "tenant_id", "branch_id", "currency", "status")
           VALUES (
-            ${saleId}::uuid, ${tenantAId}::uuid, 'PYG', 'COMPLETED'::sale_status
+            ${saleId}::uuid, ${tenantAId}::uuid, (SELECT b."id" FROM "branch" b WHERE b."tenant_id" = ${tenantAId}::uuid ORDER BY b."created_at", b."id" LIMIT 1), 'PYG', 'COMPLETED'::sale_status
           )
         `;
         await tx.$executeRaw`
@@ -18684,8 +18727,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       `;
       const saleId = randomUUID();
       await prisma.$executeRaw`
-        INSERT INTO "sale" ("id", "tenant_id", "currency", "status")
-        VALUES (${saleId}::uuid, ${tenantId}::uuid, 'PYG', 'COMPLETED'::sale_status)
+        INSERT INTO "sale" ("id", "tenant_id", "branch_id", "currency", "status")
+        VALUES (${saleId}::uuid, ${tenantId}::uuid, (SELECT b."id" FROM "branch" b WHERE b."tenant_id" = ${tenantId}::uuid ORDER BY b."created_at", b."id" LIMIT 1), 'PYG', 'COMPLETED'::sale_status)
       `;
       await prisma.$executeRaw`
         INSERT INTO "sale_line" (
@@ -19055,8 +19098,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       ): Promise<{ invoiceId: string; rangeId: string }> => {
         const saleId = randomUUID();
         await tx.$executeRaw`
-          INSERT INTO "sale" ("id", "tenant_id", "currency", "status")
-          VALUES (${saleId}::uuid, ${tenantId}::uuid, 'PYG', 'COMPLETED'::sale_status)
+          INSERT INTO "sale" ("id", "tenant_id", "branch_id", "currency", "status")
+          VALUES (${saleId}::uuid, ${tenantId}::uuid, (SELECT b."id" FROM "branch" b WHERE b."tenant_id" = ${tenantId}::uuid ORDER BY b."created_at", b."id" LIMIT 1), 'PYG', 'COMPLETED'::sale_status)
         `;
         const invoiceId = randomUUID();
         await tx.$executeRaw`
@@ -19198,8 +19241,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
           await insertAllocation(tx, { invoiceId, rangeId });
           const secondSaleId = randomUUID();
           await tx.$executeRaw`
-            INSERT INTO "sale" ("id", "tenant_id", "currency", "status")
-            VALUES (${secondSaleId}::uuid, ${tenantId}::uuid, 'PYG', 'COMPLETED'::sale_status)
+            INSERT INTO "sale" ("id", "tenant_id", "branch_id", "currency", "status")
+            VALUES (${secondSaleId}::uuid, ${tenantId}::uuid, (SELECT b."id" FROM "branch" b WHERE b."tenant_id" = ${tenantId}::uuid ORDER BY b."created_at", b."id" LIMIT 1), 'PYG', 'COMPLETED'::sale_status)
           `;
           const secondInvoiceId = randomUUID();
           await tx.$executeRaw`

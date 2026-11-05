@@ -1,0 +1,32 @@
+# Contexto de build de Docker (infra/deploy). Solo entra lo que el build necesita.
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+**/coverage
+**/*.tsbuildinfo
+**/test-results
+**/playwright-report
+.pnpm-store
+.git
+.github
+.obsidian
+.opencode
+docs
+openspec
+odd
+**/*.log
+**/.*.log
+# Salida de verify-local.ps1: cambia durante el build y rompería la caché.
+infra/deploy/.verify
+.newsaas-src.tar.gz
+
+# Secretos: nunca dentro de una imagen.
+.env
+.env.*
+!.env.example
+infra/deploy/*.env
+infra/deploy/env.production
+
+# Prisma Client generado: se regenera dentro del build.
+packages/database/src/generated

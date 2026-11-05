@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { buildDteXml } from "./dte.builder.js";
+import { composeCdc } from "./dte.cdc.js";
+import { buildDteRequestFromCreditNote } from "./dte.credit-note.js";
 import { buildDteRequestFromInvoice } from "./dte.mapper.js";
 import {
   FIXTURE_CDC,
@@ -97,6 +99,71 @@ describe.skipIf(skipped)(
 
     it("accepts the document the builder emits once the signature is structurally complete", async () => {
       const xml = withStructuralSignature(buildDteXml(validFacturaElectronicaRequest()));
+      const result = await validateDeAgainstOfficialXsd(xml, schemaDirectory);
+
+      expect(result.errors).toEqual([]);
+      expect(result.valid).toBe(true);
+    });
+
+    it("accepts a Nota de Crédito Electrónica built by the credit-note mapper (NCE-001)", async () => {
+      const fixture = validFacturaElectronicaRequest();
+      const identity = composeCdc({
+        iTiDE: 5,
+        dRucEm: fixture.gDatGralOpe.gEmis.dRucEm,
+        dDVEmi: fixture.gDatGralOpe.gEmis.dDVEmi,
+        dEst: fixture.gTimb.dEst,
+        dPunExp: fixture.gTimb.dPunExp,
+        dNumDoc: "0000001",
+        iTipCont: fixture.gDatGralOpe.gEmis.iTipCont,
+        dFeEmiDE: "20261104",
+        iTipEmi: 1,
+        dCodSeg: "123456789",
+      });
+      const { request } = buildDteRequestFromCreditNote({
+        invoice: {
+          issuedAt: "2026-11-04T09:00:00",
+          currency: "PYG",
+          currencyDescription: "Guaraní",
+          lines: [
+            {
+              itemCode: "SKU001",
+              description: "Consulta",
+              unitOfMeasureCode: "77",
+              unitOfMeasureDescription: "UNI",
+              quantity: "1",
+              unitPrice: "110000",
+              lineTotal: "110000",
+              taxableBase: "100000",
+              taxAmount: "10000",
+              affectation: 1,
+              ivaRate: 10,
+            },
+          ],
+          receptor: fixture.gDatGralOpe.gDatRec,
+        },
+        profile: {
+          emitter: fixture.gDatGralOpe.gEmis,
+          timbrado: {
+            ...fixture.gTimb,
+            iTiDE: 5,
+            dDesTiDE: "Nota de crédito electrónica",
+            dNumDoc: "0000001",
+          },
+          operation: { iTImp: 1, dDesTImp: "IVA" },
+          emissionType: { code: 1, description: "Normal" },
+        },
+        identity: {
+          cdc: identity.cdc,
+          dDVId: identity.dDVId,
+          securityCode: "123456789",
+          environment: "test",
+        },
+        signatureTimestamp: "2026-11-04T09:00:05",
+        qrContent: fixture.gCamFuFD.dCarQR,
+        motive: 2,
+        associatedCdc: fixture.cdc,
+      });
+      const xml = withStructuralSignature(buildDteXml(request));
       const result = await validateDeAgainstOfficialXsd(xml, schemaDirectory);
 
       expect(result.errors).toEqual([]);

@@ -1,5 +1,5 @@
 import type { ReportCode } from "@/app/api/reports/report-codes";
-import { reportQueryShapeOf } from "@/app/api/reports/report-codes";
+import { reportAcceptsBranch, reportQueryShapeOf } from "@/app/api/reports/report-codes";
 
 /**
  * The staff reporting client ([[REP-008]], [[DEC-062]]).
@@ -415,7 +415,11 @@ export function selectionMatchesCode(code: ReportCode, selection: ReportSelectio
  * a `400` from the API that looked like a surface bug, and the surface builds its
  * controls FROM the query shape, so reaching this branch is a programming error.
  */
-export function reportQueryString(code: ReportCode, selection: ReportSelection): string {
+export function reportQueryString(
+  code: ReportCode,
+  selection: ReportSelection,
+  branchId: string | null = null
+): string {
   if (!selectionMatchesCode(code, selection)) {
     throw new Error(`Report ${code} does not accept a "${selection.kind}" selection.`);
   }
@@ -434,12 +438,20 @@ export function reportQueryString(code: ReportCode, selection: ReportSelection):
     case "none":
       break;
   }
+  // MB-004: only a report that takes a branch gets one; `null` is «Todas».
+  if (branchId !== null && reportAcceptsBranch(code)) {
+    params.set("branchId", branchId);
+  }
   return params.toString();
 }
 
 /** The BFF read path, e.g. `/api/reports/stock?preset=last7Days`. */
-export function reportRequestPath(code: ReportCode, selection: ReportSelection): string {
-  const query = reportQueryString(code, selection);
+export function reportRequestPath(
+  code: ReportCode,
+  selection: ReportSelection,
+  branchId: string | null = null
+): string {
+  const query = reportQueryString(code, selection, branchId);
   return `/api/reports/${encodeURIComponent(code)}${query.length > 0 ? `?${query}` : ""}`;
 }
 
@@ -448,23 +460,46 @@ export function reportRequestPath(code: ReportCode, selection: ReportSelection):
  * <code>/export?…`. It is a separate route (`[reportCode]/export`) on purpose:
  * the CSV carries `content-disposition`, which no read answer may carry.
  */
-export function reportExportPath(code: ReportCode, selection: ReportSelection): string {
-  const query = reportQueryString(code, selection);
+export function reportExportPath(
+  code: ReportCode,
+  selection: ReportSelection,
+  branchId: string | null = null
+): string {
+  const query = reportQueryString(code, selection, branchId);
   return `/api/reports/${encodeURIComponent(code)}/export${query.length > 0 ? `?${query}` : ""}`;
 }
 
 /** Reads one report through the staff BFF. */
 export async function fetchReport(
   code: ReportCode,
-  selection: ReportSelection
+  selection: ReportSelection,
+  branchId: string | null = null
 ): Promise<ReportResponse> {
-  const response = await fetch(reportRequestPath(code, selection), { cache: "no-store" });
+  const response = await fetch(reportRequestPath(code, selection, branchId), {
+    cache: "no-store",
+  });
   if (!response.ok) {
     throw await parseError(response);
   }
   // The mirror above is the contract this cast asserts; the BFF forwards the
   // API's own JSON unchanged, so the shape is the API's, not a copy of it.
   return (await response.json()) as ReportResponse;
+}
+
+/** MB-004: one branch of the clinic as the report filter offers it. */
+export interface ReportBranchOption {
+  readonly id: string;
+  readonly name: string;
+  readonly isActive: boolean;
+}
+
+/** MB-004: the clinic's branches (inactive ones included, they have history). */
+export async function fetchReportBranches(): Promise<ReportBranchOption[]> {
+  const response = await fetch("/api/reports/branches", { cache: "no-store" });
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  return (await response.json()) as ReportBranchOption[];
 }
 
 // ---------------------------------------------------------------------------

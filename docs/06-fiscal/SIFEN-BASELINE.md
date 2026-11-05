@@ -3119,3 +3119,105 @@ does not carry:
   data**, and admits no tenant branding on the KuDE (§26.4.6).
 - `J003` is not sent to SIFEN, so it is not part of the DE the builder emits; if
   the renderer fills it, the content is the emitter's own.
+
+## 27. The credit note and the type-specific groups (retrieved 2026-11-02)
+
+### 27.1 Retrieval record
+
+```text
+DE_v150.xsd           https://ekuatia.set.gov.py/sifen/xsd/DE_v150.xsd        66,117 chars
+DE_Types_v150.xsd     https://ekuatia.set.gov.py/sifen/xsd/DE_Types_v150.xsd
+Manual Técnico v150   https://www.dnit.gov.py/documents/20123/420592/Manual+T%C3%A9cnico+Versi%C3%B3n+150.pdf
+                      217 pages, text extracted with pdf.js; pages 74-85, 109-110, 169-173, 188-190
+Notas Técnicas 001-027  https://www.dnit.gov.py/documents/20123/420595/NT_E_KUATIA_0NN_MT_V150.pdf
+                      all 27 re-read and searched for E0xx, E4xx, E60x-E64x, H0xx and the group names
+```
+
+Both hosts are blocked from the sandbox and from the user's machine shell. They
+were read from the browser pane on the user's computer (`fetch` + pdf.js on the
+DNIT origin), which is a route a future session can repeat.
+
+### 27.2 The schema
+
+```text
+tgDtipDE   gCamFE?, gCamAE?, gCamNCDE?, gCamNRE?, gCamCond?, gCamItem 1..999, gCamEsp?, ...
+tgCamNCDE  iMotEmi (tiMotEmi: noEmptyString [1-8]), dDesMotEmi (tdDesMotEmi: 8 enumerated strings)
+tgCamDEAsoc iTipDocAso (1|2|3), dDesTipDocAso ("Electrónico"|"Impreso"|"Constancia Electrónica"),
+            dCdCDERef? (tCDC), dNTimDI?, dEstDocAso?, dPExpDocAso?, dNumDocAso?, iTipoDocAso?,
+            dDTipoDocAso?, dFecEmiDI?, dNumComRet?, dNumResCF?, iTipCons?, dDesTipCons?,
+            dNumCons?, dNumControl?, dRucFus?, dNumCuoDocAso?, dImpCuoDocAso?
+tdDesMotEmi 1 "Devolución y Ajuste de precios"  2 "Devolución"  3 "Descuento"  4 "Bonificación"
+            5 "Crédito incobrable"  6 "Recupero de costo"  7 "Recupero de gasto"  8 "Ajuste de precio"
+```
+
+### 27.3 The Manual's rules (with NT amendments)
+
+```text
+D011  iTipTra     No informar si C002 ≠ 1 o 4
+E010  gCamFE      Obligatorio si C002 = 1; no informar si C002 ≠ 1          1350 / 1351
+E011  iIndPres    1 presencial, 2 electrónica, 3 telemarketing, 4 domicilio,
+                  5 bancaria, 6 cíclica, 9 otro (E012 its description)
+E400  gCamNCDE    Obligatorio si C002 = 5 o 6; no informar si ≠              1450 / 1451
+E402  dDesMotEmi  must match E401                                           1452
+E600  gCamCond    Obligatorio si C002 = 1 o 4; no informar si ≠              1500 / 1501
+E605  gPaConEIni  Obligatorio si E601 = 1 (contado)                          1550
+E606  iTiPago     1 efectivo, 2 cheque, 3 tarjeta de crédito, 4 tarjeta de débito,
+                  5 transferencia, 6 giro, 7 billetera electrónica, ... 21 pago electrónico, 99 otro
+E620  gPagTarCD   Se activa si E606 = 3 o 4 (1600): iDenTarj (1 Visa, 2 Mastercard,
+                  3 American Express, 4 Maestro, 5 Panal, 6 Cabal, 99 otro), iForProPa (1 POS,
+                  2 pago electrónico, 9 otro)
+H001  gCamDEAsoc  Obligatorio si C002 = 4, 5, 6 (8 per NT 023)               2400
+                  once for C002 = 4, 5, 6                                    2415
+                  a note may only reference a Factura electrónica            2414
+H002              no Constancia (3) for C002 = 1, 5, 6, 7                    2434
+H004  dCdCDERef   obligatorio si H002 = 1                                    2402
+                  must exist in SIFEN / not be cancelled                     2403 / 2404
+                  the sum of notes' F014 may not exceed the factura's F014   2417
+                  same currency as the factura                               2438
+                  same emitter (NT 010, 023) and same receptor (NT 010)      2439 / 2441
+H018  dRucFus     optional, only for C002 = 5, 6, 7 (NT 023)                 2443 / 2444
+```
+
+No Nota Técnica amends `E010`, `E400` or `E600` beyond NT 026's B2G exclusions;
+the `H` group is amended by NT 010 (2439, 2441, 2440), NT 015 (2442, the
+nomination event) and NT 023 (H018, and 2400's extension to `C002 = 8`).
+
+### 27.4 Consequences
+
+- [[NCE-001]] emits `gCamNCDE` and one `gCamDEAsoc` (`H002 = 1`) and omits
+  `iTipTra`; `assertValidDteRequest` enforces 1450/1451/1452, 2400/2415, 2414,
+  2434, 2402 and D011.
+- **The factura electrónica the generator emits today carries neither `gCamFE`
+  nor `gCamCond`**, which rules 1350 and 1500 make obligatory for `C002 = 1`.
+  The schema marks both `minOccurs="0"`, so the XSD gate cannot see it. Recorded
+  as [[TD-074]], a production blocker.
+
+## 28. The factura's gCamFE and gCamCond, field by field (retrieved 2026-11-03)
+
+Read from `DE_v150.xsd` and `DE_Types_v150.xsd` in the browser pane on the
+user's computer, as §27.1 records.
+
+```text
+tgCamFE     iIndPres (tiIndPres [1-6]|9), dDesIndPres (tdDesIndPres: 6 strings | 10..30 free),
+            dFecEmNR?, gCompPub?
+tgCamCond   iCondOpe (tiCondOpe 1|2), dDCondOpe ("Contado"|"Crédito"),
+            gPaConEIni 0..999 (tgPagCont), gPagCred?
+tgPagCont   iTiPago (tiTiPago 1..21|99), dDesTiPag (tdDesTiPag: 21 strings | 4..30 free),
+            dMonTiPag (tMontoBase4), cMoneTiPag (cMondT), dDMoneTiPag (3..20),
+            dTiCamTiPag?, gPagTarCD?, gPagCheq?
+tgPagTarCD  iDenTarj (1 Visa, 2 Mastercard, 3 American Express, 4 Maestro, 5 Panal,
+            6 Cabal, 99), dDesDenTarj (6 strings | 4..20 free), dRSProTar?, dRUCProTar?,
+            dDVProTar?, iForProPa (1 POS, 2 electrónico, 9 otro), dCodAuOpe?, dNomTit?,
+            dNumTarj?
+tgPagCheq   dNumCheq (tNumCheq: exactly [0-9]{8}), dBcoEmi (4..20)
+tdDesTiPag  1 Efectivo  2 Cheque  3 Tarjeta de crédito  4 Tarjeta de débito  5 Transferencia
+            6 Giro  7 Billetera electrónica  8 Tarjeta empresarial  9 Vale  10 Retención
+            11 Pago por anticipo  12 Valor fiscal  13 Valor comercial  14 Compensación
+            15 Permuta  16 Pago bancario  17 Pago Móvil  18 Donación  19 Promoción
+            20 Consumo Interno  21 Pago Electrónico
+```
+
+The descriptions are the schema's exact strings (capitalisation included:
+"Pago Móvil", "Pago Electrónico"). [[PAY-DET-001]] emits them from
+`dte.payment.ts`; [[DEC-091]] records which application method maps to which
+code.

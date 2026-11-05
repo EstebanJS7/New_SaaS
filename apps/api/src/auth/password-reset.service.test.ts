@@ -32,7 +32,12 @@ interface Harness {
  * spent first.
  */
 function harness(
-  options: { tokenRow?: unknown; hashFails?: boolean; updateFails?: boolean } = {}
+  options: {
+    tokenRow?: unknown;
+    hashFails?: boolean;
+    updateFails?: boolean;
+    noCredential?: boolean;
+  } = {}
 ): Harness {
   const statements: string[] = [];
   const auditInputs: AuditAppendInput[] = [];
@@ -65,12 +70,15 @@ function harness(
       },
     },
     userCredential: {
-      update: (args) => {
+      updateMany: () => {
         statements.push("tx:credentialUpdate");
         if (options.updateFails) return Promise.reject(new Error("write failed"));
-        return Promise.resolve({
-          userProfileId: (args.where as { userProfileId: string }).userProfileId,
-        });
+        return Promise.resolve({ count: options.noCredential ? 0 : 1 });
+      },
+      create: (args) => {
+        statements.push("tx:credentialCreate");
+        expect(args.data).toMatchObject({ userProfileId: PROFILE });
+        return Promise.resolve({ userProfileId: PROFILE });
       },
     },
     staffSession: {
@@ -186,6 +194,29 @@ describe("PasswordResetService — one transaction, in a deliberate order", () =
     const serialized = JSON.stringify(auditInputs[0]);
     expect(serialized).not.toContain(TOKEN);
     expect(serialized).not.toContain("argon2");
+  });
+
+  it("creates the FIRST credential for an invited profile and audits an activation (ONB-001)", async () => {
+    const { service, statements, auditInputs } = harness({ noCredential: true });
+    const outcome = await service.resetPassword(TOKEN, "a-new-password", NOW);
+
+    expect(statements).toEqual([
+      "hash",
+      "tx:begin",
+      "tx:findFirst",
+      "tx:consumeCas",
+      "tx:credentialUpdate",
+      "tx:credentialCreate",
+      "tx:sessionsDelete",
+      "tx:spendOthers",
+      "tx:audit",
+    ]);
+    expect(outcome.userProfileId).toBe(PROFILE);
+    expect(auditInputs[0]).toMatchObject({
+      action: "auth.account_activated",
+      actorUserProfileId: PROFILE,
+      targetId: PROFILE,
+    });
   });
 
   it("ends every session, not just the caller's — that is the point of a reset", async () => {

@@ -20,6 +20,7 @@
     "@fullcalendar/interaction": "6.1.21",
     "@fullcalendar/react": "6.1.21",
     "@fullcalendar/timegrid": "6.1.21",
+    "@newsaas/observability": "workspace:*",
     "@newsaas/ui": "workspace:*",
     "@tanstack/react-query": "^5.74.3",
     "next": "^15.3.0",

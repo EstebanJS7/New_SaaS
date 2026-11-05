@@ -32,9 +32,48 @@ type Status = "idle" | "submitting" | "done";
 
 interface ResetPasswordFormProps {
   readonly token: string;
+  /**
+   * ONB-001: the link came from an INVITATION (`&activate=1`), so the person is choosing a
+   * first password rather than replacing one. Only the words change: the token is the
+   * same kind, the API call is the same, and the server decides what the token allows.
+   */
+  readonly activation?: boolean;
 }
 
-export function ResetPasswordForm({ token }: ResetPasswordFormProps): JSX.Element {
+const COPY = {
+  reset: {
+    title: "Restablecé tu contraseña",
+    description: "Elegí una nueva contraseña para tu cuenta.",
+    noTokenDescription: "Necesitás el enlace que recibiste por correo.",
+    noToken: "Abrí el enlace del mensaje de recuperación. Si ya no es válido, solicitá uno nuevo.",
+    invalidLink: "El enlace no es válido. Solicitá uno nuevo.",
+    failure: "No se pudo actualizar la contraseña. Intentá nuevamente.",
+    doneTitle: "Contraseña actualizada",
+    done: "Tu contraseña se actualizó y se cerraron todas las sesiones en tus dispositivos. Ingresá nuevamente con tu nueva contraseña.",
+    submit: "Actualizar contraseña",
+    submitting: "Actualizando…",
+  },
+  activate: {
+    title: "Activá tu cuenta",
+    description: "Elegí la contraseña con la que vas a ingresar.",
+    noTokenDescription: "Necesitás el enlace de la invitación que recibiste por correo.",
+    noToken:
+      "Abrí el enlace del mensaje de invitación. Si ya venció, pedí uno nuevo desde «¿Olvidaste tu contraseña?».",
+    invalidLink:
+      "El enlace no es válido o ya venció. Pedí uno nuevo desde «¿Olvidaste tu contraseña?» o a quien te invitó.",
+    failure: "No se pudo activar la cuenta. Intentá nuevamente.",
+    doneTitle: "Cuenta activada",
+    done: "Ya podés ingresar con tu email y la contraseña que elegiste.",
+    submit: "Activar cuenta",
+    submitting: "Activando…",
+  },
+} as const;
+
+export function ResetPasswordForm({
+  token,
+  activation = false,
+}: ResetPasswordFormProps): JSX.Element {
+  const copy = activation ? COPY.activate : COPY.reset;
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [status, setStatus] = useState<Status>("idle");
@@ -59,8 +98,8 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps): JSX.Elemen
       setStatus("idle");
       setProblem(
         error instanceof ApiRequestError && error.code === "UNAUTHENTICATED"
-          ? "El enlace no es válido. Solicitá uno nuevo."
-          : "No se pudo actualizar la contraseña. Intentá nuevamente."
+          ? copy.invalidLink
+          : copy.failure
       );
     }
   }
@@ -70,13 +109,13 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps): JSX.Elemen
       <Card>
         <CardHeader>
           <CardTitle>
-            <h1>Restablecé tu contraseña</h1>
+            <h1>{copy.title}</h1>
           </CardTitle>
-          <CardDescription>Necesitás el enlace que recibiste por correo.</CardDescription>
+          <CardDescription>{copy.noTokenDescription}</CardDescription>
         </CardHeader>
         <CardContent>
           <p data-testid="reset-no-token" className="text-sm text-muted-foreground">
-            Abrí el enlace del mensaje de recuperación. Si ya no es válido, solicitá uno nuevo.
+            {copy.noToken}
           </p>
           <Link href="/login" className="text-sm underline underline-offset-4">
             Volver al inicio de sesión
@@ -91,16 +130,15 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps): JSX.Elemen
       <Card>
         <CardHeader>
           <CardTitle>
-            <h1>Contraseña actualizada</h1>
+            <h1>{copy.doneTitle}</h1>
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           <p role="status" data-testid="reset-done" className="text-sm text-muted-foreground">
-            Tu contraseña se actualizó y se cerraron todas las sesiones en tus dispositivos. Ingresá
-            nuevamente con tu nueva contraseña.
+            {copy.done}
           </p>
           <Link href="/login" className="text-sm underline underline-offset-4">
-            Volver al inicio de sesión
+            {activation ? "Ingresar" : "Volver al inicio de sesión"}
           </Link>
         </CardContent>
       </Card>
@@ -111,9 +149,9 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps): JSX.Elemen
     <Card>
       <CardHeader>
         <CardTitle>
-          <h1>Restablecé tu contraseña</h1>
+          <h1>{copy.title}</h1>
         </CardTitle>
-        <CardDescription>Elegí una nueva contraseña para tu cuenta.</CardDescription>
+        <CardDescription>{copy.description}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {/*
@@ -131,7 +169,7 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps): JSX.Elemen
         >
           <div className="space-y-2">
             <label htmlFor="reset-password" className="text-sm font-medium">
-              Nueva contraseña
+              {activation ? "Contraseña" : "Nueva contraseña"}
             </label>
             <input
               id="reset-password"
@@ -190,7 +228,7 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps): JSX.Elemen
             </p>
           )}
           <Button type="submit" disabled={!canSubmit || status === "submitting"}>
-            {status === "submitting" ? "Actualizando…" : "Actualizar contraseña"}
+            {status === "submitting" ? copy.submitting : copy.submit}
           </Button>
         </form>
       </CardContent>

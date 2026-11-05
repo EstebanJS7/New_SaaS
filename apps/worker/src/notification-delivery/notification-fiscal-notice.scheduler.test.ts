@@ -16,7 +16,7 @@ interface Prisma_CreateArgs {
 }
 
 function setup(args: {
-  readonly document?: { status: string; invoiceId: string } | null;
+  readonly document?: { status: string; invoiceId: string; creditNoteId?: string | null } | null;
   readonly invoice?: { customerId: string | null } | null;
   readonly conflict?: boolean;
   /** Whether the conflict path finds a PENDING delivery to enqueue. */
@@ -130,6 +130,14 @@ describe("creating the fiscal notice", () => {
     // already happened rather than being deferred like a reminder.
     expect(enqueued).toHaveLength(1);
     expect(enqueued[0]?.job).toEqual({ notificationDeliveryId: "delivery-1", tenantId });
+  });
+
+  it("sends no invoice notice for an approved credit note (NCE-001)", async () => {
+    const { notify, creates } = setup({
+      document: { status: "APPROVED", invoiceId: "inv-1", creditNoteId: "cn-1" },
+    });
+    await notify();
+    expect(creates).toHaveLength(0);
   });
 
   it("does nothing for a document that is not APPROVED", async () => {

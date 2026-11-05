@@ -2,7 +2,7 @@
   "name": "@newsaas/database",
   "version": "0.0.0",
   "private": true,
-  "description": "NewSaaS database package \u2014 Prisma schema, migrations, and client lifecycle",
+  "description": "NewSaaS database package — Prisma schema, migrations, and client lifecycle",
   "license": "UNLICENSED",
   "type": "module",
   "main": "./dist/index.js",
@@ -23,7 +23,8 @@
     "db:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "db:live-verify": "tsx scripts/live-migration-verify.ts",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "db:provision-tenant": "tsx prisma/provision-tenant.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.16",

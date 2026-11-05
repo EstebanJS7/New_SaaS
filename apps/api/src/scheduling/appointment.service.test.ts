@@ -12,6 +12,10 @@ import type {
 } from "../settings/registry.js";
 import { SCHEDULING_PERMISSIONS } from "./appointment.permissions.js";
 import {
+  BRANCH_INACTIVE_MESSAGE,
+  PROFESSIONAL_NOT_AT_BRANCH_MESSAGE,
+} from "./appointment-invariants.js";
+import {
   AppointmentService,
   intersectsBlock,
   isWithinAvailability,
@@ -22,6 +26,7 @@ import type {
   AppointmentCatalogItemDelegate,
   AppointmentDelegate,
   AppointmentFilters,
+  AppointmentMembershipBranchDelegate,
   AppointmentMembershipDelegate,
   AppointmentPatientDelegate,
   AppointmentPrisma,
@@ -106,6 +111,10 @@ interface Harness {
   rows: Map<string, AppointmentRow>;
   memberships: Map<string, { tenantId: string; roleCode: string }>;
   catalogItems: Map<string, CatalogItemFixture>;
+  /** MB-001: `${membershipId}:${branchId}` pairs that are NOT assigned (default: all are). */
+  unassigned: Set<string>;
+  /** MB-001: branches that are deactivated. */
+  inactiveBranches: Set<string>;
   appendMock: AppendMock;
   resolveMock: Mock<() => Promise<Set<string>>>;
   settingsMock: Mock<(namespace: string) => Promise<unknown>>;
@@ -144,6 +153,36 @@ function buildHarness(requestContext: RequestContextService): Harness {
   ]);
   const rows = new Map<string, AppointmentRow>();
   let nextId = 1;
+  const unassigned = new Set<string>();
+  const inactiveBranches = new Set<string>();
+
+  // MB-001: every same-tenant (membership, branch) pair is assigned unless the
+  // test says otherwise — what the DEC-094 §8 backfill does for real data.
+  const membershipBranchDelegate: AppointmentMembershipBranchDelegate = {
+    findFirst: ({ where }) => {
+      const membership = memberships.get(where.membershipId);
+      const assigned =
+        membership?.tenantId === where.tenantId &&
+        branches.get(where.branchId) === where.tenantId &&
+        !unassigned.has(`${where.membershipId}:${where.branchId}`);
+      return Promise.resolve(
+        assigned ? { branch: { isActive: !inactiveBranches.has(where.branchId) } } : null
+      );
+    },
+    findMany: ({ where }) =>
+      Promise.resolve(
+        [...memberships.entries()].flatMap(([membershipId, membership]) =>
+          membership.tenantId !== where.tenantId
+            ? []
+            : [...branches.entries()]
+                .filter(
+                  ([branchId, tenantId]) =>
+                    tenantId === where.tenantId && !unassigned.has(`${membershipId}:${branchId}`)
+                )
+                .map(([branchId]) => ({ membershipId, branchId }))
+        )
+      ),
+  };
 
   const branchDelegate: AppointmentBranchDelegate = {
     findFirst: ({ where }) =>
@@ -152,7 +191,7 @@ function buildHarness(requestContext: RequestContextService): Harness {
       Promise.resolve(
         [...branches.entries()]
           .filter(([, tenantId]) => tenantId === where.tenantId)
-          .map(([id]) => ({ id, name: `Branch ${id}` }))
+          .map(([id]) => ({ id, name: `Branch ${id}`, isActive: !inactiveBranches.has(id) }))
       ),
   };
 
@@ -255,6 +294,7 @@ function buildHarness(requestContext: RequestContextService): Harness {
     branch: branchDelegate,
     patient: patientDelegate,
     tenantMembership: membershipDelegate,
+    membershipBranch: membershipBranchDelegate,
     appointment: appointmentDelegate,
     catalogItem: catalogItemDelegate,
   };
@@ -314,6 +354,8 @@ function buildHarness(requestContext: RequestContextService): Harness {
     rows,
     memberships,
     catalogItems,
+    unassigned,
+    inactiveBranches,
     appendMock,
     resolveMock,
     settingsMock,
@@ -490,6 +532,27 @@ describe("AppointmentService (EPIC-07 WU2 domain service)", () => {
     await expect(
       withContext(() => harness.service.createAppointment(createInput()))
     ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    expect(harness.rows.size).toBe(0);
+  });
+
+  it("MB-001: refuses a professional who does not work at the branch", async () => {
+    harness.unassigned.add(`${VET_A}:${BRANCH_A}`);
+
+    await expect(
+      withContext(() => harness.service.createAppointment(createInput()))
+    ).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      message: PROFESSIONAL_NOT_AT_BRANCH_MESSAGE,
+    });
+    expect(harness.rows.size).toBe(0);
+  });
+
+  it("MB-001: refuses a new turno at a deactivated branch", async () => {
+    harness.inactiveBranches.add(BRANCH_A);
+
+    await expect(
+      withContext(() => harness.service.createAppointment(createInput()))
+    ).rejects.toMatchObject({ code: "VALIDATION_FAILED", message: BRANCH_INACTIVE_MESSAGE });
     expect(harness.rows.size).toBe(0);
   });
 
@@ -842,9 +905,9 @@ describe("AppointmentService (EPIC-07 WU2 domain service)", () => {
   it("returns only VETERINARIAN memberships in the agenda options", async () => {
     const result = await withContext(() => harness.service.listAppointmentOptions());
     expect(result.professionals).toEqual([
-      { membershipId: VET_A, displayName: "Profesional de prueba" },
+      { membershipId: VET_A, displayName: "Profesional de prueba", branchIds: [BRANCH_A] },
     ]);
-    expect(result.branches).toEqual([{ id: BRANCH_A, name: `Branch ${BRANCH_A}` }]);
+    expect(result.branches).toEqual([{ id: BRANCH_A, name: `Branch ${BRANCH_A}`, isActive: true }]);
   });
 
   // -------------------------------------------------------------------------

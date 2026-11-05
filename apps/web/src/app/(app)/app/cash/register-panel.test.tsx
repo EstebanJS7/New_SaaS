@@ -25,6 +25,7 @@ interface PanelOverrides {
   readonly isCreating?: boolean;
   readonly createError?: Error | null;
   readonly created?: CashRegister | null;
+  readonly branches?: readonly { id: string; name: string }[];
 }
 
 function renderPanel(overrides: PanelOverrides = {}): {
@@ -40,6 +41,7 @@ function renderPanel(overrides: PanelOverrides = {}): {
       isCreating={overrides.isCreating ?? false}
       createError={overrides.createError ?? null}
       created={overrides.created ?? null}
+      branches={overrides.branches}
     />
   );
   return { onCreate };
@@ -174,5 +176,39 @@ describe("RegisterPanel create form", () => {
 
     expect(screen.getByLabelText("Nombre de la caja")).toBeDisabled();
     expect(screen.getByRole("button", { name: "Creando caja…" })).toBeDisabled();
+  });
+});
+
+describe("RegisterPanel branches (MB-002)", () => {
+  const BRANCHES = [
+    { id: "b-1", name: "Casa central" },
+    { id: "b-2", name: "Norte" },
+  ];
+
+  it("shows each drawer's branch", () => {
+    renderPanel({ registers: [{ ...REGISTER, branchId: "b-2", branchName: "Norte" }] });
+    expect(screen.getByText(/^Norte · #/)).toBeInTheDocument();
+  });
+
+  it("asks for no branch when the person works at one", async () => {
+    const { onCreate } = renderPanel({ branches: [BRANCHES[0]] });
+    expect(screen.queryByLabelText("Sucursal")).toBeNull();
+    fireEvent.change(screen.getByLabelText("Nombre de la caja"), { target: { value: "Caja 1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Crear caja" }));
+    await vi.waitFor(() => expect(onCreate).toHaveBeenCalledWith({ name: "Caja 1" }));
+  });
+
+  it("requires the branch when the person works at several, and sends it", async () => {
+    const { onCreate } = renderPanel({ branches: BRANCHES });
+    fireEvent.change(screen.getByLabelText("Nombre de la caja"), { target: { value: "Caja 2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Crear caja" }));
+    expect(await screen.findByText("Elegí la sucursal de la caja.")).toBeInTheDocument();
+    expect(onCreate).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("Sucursal"), { target: { value: "b-2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Crear caja" }));
+    await vi.waitFor(() =>
+      expect(onCreate).toHaveBeenCalledWith({ name: "Caja 2", branchId: "b-2" })
+    );
   });
 });

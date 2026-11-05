@@ -30,11 +30,13 @@ describe("NavSidebar", () => {
       "Informes",
       "Notificaciones",
       "Importaciones",
+      "Personal",
+      "Sucursales",
       "Marca",
     ]) {
       expect(within(nav).getByRole("link", { name: label })).toBeInTheDocument();
     }
-    expect(within(nav).getAllByRole("link")).toHaveLength(15);
+    expect(within(nav).getAllByRole("link")).toHaveLength(18);
     expect(within(nav).queryByRole("button")).not.toBeInTheDocument();
     expect(screen.queryByText(/Section one|Section two|Section three/)).not.toBeInTheDocument();
     expect(screen.getByText("Example workspace")).toBeInTheDocument();

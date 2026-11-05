@@ -233,6 +233,19 @@ describe("/api/portal proxy", () => {
     expect(init.headers).not.toHaveProperty("x-forwarded-for");
   });
 
+  it("DEC-093: forwards the client address on the sign-in hop only", async () => {
+    cookiesMock.mockResolvedValue(portalCookieStore(undefined));
+    fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));
+    await callPost(
+      mockNextRequest({
+        pathname: "/api/portal/login",
+        bodyText: JSON.stringify({ email: "a@b.co", password: "x", tenantSlug: "t" }),
+        headers: new Headers({ "x-forwarded-for": "203.0.113.7" }),
+      })
+    );
+    expect(fetchInit().headers["x-forwarded-for"]).toBe("203.0.113.7");
+  });
+
   it("still proxies without a portal cookie so the API can answer 401", async () => {
     cookiesMock.mockResolvedValue(portalCookieStore(undefined));
     fetchMock.mockResolvedValue(

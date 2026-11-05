@@ -48,6 +48,7 @@ interface FiscalDocumentDto {
 const RESPONSE_KEYS = [
   "id",
   "invoiceId",
+  "creditNoteId",
   "provider",
   "status",
   "attemptCount",

@@ -5,6 +5,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { Prisma, PrismaService } from "@newsaas/database";
 import { DomainError } from "@newsaas/shared";
 import { AuditWriter, type AuditAppendTx } from "../audit/audit-writer.service.js";
+import { assertWorksAtBranch, resolveWorkingBranch } from "../branches/branch-scope.js";
 import { RequestContextService } from "../context/request-context.service.js";
 import {
   InventoryRepository,
@@ -138,6 +139,7 @@ function toPurchaseResponse(row: PurchaseRow): PurchaseResponse {
     // The business instant the purchase was received (DEC-064), projected the
     // same way `createdAt` is: an ISO string, or `null` while not terminal.
     receivedAt: row.receivedAt === null ? null : row.receivedAt.toISOString(),
+    branchId: row.branchId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -274,9 +276,17 @@ export class PurchasesService {
         tx
       );
 
+      // MB-003 (DEC-094 §10): received into an active branch the caller
+      // works at — the requested one, or their only one.
+      const branchId = await resolveWorkingBranch(
+        tx,
+        { tenantId, userProfileId: actorUserProfileId },
+        input.branchId
+      );
       const created = await this.purchases.create(
         {
           supplierId: input.supplierId,
+          branchId,
           lines: input.lines.map(toLineWriteData),
         },
         tx
@@ -412,6 +422,13 @@ export class PurchasesService {
       // committed — is the stable `409` and persists nothing.
       const locked = await this.purchases.findById(id, tx);
       assertDraft(locked);
+      // MB-003: goods are received by someone who works at the purchase's
+      // branch, and never into a deactivated branch.
+      await assertWorksAtBranch(
+        tx,
+        { tenantId, userProfileId: actorUserProfileId },
+        locked.branchId
+      );
 
       // Stable ascending order over the line items: the lock order DEC-014
       // fixes, and the order every pass below follows.
@@ -432,7 +449,7 @@ export class PurchasesService {
       // later rejection releases them; deterministic, so concurrent multi-line
       // receives of the same items in opposite line order cannot deadlock.
       for (const line of orderedLines) {
-        await this.inventory.lockItemStock(line.catalogItemId, tx);
+        await this.inventory.lockItemStock(line.catalogItemId, locked.branchId, tx);
       }
 
       // Pass 3 — one POSITIVE `PURCHASE` movement and one projection upsert per
@@ -448,13 +465,14 @@ export class PurchasesService {
             type: "PURCHASE",
             quantity,
             reason: PURCHASE_RECEIVE_MOVEMENT_REASON,
+            branchId: locked.branchId,
           },
           tx
         );
 
-        const balance = await this.inventory.findBalance(line.catalogItemId, tx);
+        const balance = await this.inventory.findBalance(line.catalogItemId, locked.branchId, tx);
         const projected = new Prisma.Decimal(balance?.quantity ?? 0).plus(quantity);
-        await this.inventory.upsertBalance(line.catalogItemId, projected, tx);
+        await this.inventory.upsertBalance(line.catalogItemId, locked.branchId, projected, tx);
       }
 
       // BACKSTOP: the header lock already serialized this transition, and this

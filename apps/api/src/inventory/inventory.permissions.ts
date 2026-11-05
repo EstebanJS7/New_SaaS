@@ -13,6 +13,8 @@
 export const INVENTORY_PERMISSIONS = Object.freeze({
   read: "inventory.stock.read",
   adjust: "inventory.stock.adjust",
+  /** MB-003 (DEC-094 §10): seeded since EPIC-01, consumed by the transfer command. */
+  transfer: "inventory.stock.transfer",
 } as const);
 
 export type InventoryPermission =

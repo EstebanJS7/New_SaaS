@@ -481,7 +481,7 @@ describe("Appointments HTTP boundary (EPIC-07 WU3)", () => {
 
     const body = response.body as {
       branches: { id: string; name: string }[];
-      professionals: { membershipId: string; displayName: string | null }[];
+      professionals: { membershipId: string; displayName: string | null; branchIds: string[] }[];
     };
     expect(body.branches.map((branch) => branch.id)).toContain(fixture.a.branch.id);
     expect(body.branches.map((branch) => branch.id)).not.toContain(fixture.b.branch.id);
@@ -492,6 +492,14 @@ describe("Appointments HTTP boundary (EPIC-07 WU3)", () => {
       (entry) => entry.membershipId === fixture.a.professionalMembershipId
     );
     expect(professional?.displayName).toBeTruthy();
-    expect(Object.keys(professional ?? {}).sort()).toEqual(["displayName", "membershipId"]);
+    expect(Object.keys(professional ?? {}).sort()).toEqual([
+      "branchIds",
+      "displayName",
+      "membershipId",
+    ]);
+    // MB-001: the professional works at the fixture branch, and never at the
+    // other clinic's.
+    expect(professional?.branchIds).toContain(fixture.a.branch.id);
+    expect(professional?.branchIds).not.toContain(fixture.b.branch.id);
   });
 });

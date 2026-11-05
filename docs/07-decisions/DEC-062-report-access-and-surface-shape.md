@@ -20,6 +20,10 @@ prd_change_required: false
 
 # DEC-062 — Report access: ungated by feature code, guarded by `reports.*`
 
+> **2026-11-05:** superseded in part by [[DEC-094]] §11 (MB-004): the
+> commercial, cash, purchase and inventory reports now take an optional branch
+> filter («Todas» by default). The rest of this decision stands.
+
 ## Context
 
 PRD §9 lists `reporting` among the Core **domains**. PRD §9.1 fixes the twelve

@@ -2,7 +2,7 @@
 id: TD-052
 type: tech-debt
 title: The branch dimension the finance ledgers do not carry
-status: accepted
+status: resolved
 severity: medium
 owner: architecture
 related_epics:
@@ -16,10 +16,24 @@ related_decisions:
   - "DEC-020"
   - "DEC-062"
 created: 2026-10-19
-updated: 2026-10-19
+updated: 2026-11-05
 ---
 
 # TD-052 — The branch dimension the finance ledgers do not carry
+
+> **2026-11-03:** being resolved by [[DEC-094]] in four deliveries. MB-001
+> (branches and staff assignment) and MB-002 (cash registers, sales and the
+> issuance point per branch) are done; stock (MB-003) and report filters
+> (MB-004) follow. This debt closes with MB-004.
+>
+> **2026-11-04:** MB-003 (stock per branch, purchases received into a branch
+> and transfers between branches) is done. Only MB-004 remains.
+>
+> **2026-11-05 — resolved.** MB-004 is done: the commercial, cash, purchase
+> and inventory reports (and their CSV exports) take an optional `branchId`,
+> «Todas» by default. Sales, cash registers, purchases and stock movements all
+> carry a branch now, so the dimension described below exists. The rest of
+> this note is kept as the history of why it was missing.
 
 ## What does not exist
 

@@ -6,6 +6,8 @@ import {
   ApiRequestError,
   allowedTransitions,
   approveBookingRequest,
+  bookableBranches,
+  professionalsAtBranch,
   createAppointment,
   getSchedulingSettings,
   listAppointmentOptions,
@@ -485,5 +487,26 @@ describe("booking-request client contract", () => {
       userFacingBookingRequestError(new ApiRequestError("FEATURE_NOT_ENTITLED", "nope", 403))
     ).toBe("La función solicitada no está habilitada para esta organización.");
     expect(userFacingBookingRequestError(new Error("boom"))).toBe("boom");
+  });
+});
+
+describe("MB-001 branch helpers", () => {
+  const pros = [
+    { membershipId: "a", branchIds: ["b1"] },
+    { membershipId: "b", branchIds: ["b2"] },
+    { membershipId: "c" },
+  ];
+  it("lists only professionals assigned to the branch (unknown assignment counts as any)", () => {
+    expect(professionalsAtBranch(pros, "b1").map((p) => p.membershipId)).toEqual(["a", "c"]);
+    expect(professionalsAtBranch(pros, "").map((p) => p.membershipId)).toEqual(["a", "b", "c"]);
+  });
+  it("drops deactivated branches from booking", () => {
+    expect(
+      bookableBranches([
+        { id: "1", name: "A", isActive: true },
+        { id: "2", name: "B", isActive: false },
+        { id: "3", name: "C" },
+      ]).map((b) => b.id)
+    ).toEqual(["1", "3"]);
   });
 });

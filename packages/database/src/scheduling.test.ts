@@ -288,6 +288,7 @@ function makeFakeSchedulingDb(): {
       { id: string; tenantId: string; userProfileId: string; roleId: string; status: string }
     >;
     appointments: Map<string, AppointmentRow>;
+    assignments: Set<string>;
     transactionCount: number;
     writesOutsideTransaction: number;
   };
@@ -305,7 +306,9 @@ function makeFakeSchedulingDb(): {
     { id: string; tenantId: string; userProfileId: string; roleId: string; status: string }
   >();
   const appointments = new Map<string, AppointmentRow>();
+  const assignments = new Set<string>();
   const tables = {
+    assignments,
     roles,
     patients,
     branches,
@@ -390,6 +393,28 @@ function makeFakeSchedulingDb(): {
           }
         );
       },
+      findMany: ({ where }) =>
+        Promise.resolve(
+          [...memberships.values()]
+            .filter((row) => row.tenantId === where.tenantId)
+            .map((row) => ({ id: row.id }))
+        ),
+    },
+    membershipBranch: {
+      createMany: ({ data, skipDuplicates }) => {
+        recordWrite();
+        let count = 0;
+        for (const row of data) {
+          const key = `${row.membershipId}:${row.branchId}`;
+          if (assignments.has(key)) {
+            if (skipDuplicates) continue;
+            return Promise.reject(new Error(`duplicate assignment ${key}`));
+          }
+          assignments.add(key);
+          count += 1;
+        }
+        return Promise.resolve({ count });
+      },
     },
     appointment: {
       createMany: ({ data, skipDuplicates }) => {
@@ -454,6 +479,10 @@ describe("seedDemoScheduling (EPIC-07 WU1)", () => {
     expect(appointment.professionalMembershipId).toBe(DEMO_SCHEDULING_VET_MEMBERSHIP_ID);
     expect(appointment.status).toBe("SCHEDULED");
     expect(appointment.endAt.getTime()).toBeGreaterThan(appointment.startAt.getTime());
+    // DEC-094: the booked professional works at the branch.
+    expect([...tables.assignments]).toContain(
+      `${DEMO_SCHEDULING_VET_MEMBERSHIP_ID}:${appointment.branchId}`
+    );
   });
 
   it("writes every scheduling fixture inside one transaction", async () => {
@@ -474,6 +503,7 @@ describe("seedDemoScheduling (EPIC-07 WU1)", () => {
     expect(tables.branches.size).toBe(1);
     expect(tables.memberships.size).toBe(1);
     expect(tables.appointments.size).toBe(1);
+    expect(tables.assignments.size).toBe(1);
   });
 
   it("honors skipDuplicates on rerun: the second run inserts zero rows", async () => {

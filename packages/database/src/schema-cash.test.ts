@@ -530,8 +530,9 @@ describe("schema · cash foundation (EPIC-12 POS-002)", () => {
     expect(register).toMatch(/@@unique\(\[tenantId, id\]\)/);
     // A registry cannot hold two drawers called the same thing.
     expect(register).toMatch(/@@unique\(\[tenantId, name\]\)/);
-    // DEC-020: no Branch dimension anywhere in the cash aggregate.
-    expect(register).not.toMatch(/\bbranchId\b/);
+    // MB-002 (DEC-094 §9) supersedes DEC-020 here: a drawer belongs to a branch.
+    expect(register).toMatch(/branchId\s+String\s+@map\("branch_id"\)\s+@db\.Uuid/);
+    expect(register).toMatch(/@relation\(fields: \[tenantId, branchId\], references: \[tenantId, id\]/);
     expect(register).not.toMatch(/\bFloat\b/);
   });
 
@@ -635,9 +636,9 @@ describe("schema · cash foundation (EPIC-12 POS-002)", () => {
     expect(sessionDoc).toMatch(/Prisma cannot express\s+a partial index/);
   });
 
-  it("documents the DEC-020 absences: no branch scope and no EPIC-12 movement writer", () => {
+  it("documents the branch scope (MB-002) and no EPIC-12 movement writer", () => {
     const registerDoc = modelDocComment("CashRegister");
-    expect(registerDoc).toMatch(/no `branchId` \(DEC-020\)/);
+    expect(registerDoc).toMatch(/belongs to a branch/);
     // The per-tenant unique name is flagged as a slice-level choice, not as a
     // silently introduced constraint.
     expect(registerDoc).toMatch(/slice-level choice/);

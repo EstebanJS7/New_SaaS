@@ -143,6 +143,19 @@ export interface FiscalAllocationTx extends FiscalProfileReadClient, TimbradoRan
   invoiceFiscalAllocation: {
     create(args: Prisma.InvoiceFiscalAllocationCreateArgs): Promise<unknown>;
   };
+  /**
+   * MB-002: the sale's branch, whose own issuance point replaces the profile's
+   * default when it declares one. Optional so a handle without it (an older
+   * caller, a unit test) keeps the profile's point.
+   */
+  sale?: {
+    findFirst(args: {
+      where: { id: string; tenantId: string };
+      select: { branch: { select: { fiscalEstablishmentId: true; expeditionPoint: true } } };
+    }): Promise<{
+      branch?: { fiscalEstablishmentId: string | null; expeditionPoint: string | null } | null;
+    } | null>;
+  };
 }
 
 /** The three profile columns that identify the authorisation, all declared. */
@@ -168,10 +181,12 @@ export class FiscalAllocationService {
    */
   async allocateForConfirmation(args: {
     readonly invoiceId: string;
+    /** MB-002: the invoiced sale; its branch may carry its own issuance point. */
+    readonly saleId?: string;
     readonly tx: FiscalAllocationTx;
   }): Promise<void> {
     const tenantId = this.context.requireTenantId();
-    const declared = await this.readDeclaredIssuancePoint(tenantId, args.tx);
+    const declared = await this.readDeclaredIssuancePoint(tenantId, args.tx, args.saleId);
     if (declared === null) {
       // Nothing declared: no fiscal identity to persist, and the confirmation
       // numbers the invoice with Billing's own `invoice_number_sequence`.
@@ -218,6 +233,33 @@ export class FiscalAllocationService {
   }
 
   /**
+   * NCE-001 / DEC-090: draws a number for ANOTHER document type at the tenant's
+   * declared establishment and expedition point — today only the credit note
+   * (`iTiDE = 5`), which needs its own timbrado range. The caller persists the
+   * returned identity in its own row, inside the same transaction.
+   *
+   * `null` means the tenant declared no issuance point at all.
+   */
+  async allocateForDocumentType(args: {
+    readonly documentType: number;
+    /** MB-002: the sale the document belongs to (see `allocateForConfirmation`). */
+    readonly saleId?: string;
+    readonly tx: FiscalAllocationTx;
+  }): Promise<AllocatedDocumentNumber | null> {
+    const tenantId = this.context.requireTenantId();
+    const declared = await this.readDeclaredIssuancePoint(tenantId, args.tx, args.saleId);
+    if (declared === null) return null;
+    const key: TimbradoRangeKey = {
+      tenantId,
+      establishmentId: declared.establishmentId,
+      expeditionPoint: declared.expeditionPoint,
+      documentType: args.documentType,
+    };
+    await this.assertExactlyOneActiveRange(key, args.tx);
+    return this.allocate(key, args.tx);
+  }
+
+  /**
    * The tenant's declared issuance point, read through WU-C's reader — the one
    * read of those three columns, shared with the worker.
    *
@@ -228,7 +270,8 @@ export class FiscalAllocationService {
    */
   private async readDeclaredIssuancePoint(
     tenantId: string,
-    tx: FiscalAllocationTx
+    tx: FiscalAllocationTx,
+    saleId?: string
   ): Promise<DeclaredIssuancePoint | null> {
     const read = await createFiscalProfileReader(tx).readProfile(tenantId);
     if (read === null) {
@@ -241,6 +284,27 @@ export class FiscalAllocationService {
       defaultDocumentType === null
     ) {
       return null;
+    }
+    // MB-002 (DEC-094 §9): the profile's declaration switches the fiscal path
+    // on and fixes the document type; a branch that declares its own point
+    // replaces the establishment and the point, nothing else.
+    const branch =
+      saleId === undefined || tx.sale === undefined
+        ? null
+        : ((
+            await tx.sale.findFirst({
+              where: { id: saleId, tenantId },
+              select: {
+                branch: { select: { fiscalEstablishmentId: true, expeditionPoint: true } },
+              },
+            })
+          )?.branch ?? null);
+    if (branch?.fiscalEstablishmentId && branch.expeditionPoint) {
+      return {
+        establishmentId: branch.fiscalEstablishmentId,
+        expeditionPoint: branch.expeditionPoint,
+        documentType: defaultDocumentType,
+      };
     }
     return {
       establishmentId: defaultEstablishmentId,

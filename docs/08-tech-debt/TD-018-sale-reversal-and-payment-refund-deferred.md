@@ -10,7 +10,7 @@ related_epics:
 related_stories:
   - POS-003
 created: 2026-09-27
-updated: 2026-09-27
+updated: 2026-11-03
 ---
 
 # TD-018 — Sale reversal and payment refund are deferred out of EPIC-12
@@ -148,3 +148,17 @@ must be decided before implementation.
       convention.
 - [ ] This record is closed only when the command ships with its live-PostgreSQL
       evidence, not when it is merely scheduled.
+
+## Progress (2026-11-03)
+
+[[SAL-REV-001]] ([[DEC-089]]) implements the reversal of a whole `COMPLETED`
+sale **without a standing invoice**: `POST /sales/:id/reverse` writes the
+compensating `SALE_REVERSAL` stock movements, the `REFUND` cash movement in the
+open session, one `payment_refund` per payment, the `COMPLETED -> CANCELLED`
+transition, the idempotency record and the audit row in one transaction.
+Completion now stamps `sale_id` on its movements so the reversal can link each
+compensation to its original.
+
+This item stays `open` for what is left: a sale with a confirmed invoice still
+cannot be reversed until the electronic credit note (NCE) exists, and partial
+refunds are out of scope by product decision.

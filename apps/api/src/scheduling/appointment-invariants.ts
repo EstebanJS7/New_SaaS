@@ -189,6 +189,44 @@ export interface AppointmentAnchorPrisma {
       select: { id: true; role: { select: { code: true } } };
     }) => Promise<{ id: string; role: { code: string } } | null>;
   };
+  membershipBranch: BranchAssignmentPrisma["membershipBranch"];
+}
+
+/** MB-001 seam: the professional's assignment to the branch, with its state. */
+export interface BranchAssignmentPrisma {
+  membershipBranch: {
+    findFirst: (args: {
+      where: { tenantId: string; membershipId: string; branchId: string };
+      select: { branch: { select: { isActive: true } } };
+    }) => Promise<{ branch: { isActive: boolean } } | null>;
+  };
+}
+
+export const PROFESSIONAL_NOT_AT_BRANCH_MESSAGE =
+  "El profesional no trabaja en esta sucursal: asignalo en Configuración › Personal.";
+export const BRANCH_INACTIVE_MESSAGE = "La sucursal está desactivada: no admite turnos nuevos.";
+
+/**
+ * MB-001 (DEC-094 §5, §7): a turno is booked only at an ACTIVE branch where the
+ * professional works. Runs after the anchor guards, so a foreign branch or
+ * membership is still the byte-equivalent 404 and never reaches this read.
+ */
+export async function assertProfessionalWorksAtBranch(
+  prisma: BranchAssignmentPrisma,
+  tenantId: string,
+  membershipId: string,
+  branchId: string
+): Promise<void> {
+  const assignment = await prisma.membershipBranch.findFirst({
+    where: { tenantId, membershipId, branchId },
+    select: { branch: { select: { isActive: true } } },
+  });
+  if (!assignment) {
+    throw new DomainError("VALIDATION_FAILED", PROFESSIONAL_NOT_AT_BRANCH_MESSAGE);
+  }
+  if (!assignment.branch.isActive) {
+    throw new DomainError("VALIDATION_FAILED", BRANCH_INACTIVE_MESSAGE);
+  }
 }
 
 /**
@@ -254,6 +292,7 @@ export async function assertAppointmentAnchors(
     throw new DomainError("NOT_FOUND", "Patient was not found.");
   }
   assertProfessionalAnchor(membership);
+  await assertProfessionalWorksAtBranch(prisma, tenantId, anchors.membershipId, anchors.branchId);
 }
 
 /** The two tenant-owned anchors the read-only availability route resolves. */
@@ -265,6 +304,7 @@ export interface SchedulingAnchors {
 export interface SchedulingAnchorPrisma {
   branch: AppointmentAnchorPrisma["branch"];
   tenantMembership: AppointmentAnchorPrisma["tenantMembership"];
+  membershipBranch: AppointmentAnchorPrisma["membershipBranch"];
 }
 
 /**
@@ -292,6 +332,7 @@ export async function assertSchedulingAnchors(
 
   assertBranchAnchor(branch);
   assertProfessionalAnchor(membership);
+  await assertProfessionalWorksAtBranch(prisma, tenantId, anchors.membershipId, anchors.branchId);
 }
 
 // ---------------------------------------------------------------------------

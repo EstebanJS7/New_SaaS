@@ -53,7 +53,7 @@ function mount(command: Handler, read: Handler = () => json([session, other])) {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     if (init?.method === "POST") return command(url, init);
     if (url.endsWith("/registers")) return json([register]);
-    if (url.includes("/sessions")) return read(url, init);
+    if (url.includes("/sessions") || url.includes("/attempts/")) return read(url, init);
     return json([]);
   });
   vi.stubGlobal("fetch", fetcher);
@@ -101,6 +101,7 @@ beforeAll(() => {
   });
 });
 afterEach(() => {
+  window.sessionStorage.clear();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   push.mockClear();
@@ -213,7 +214,7 @@ describe("cash unresolved attempts", () => {
     }
   );
 
-  it.each(["register", "open", "invalid receipt"])(
+  it.each(["register", "invalid receipt"])(
     "does not retry or infer an unidentified %s creation",
     async (kind) => {
       const fetcher = mount(() =>
@@ -221,18 +222,11 @@ describe("cash unresolved attempts", () => {
           ? json({ id: "bad" }, 201)
           : Promise.reject(new Error("PRIVATE lost"))
       );
-      if (kind === "register" || kind === "invalid receipt") {
-        fireEvent.change(await screen.findByLabelText("Nombre de la caja"), {
-          target: { value: "Caja nueva" },
-        });
-        click("Crear caja");
-      } else {
-        await screen.findByRole("option", { name: register.name });
-        fireEvent.change(screen.getByLabelText("Caja"), { target: { value: register.id } });
-        fireEvent.change(screen.getByLabelText("Importe inicial"), { target: { value: "0,00" } });
-        click("Abrir sesión");
-        click("Confirmar apertura");
-      }
+      void kind;
+      fireEvent.change(await screen.findByLabelText("Nombre de la caja"), {
+        target: { value: "Caja nueva" },
+      });
+      click("Crear caja");
       const region = await screen.findByRole("region", { name: "Intento de Caja sin confirmar" });
       expect(region).toHaveTextContent("No recibimos un identificador confirmado");
       expect(region).not.toHaveTextContent("PRIVATE");
@@ -240,6 +234,85 @@ describe("cash unresolved attempts", () => {
       expect(fetcher.mock.calls.filter((call) => call[1]?.method === "POST")).toHaveLength(1);
     }
   );
+
+  async function sendOpen() {
+    await screen.findByRole("option", { name: register.name });
+    fireEvent.change(screen.getByLabelText("Caja"), { target: { value: register.id } });
+    fireEvent.change(screen.getByLabelText("Importe inicial"), { target: { value: "0,00" } });
+    click("Abrir sesión");
+    click("Confirmar apertura");
+  }
+
+  it("UX-035: an uncertain open is looked up by its key and never re-sent blind", async () => {
+    const fetcher = mount(
+      () => Promise.reject(new Error("PRIVATE lost")),
+      (url) => (url.includes("/sessions/attempts/") ? json(session) : json([session, other]))
+    );
+    await sendOpen();
+    const region = await screen.findByRole("region", { name: "Intento de Caja sin confirmar" });
+    expect(region).not.toHaveTextContent("PRIVATE");
+    const post = fetcher.mock.calls.find((call) => call[1]?.method === "POST");
+    const key = (post?.[1]?.headers as Record<string, string>)["Idempotency-Key"];
+    expect(key).toMatch(/^[0-9a-f-]{36}$/);
+
+    fireEvent.click(within(region).getByRole("button", { name: "Consultar si se abrió" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: "Intento de Caja sin confirmar" })
+      ).not.toBeInTheDocument()
+    );
+    expect(
+      fetcher.mock.calls.some((call) => (call[0] as string).endsWith(`/sessions/attempts/${key}`))
+    ).toBe(true);
+    expect(fetcher.mock.calls.filter((call) => call[1]?.method === "POST")).toHaveLength(1);
+  });
+
+  it("UX-035: when the open recorded nothing, the retry re-sends the SAME key", async () => {
+    let posts = 0;
+    const fetcher = mount(
+      () => {
+        posts += 1;
+        return posts === 1 ? Promise.reject(new Error("lost")) : json(session, 201);
+      },
+      (url) =>
+        url.includes("/sessions/attempts/")
+          ? json({ error: { code: "NOT_FOUND", message: "x" } }, 404)
+          : json([session, other])
+    );
+    await sendOpen();
+    const region = await screen.findByRole("region", { name: "Intento de Caja sin confirmar" });
+    fireEvent.click(within(region).getByRole("button", { name: "Consultar si se abrió" }));
+    expect(await screen.findByTestId("open-attempt-absent")).toHaveTextContent("misma clave");
+    click("Reintentar la misma apertura");
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: "Intento de Caja sin confirmar" })
+      ).not.toBeInTheDocument()
+    );
+    const keys = fetcher.mock.calls
+      .filter((call) => call[1]?.method === "POST")
+      .map((call) => (call[1]?.headers as Record<string, string>)["Idempotency-Key"]);
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toBe(keys[1]);
+  });
+
+  it("UX-035: after a reload, offers to look up a previous page's unanswered movement", async () => {
+    const key = "66666666-6666-4666-8666-666666666666";
+    window.sessionStorage.setItem(
+      "newsaas.pending-attempts.v1",
+      JSON.stringify([{ kind: "cash.movement.create", key, startedAt: new Date().toISOString() }])
+    );
+    mount(
+      () => json({}),
+      (url) =>
+        url.endsWith(`/movements/attempts/${key}`) ? json(movement) : json([session, other])
+    );
+    const panel = await screen.findByTestId("pending-cash-attempts");
+    fireEvent.click(within(panel).getByRole("button", { name: "Consultar" }));
+    expect(await within(panel).findByText(/Se registró/)).toBeInTheDocument();
+    expect(window.sessionStorage.getItem("newsaas.pending-attempts.v1")).toBeNull();
+    window.sessionStorage.clear();
+  });
 
   it("blocks link exit and session switches while pending, warns on unload and permits acknowledged uncertain exit", async () => {
     let reject!: (error: Error) => void;

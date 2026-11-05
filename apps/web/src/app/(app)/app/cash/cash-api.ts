@@ -65,6 +65,9 @@ export interface CashRegister {
   /** Operator-facing drawer name, non-empty and bounded to 1..200 characters. */
   readonly name: string;
   readonly isActive: boolean;
+  /** MB-002 (DEC-094 §9): the drawer's branch. Absent from an older API. */
+  readonly branchId?: string;
+  readonly branchName?: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -113,6 +116,8 @@ export interface CashSession {
  */
 export interface CreateCashRegisterInput {
   readonly name: string;
+  /** MB-002: the drawer's branch; omitted means the caller's only branch. */
+  readonly branchId?: string;
 }
 
 /**
@@ -314,8 +319,37 @@ export function listCashSessions(filters: CashSessionFilters = {}): Promise<Cash
  * a retryable failure of the same intent; the way out of it is the explicit
  * {@link closeSession} command, not a retry of the open.
  */
-export function openCashSession(input: OpenCashSessionInput): Promise<CashSession> {
-  return postJson("/sessions", input);
+export function openCashSession(
+  input: OpenCashSessionInput,
+  options: { readonly idempotencyKey?: string } = {}
+): Promise<CashSession> {
+  // UX-035 / TD-073: with a key, a retry of a lost answer replays the SAME session.
+  return postJson(
+    "/sessions",
+    input,
+    options.idempotencyKey === undefined ? {} : { "Idempotency-Key": options.idempotencyKey }
+  );
+}
+
+/**
+ * UX-035 / TD-073: what an earlier open or movement attempt recorded under `key`,
+ * or `null` when the API recorded nothing under it. Never a guess by values.
+ */
+export async function getSessionAttempt(key: string): Promise<CashSession | null> {
+  return attemptOrNull(() => getJson<CashSession>(`/sessions/attempts/${key}`));
+}
+
+export async function getMovementAttempt(key: string): Promise<CashMovement | null> {
+  return attemptOrNull(() => getJson<CashMovement>(`/movements/attempts/${key}`));
+}
+
+async function attemptOrNull<T>(read: () => Promise<T>): Promise<T | null> {
+  try {
+    return await read();
+  } catch (error) {
+    if (error instanceof ApiRequestError && error.code === "NOT_FOUND") return null;
+    throw error;
+  }
 }
 
 /**

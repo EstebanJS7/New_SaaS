@@ -13,6 +13,7 @@ import {
   CardTitle,
 } from "@newsaas/ui/components/ui/card";
 import { listCatalogItems } from "../catalog/catalog-api";
+import { useWorkingBranches } from "@/lib/working-branches";
 import { listSuppliers } from "../suppliers/suppliers-api";
 import {
   isPurchaseNotEditableConflict,
@@ -73,10 +74,16 @@ function buildLine(line: LineDraft): Record<string, unknown> {
  * draft (DEC-019). No `status` and no `tenantId` is ever sent — the lifecycle is
  * server-owned and tenant identity is resolved server-side.
  */
-function buildBody(supplierId: string, lines: readonly LineDraft[]): Record<string, unknown> {
+function buildBody(
+  supplierId: string,
+  lines: readonly LineDraft[],
+  branchId: string | null
+): Record<string, unknown> {
   return {
     supplierId,
     lines: lines.map(buildLine),
+    // MB-003: only on create, and only when the buyer had to choose.
+    ...(branchId === null ? {} : { branchId }),
   };
 }
 
@@ -117,6 +124,10 @@ export function PurchaseForm({
   const initial = useMemo(() => initialLines(purchase), [purchase]);
   const [supplierId, setSupplierId] = useState(purchase?.supplierId ?? "");
   const [lines, setLines] = useState<LineDraft[]>(initial);
+  const [branchId, setBranchId] = useState("");
+  const workingBranches = useWorkingBranches();
+  // The branch is fixed once the draft exists; it is chosen only on create.
+  const mustChooseBranch = !isEdit && workingBranches.mustChoose;
   const [localError, setLocalError] = useState<string | null>(null);
   const nextKeyRef = useRef(initial.length);
 
@@ -160,6 +171,10 @@ export function PurchaseForm({
       setLocalError("Select a supplier.");
       return;
     }
+    if (mustChooseBranch && branchId.length === 0) {
+      setLocalError("Select the branch that receives the goods.");
+      return;
+    }
     if (lines.length === 0) {
       setLocalError("Add at least one line.");
       return;
@@ -174,7 +189,7 @@ export function PurchaseForm({
     }
 
     setLocalError(null);
-    onSubmit(buildBody(supplierId.trim(), lines));
+    onSubmit(buildBody(supplierId.trim(), lines, mustChooseBranch ? branchId : null));
   }
 
   return (
@@ -249,6 +264,31 @@ export function PurchaseForm({
               <p className="text-xs text-destructive">Could not load suppliers.</p>
             )}
           </div>
+
+          {mustChooseBranch && (
+            <div className="space-y-2">
+              <label htmlFor="purchase-branch" className="text-sm font-medium">
+                Branch
+              </label>
+              <select
+                id="purchase-branch"
+                value={branchId}
+                onChange={(event) => setBranchId(event.target.value)}
+                disabled={isPending}
+                className={inputClassName}
+              >
+                <option value="">Select the receiving branch</option>
+                {workingBranches.branches.map((branch) => (
+                  <option key={branch.id} value={branch.id}>
+                    {branch.name}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-muted-foreground">
+                The stock enters this branch when the purchase is received.
+              </p>
+            </div>
+          )}
 
           <div className="space-y-3">
             <div className="flex items-center justify-between">

@@ -8,6 +8,7 @@ import { cashMovementSign } from "../cash/cash.expected-amount.js";
 import type { CashMovementDirectionValue, CashMovementTypeValue } from "../cash/cash.repository.js";
 import { PermissionResolver } from "../rbac/permission-resolver.service.js";
 import { TenantSettingsService } from "../settings/tenant-settings.service.js";
+import { REPORT_BRANCH_NOT_FOUND_MESSAGE } from "./reporting.dto.js";
 import type {
   CashMovementRowDto,
   CashMovementsResponse,
@@ -27,6 +28,10 @@ import type {
   PurchaseRowDto,
   PurchasesResponse,
   ReportDueQuery,
+  ReportBranchDto,
+  ReportBranchOnlyQuery,
+  ReportBranchOptionDto,
+  ReportBranchPeriodQuery,
   ReportDueStatus,
   ReportPeriodDto,
   ReportPeriodQuery,
@@ -404,12 +409,17 @@ export class ReportingService {
    * period" is an answer and a caller must be able to tell it apart from "this
    * period was rejected".
    */
-  async salesByPeriod(query: ReportPeriodQuery): Promise<SalesByPeriodResponse> {
+  async salesByPeriod(query: ReportBranchPeriodQuery): Promise<SalesByPeriodResponse> {
     await this.requireReadPermission();
 
     const period = resolveReportPeriod(query, this.now());
     const currency = await this.resolveCurrency();
-    const rows = await this.reports.listCompletedSales(period.fromInstant, period.toInstant);
+    const branch = await this.resolveBranch(query.branchId);
+    const rows = await this.reports.listCompletedSales(
+      period.fromInstant,
+      period.toInstant,
+      branch?.id
+    );
 
     const buckets = new Map<string, Bucket>();
     const totals = {
@@ -447,6 +457,7 @@ export class ReportingService {
 
     return {
       report: "sales-by-period",
+      ...branchEcho(branch),
       period: toPeriodDto(period),
       currency,
       saleCount,
@@ -473,14 +484,16 @@ export class ReportingService {
    * An EMPTY period is an answer: `rows: []` and `totalGross: "0.00"` with the
    * period echoed, never an error.
    */
-  async paymentMethods(query: ReportPeriodQuery): Promise<PaymentMethodsResponse> {
+  async paymentMethods(query: ReportBranchPeriodQuery): Promise<PaymentMethodsResponse> {
     await this.requireReadPermission();
 
     const period = resolveReportPeriod(query, this.now());
     const currency = await this.resolveCurrency();
+    const branch = await this.resolveBranch(query.branchId);
     const sales = await this.reports.listCompletedSalesWithPayments(
       period.fromInstant,
-      period.toInstant
+      period.toInstant,
+      branch?.id
     );
 
     const tenders = new Map<string, TenderBucket>();
@@ -519,6 +532,7 @@ export class ReportingService {
 
     return {
       report: "payment-methods",
+      ...branchEcho(branch),
       period: toPeriodDto(period),
       currency,
       totalGross: totalGross.toFixed(2),
@@ -539,12 +553,19 @@ export class ReportingService {
    * Ordering is `gross` descending, then `name` ascending. A kind with no line in
    * the period is ABSENT from `totalsByKind`, never a zero row.
    */
-  async salesByProductService(query: ReportPeriodQuery): Promise<SalesByProductServiceResponse> {
+  async salesByProductService(
+    query: ReportBranchPeriodQuery
+  ): Promise<SalesByProductServiceResponse> {
     await this.requireReadPermission();
 
     const period = resolveReportPeriod(query, this.now());
     const currency = await this.resolveCurrency();
-    const sales = await this.reports.listCompletedSales(period.fromInstant, period.toInstant);
+    const branch = await this.resolveBranch(query.branchId);
+    const sales = await this.reports.listCompletedSales(
+      period.fromInstant,
+      period.toInstant,
+      branch?.id
+    );
 
     const byItem = new Map<string, DecimalTotals>();
     for (const sale of sales) {
@@ -606,6 +627,7 @@ export class ReportingService {
 
     return {
       report: "sales-by-product-service",
+      ...branchEcho(branch),
       period: toPeriodDto(period),
       currency,
       totalsByKind,
@@ -632,13 +654,15 @@ export class ReportingService {
    * An EMPTY period is an answer: `rows: []`, every total `"0.00"`, period
    * echoed.
    */
-  async cashSessions(query: ReportPeriodQuery): Promise<CashSessionsResponse> {
+  async cashSessions(query: ReportBranchPeriodQuery): Promise<CashSessionsResponse> {
     await this.requireReadPermission();
 
     const period = resolveReportPeriod(query, this.now());
+    const branch = await this.resolveBranch(query.branchId);
     const sessions = await this.reports.listClosedCashSessions(
       period.fromInstant,
-      period.toInstant
+      period.toInstant,
+      branch?.id
     );
 
     const totals = {
@@ -667,6 +691,7 @@ export class ReportingService {
 
     return {
       report: "cash-sessions",
+      ...branchEcho(branch),
       period: toPeriodDto(period),
       rows,
       totals: {
@@ -695,11 +720,16 @@ export class ReportingService {
    * Order is `type` ascending, then `direction` ascending with `null` first.
    * An EMPTY period is `rows: []` with `net: "0.00"`.
    */
-  async cashMovements(query: ReportPeriodQuery): Promise<CashMovementsResponse> {
+  async cashMovements(query: ReportBranchPeriodQuery): Promise<CashMovementsResponse> {
     await this.requireReadPermission();
 
     const period = resolveReportPeriod(query, this.now());
-    const movements = await this.reports.listCashMovements(period.fromInstant, period.toInstant);
+    const branch = await this.resolveBranch(query.branchId);
+    const movements = await this.reports.listCashMovements(
+      period.fromInstant,
+      period.toInstant,
+      branch?.id
+    );
 
     const buckets = new Map<string, MovementBucket>();
     let net = new Prisma.Decimal(0);
@@ -749,6 +779,7 @@ export class ReportingService {
 
     return {
       report: "cash-movements",
+      ...branchEcho(branch),
       period: toPeriodDto(period),
       net: net.toFixed(2),
       rows,
@@ -772,11 +803,16 @@ export class ReportingService {
    * a loud `INTERNAL` naming the id, never a dropped receipt (the
    * `reportCatalogItemMissingMessage` discipline).
    */
-  async purchases(query: ReportPeriodQuery): Promise<PurchasesResponse> {
+  async purchases(query: ReportBranchPeriodQuery): Promise<PurchasesResponse> {
     await this.requireReadPermission();
 
     const period = resolveReportPeriod(query, this.now());
-    const received = await this.reports.listReceivedPurchases(period.fromInstant, period.toInstant);
+    const branch = await this.resolveBranch(query.branchId);
+    const received = await this.reports.listReceivedPurchases(
+      period.fromInstant,
+      period.toInstant,
+      branch?.id
+    );
 
     // An EMPTY period asks the supplier read for nothing: the id set is empty, so
     // `listSuppliersByIds` short-circuits and no round trip answers known-nothing.
@@ -805,6 +841,7 @@ export class ReportingService {
 
     return {
       report: "purchases",
+      ...branchEcho(branch),
       period: toPeriodDto(period),
       rows,
     };
@@ -834,7 +871,7 @@ export class ReportingService {
    * anomalous data state and refuses with `INTERNAL` naming the item rather than
    * dropping the flow.
    */
-  async stock(query: ReportPeriodQuery): Promise<StockReportResponse> {
+  async stock(query: ReportBranchPeriodQuery): Promise<StockReportResponse> {
     await this.requireReadPermission();
 
     const period = resolveReportPeriod(query, this.now());
@@ -852,13 +889,28 @@ export class ReportingService {
     // a stale number, not a failure, and [[TD-053]] owns the single-snapshot fix.
     //
     // The FLOW: the ledger, bounded to the period.
-    const movements = await this.reports.listStockMovements(period.fromInstant, period.toInstant);
+    const branch = await this.resolveBranch(query.branchId);
+    const movements = await this.reports.listStockMovements(
+      period.fromInstant,
+      period.toInstant,
+      branch?.id
+    );
     // The SNAPSHOT: the projection, read whole. A balance row has no date, so it
     // is never bounded by the period — that is the point of the two reads.
-    const balances = await this.reports.listStockBalances();
+    const balances = await this.reports.listStockBalances(branch?.id);
 
     const flows = new Map<string, StockFlow>();
     for (const movement of movements) {
+      // MB-003: across the whole clinic a transfer between branches moves
+      // nothing in or out — its two halves cancel — so it is left out of the
+      // flow instead of being counted as both an input and an output. Narrowed
+      // to ONE branch (MB-004) it is a real input or output of that branch.
+      if (
+        branch === null &&
+        (movement.type === "TRANSFER_OUT" || movement.type === "TRANSFER_IN")
+      ) {
+        continue;
+      }
       const quantity = toDecimal(movement.quantity);
       const flow = stockFlowFor(flows, movement.catalogItemId);
       if (quantity.isNegative()) {
@@ -920,9 +972,19 @@ export class ReportingService {
 
     return {
       report: "stock",
+      ...branchEcho(branch),
       period: toPeriodDto(period),
       rows,
     };
+  }
+
+  /**
+   * MB-004: the clinic's branches for the report filter, inactive ones
+   * included because a closed branch still has history.
+   */
+  async branches(): Promise<ReportBranchOptionDto[]> {
+    await this.requireReadPermission();
+    return this.reports.listBranches();
   }
 
   /**
@@ -949,10 +1011,13 @@ export class ReportingService {
    * could not tell them apart would report a working inventory setup as a
    * misconfiguration.
    */
-  async lowStock(): Promise<LowStockReportResponse> {
+  async lowStock(query: ReportBranchOnlyQuery = {}): Promise<LowStockReportResponse> {
     await this.requireReadPermission();
 
-    const balances = await this.reports.listStockBalances();
+    // MB-004: narrowed to a branch, an item is low when THAT branch's balance is
+    // at or under the item's threshold; «Todas» compares the clinic's total.
+    const branch = await this.resolveBranch(query.branchId);
+    const balances = await this.reports.listStockBalances(branch?.id);
     // ONE batched catalog read for the balanced items; an empty inventory asks the
     // catalog for nothing at all.
     const catalog = await this.readCatalog(
@@ -1016,6 +1081,7 @@ export class ReportingService {
 
     return {
       report: "low-stock",
+      ...branchEcho(branch),
       thresholdsConfigured,
       rows,
     };
@@ -1371,6 +1437,21 @@ export class ReportingService {
   }
 
   /** Defense in depth behind `@RequirePermissions`: a denial reaches no query. */
+  /**
+   * MB-004: the branch a report is narrowed to, or `null` for «Todas». An
+   * unknown id and another clinic's id are the SAME `404`, so the filter is no
+   * oracle for another tenant's branches. An inactive branch is accepted: it
+   * has history.
+   */
+  private async resolveBranch(branchId: string | undefined): Promise<ReportBranchDto | null> {
+    if (branchId === undefined) return null;
+    const row = await this.reports.findBranch(branchId);
+    if (row === null) {
+      throw new DomainError("NOT_FOUND", REPORT_BRANCH_NOT_FOUND_MESSAGE);
+    }
+    return { id: row.id, name: row.name };
+  }
+
   private async requireReadPermission(): Promise<void> {
     const permissions = await this.permissionResolver.resolveForActiveRequest();
     if (!permissions.has(REPORTING_PERMISSIONS.read)) {
@@ -1392,4 +1473,9 @@ export class ReportingService {
     }
     return currency;
   }
+}
+
+/** MB-004: the `branch` echo, present only when the report was narrowed. */
+function branchEcho(branch: ReportBranchDto | null): { branch?: ReportBranchDto } {
+  return branch === null ? {} : { branch };
 }

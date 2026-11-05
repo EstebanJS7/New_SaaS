@@ -111,6 +111,11 @@ export const saleIdParam = z.object({ id: z.string().uuid() });
 export const createSaleBody = z
   .object({
     customerId: z.string().uuid().nullable().optional(),
+    /**
+     * MB-002 (DEC-094 §9): the branch of the sale. Omitted means the only
+     * active branch the caller works at.
+     */
+    branchId: z.string().uuid().optional(),
     lines: saleLines,
   })
   .strict();
@@ -169,9 +174,97 @@ const salePaymentAmount = z
  * value) past the boundary. There is deliberately no tendered amount, change or
  * refund field (DEC-029).
  */
-const salePayment = z
-  .object({ method: z.enum(PAYMENT_METHOD_VALUES), amount: salePaymentAmount })
+export const PAYMENT_CARD_TYPE_VALUES = ["CREDIT", "DEBIT"] as const;
+export const PAYMENT_CARD_BRAND_VALUES = [
+  "VISA",
+  "MASTERCARD",
+  "AMERICAN_EXPRESS",
+  "MAESTRO",
+  "PANAL",
+  "CABAL",
+  "OTHER",
+] as const;
+export const PAYMENT_QR_KIND_VALUES = ["WALLET", "BANK_APP"] as const;
+
+/**
+ * PAY-DET-001 / DEC-091: the detail a factura electrónica's `gPaConEIni` needs
+ * (TD-074). A card says credit or debit and its brand (a free brand name only
+ * for OTHER, 4–20 characters); a QR says wallet or bank app; a cheque its number
+ * (up to 8 digits, zero-padded to 8 on write) and bank (4–20); an OTHER payment
+ * a 4–30 character description. Each is required for its method and refused on
+ * any other, so the database's INSERT guard is never the first to say so.
+ */
+const salePaymentCard = z
+  .object({
+    type: z.enum(PAYMENT_CARD_TYPE_VALUES),
+    brand: z.enum(PAYMENT_CARD_BRAND_VALUES),
+    brandName: z.string().trim().min(4).max(20).optional(),
+  })
   .strict();
+const salePaymentCheck = z
+  .object({
+    number: z
+      .string()
+      .trim()
+      .regex(/^[0-9]{1,8}$/, "Cheque number must be 1 to 8 digits."),
+    bank: z.string().trim().min(4).max(20),
+  })
+  .strict();
+
+const salePayment = z
+  .object({
+    method: z.enum(PAYMENT_METHOD_VALUES),
+    amount: salePaymentAmount,
+    card: salePaymentCard.optional(),
+    qrKind: z.enum(PAYMENT_QR_KIND_VALUES).optional(),
+    check: salePaymentCheck.optional(),
+    otherDescription: z.string().trim().min(4).max(30).optional(),
+  })
+  .strict()
+  .superRefine((payment, context) => {
+    const require = (present: boolean, field: string, message: string): void => {
+      if (!present) context.addIssue({ code: z.ZodIssueCode.custom, path: [field], message });
+    };
+    const forbid = (present: boolean, field: string): void => {
+      if (present)
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [field],
+          message: `${field} does not apply to a ${payment.method} payment.`,
+        });
+    };
+    if (payment.method === "CARD") {
+      require(payment.card !== undefined, "card", "A card payment needs its type and brand.");
+      if (payment.card !== undefined) {
+        const isOther = payment.card.brand === "OTHER";
+        if (isOther !== (payment.card.brandName !== undefined)) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["card", "brandName"],
+            message: "A brand name is required for, and only for, an OTHER brand.",
+          });
+        }
+      }
+    } else {
+      forbid(payment.card !== undefined, "card");
+    }
+    if (payment.method === "QR") {
+      require(payment.qrKind !== undefined, "qrKind", "A QR payment needs its kind.");
+    } else {
+      forbid(payment.qrKind !== undefined, "qrKind");
+    }
+    if (payment.method === "CHECK") {
+      require(payment.check !== undefined, "check", "A cheque payment needs its number and bank.");
+    } else {
+      forbid(payment.check !== undefined, "check");
+    }
+    if (payment.method === "OTHER") {
+      require(payment.otherDescription !==
+        undefined, "otherDescription", "An OTHER payment needs a description.");
+    } else {
+      forbid(payment.otherDescription !== undefined, "otherDescription");
+    }
+  });
 
 /**
  * CompleteSale body (PRD §18/DEC-029): a NON-EMPTY payment set, each entry a
@@ -196,6 +289,15 @@ export type CompleteSaleInput = z.infer<typeof completeSaleBody>;
  * `409`.
  */
 export const saleIdempotencyKey = z.string().min(1).max(255);
+
+/**
+ * SAL-REV-001: the reversal body. The reason is mandatory (PRD §40), INTERNAL free
+ * text bounded by the `sale_reversal.reason` column; surrounding whitespace is not
+ * part of it, and a reason of fewer than three characters says nothing.
+ */
+export const reverseSaleBody = z.object({ reason: z.string().trim().min(3).max(500) }).strict();
+
+export type ReverseSaleInput = z.infer<typeof reverseSaleBody>;
 
 /**
  * Sale list query. The optional `status` narrows the list to one lifecycle value

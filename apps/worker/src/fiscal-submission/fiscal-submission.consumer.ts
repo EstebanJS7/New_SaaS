@@ -1,3 +1,4 @@
+import { reportJobFailure, reportWorkerError } from "../observability/job-failure.js";
 import { Injectable, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import { Worker, type Job } from "bullmq";
 import { Redis } from "ioredis";
@@ -33,12 +34,14 @@ export class FiscalSubmissionConsumer implements OnModuleInit, OnModuleDestroy {
       { connection: this.connection, concurrency: 1 }
     );
     this.worker.on("failed", (job, error) => {
+      reportJobFailure(FISCAL_SUBMISSION_QUEUE, job, error);
       console.error("Fiscal submission job failed", {
         fiscalDocumentId: job?.data.fiscalDocumentId ?? null,
         error: sanitizeWorkerError(error),
       });
     });
     this.worker.on("error", (error) => {
+      reportWorkerError(FISCAL_SUBMISSION_QUEUE, error);
       console.error("Fiscal submission worker error", sanitizeWorkerError(error));
     });
   }

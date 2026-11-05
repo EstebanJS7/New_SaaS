@@ -18,6 +18,7 @@ import {
 } from "../completion-outcome";
 import { Button } from "@newsaas/ui/components/ui/button";
 import { PaymentCapture } from "../payment-capture";
+import { SaleReversalPanel } from "./sale-reversal-panel";
 import {
   classifySaleCompletionError,
   completeSale,
@@ -254,6 +255,8 @@ export function SaleDetail(): JSX.Element {
           )}
         </CardContent>
       </Card>
+
+      {completed === null ? <SaleReversalPanel sale={sale} /> : null}
 
       {isDraft && completed === null && (
         <Card>

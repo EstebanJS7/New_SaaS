@@ -261,6 +261,7 @@ describe("the acceptance criterion: the mapper accepts it unchanged", () => {
       // The receptor comes from the schema-valid fixture: it satisfies §22.11's
       // conditional rules, which are not what this suite is about.
       receptor: validFacturaElectronicaRequest().gDatGralOpe.gDatRec,
+      payments: [{ iTiPago: 1, amount: "110" }],
     };
   }
 

@@ -1,5 +1,10 @@
 import type { Prisma } from "@newsaas/database";
 import {
+  paymentSnapshot,
+  PaymentSnapshotError,
+  type PaymentSnapshotRow,
+} from "./payment-snapshot.js";
+import {
   describeCurrency,
   DTE_CURRENCY_DESCRIPTION_MAX_LENGTH,
   DTE_IVA_RATES,
@@ -88,6 +93,8 @@ export interface InvoiceSnapshotRow {
   readonly currency: string;
   /** `D002 dFeEmiDE`'s source; `NULL` for a draft, which has no fiscal document. */
   readonly confirmedAt: Date | null;
+  /** PAY-DET-001: the sale whose payments become `gCamCond`. */
+  readonly saleId: string;
 }
 
 /**
@@ -154,6 +161,10 @@ export interface InvoiceSnapshotReadClient extends TaxClassificationReadClient {
   taxRate: {
     findMany(args: Prisma.TaxRateFindManyArgs): Promise<readonly InvoiceRateRow[]>;
   };
+  /** PAY-DET-001: the invoiced sale's payments, tenant-scoped. */
+  payment: {
+    findMany(args: Prisma.PaymentFindManyArgs): Promise<readonly PaymentSnapshotRow[]>;
+  };
 }
 
 /** Why a confirmed invoice could not become the mapper's snapshot. */
@@ -171,7 +182,9 @@ export type InvoiceSnapshotRefusal =
    * divide exactly at `tMontoBase`'s 8 fraction digits and the note states no
    * rounding rule.
    */
-  | "EXEMPT_BASE_UNAVAILABLE";
+  | "EXEMPT_BASE_UNAVAILABLE"
+  /** PAY-DET-001: a payment lacks the detail `gPaConEIni` needs (DEC-091). */
+  | "PAYMENT_DETAIL_MISSING";
 
 export class InvoiceSnapshotReadError extends Error {
   readonly refusal: InvoiceSnapshotRefusal;
@@ -257,7 +270,23 @@ export function createInvoiceSnapshotReader(client: InvoiceSnapshotReadClient): 
         declared.map((entry) => [entry.rateCode, entry])
       );
 
+      // PAY-DET-001: the sale's payments, in a stable order, as gPaConEIni.
+      const paymentRows = await client.payment.findMany({
+        where: { tenantId, saleId: invoice.saleId },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      });
+      let payments;
+      try {
+        payments = paymentRows.map(paymentSnapshot);
+      } catch (error) {
+        if (error instanceof PaymentSnapshotError) {
+          throw new InvoiceSnapshotReadError("PAYMENT_DETAIL_MISSING", error.message);
+        }
+        throw error;
+      }
+
       return {
+        payments,
         // `fecHhmmss` has no timezone suffix and no fractional seconds (§21.3),
         // and `confirmed_at` is a `Timestamptz`: the instant is rendered in UTC,
         // which is the one representation the row pins. What local wall-clock

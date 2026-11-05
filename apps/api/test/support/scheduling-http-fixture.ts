@@ -84,6 +84,14 @@ export function seedSchedulingHttp(db: IsolationDatabase): SchedulingHttpFixture
     if (!professional.membership) {
       throw new Error("scheduling fixture: professional membership was not seeded");
     }
+    // MB-001 (DEC-094 §5): the professional works at the fixture branch.
+    db.prisma.membershipBranch.create({
+      data: {
+        tenantId: owner.tenant.id,
+        membershipId: professional.membership.id,
+        branchId: branch.id,
+      },
+    });
     return {
       tenant: owner.tenant,
       role: owner.role,

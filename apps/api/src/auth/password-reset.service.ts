@@ -40,7 +40,8 @@ import { assertPasswordAcceptable } from "./password.policy.js";
 /** What the transaction needs to see: the token service's client plus two tables. */
 export interface PasswordResetTx extends PasswordResetTokenPrisma, AuditAppendTx {
   userCredential: {
-    update(args: Prisma.UserCredentialUpdateArgs): Promise<unknown>;
+    updateMany(args: Prisma.UserCredentialUpdateManyArgs): Promise<{ count: number }>;
+    create(args: Prisma.UserCredentialCreateArgs): Promise<unknown>;
   };
   staffSession: {
     deleteMany(args: Prisma.StaffSessionDeleteManyArgs): Promise<{ count: number }>;
@@ -92,10 +93,21 @@ export class PasswordResetService {
       // password that never changed.
       const consumed = await this.tokens.consume(rawToken, now, tx);
 
-      await tx.userCredential.update({
+      // A profile with no credential yet is an INVITED one choosing its first password
+      // ([[ONB-001]]): the only way such a profile holds a live token is an activation
+      // message, because recovery refuses a profile without a credential. The same
+      // single-use token, the same transaction; the credential is created instead of
+      // replaced, and the audit says which happened.
+      const replaced = await tx.userCredential.updateMany({
         where: { userProfileId: consumed.userProfileId },
         data: { passwordHash },
       });
+      const activated = replaced.count === 0;
+      if (activated) {
+        await tx.userCredential.create({
+          data: { userProfileId: consumed.userProfileId, passwordHash },
+        });
+      }
 
       // EVERY session, not the current one: a reset is how somebody who suspects
       // their account is compromised takes it back, and a surviving session is the
@@ -113,7 +125,7 @@ export class PasswordResetService {
       // whole change rather than committing it unaudited.
       await this.audit.append(
         {
-          action: "auth.password_reset_completed",
+          action: activated ? "auth.account_activated" : "auth.password_reset_completed",
           actorUserProfileId: consumed.userProfileId,
           targetType: "user_profile",
           targetId: consumed.userProfileId,

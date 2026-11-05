@@ -30,8 +30,14 @@ const DEFAULT_API_URL = "http://localhost:3001";
  *   a JSON read answer must not carry).
  */
 type ReportResolution =
-  | { readonly ok: true; readonly code: ReportCode }
+  | { readonly ok: true; readonly code: ReportCode | typeof BRANCHES_PATH }
   | { readonly ok: false; readonly status: 400 | 404 };
+
+/**
+ * MB-004: `/api/reports/branches` — the clinic's branches for the report filter.
+ * Not a report: it takes no query at all and maps to `/reports/branches`.
+ */
+const BRANCHES_PATH = "branches";
 
 function resolveReport(segments: readonly string[] | undefined): ReportResolution {
   const path = segments ?? [];
@@ -39,6 +45,9 @@ function resolveReport(segments: readonly string[] | undefined): ReportResolutio
     return { ok: false, status: 404 };
   }
   const code = path[0] ?? "";
+  if (code === BRANCHES_PATH) {
+    return { ok: true, code: BRANCHES_PATH };
+  }
   // A percent escape is never part of a legitimate code and would let an encoded
   // separator reshape the upstream URL, so it is refused with the unknown codes.
   if (code.includes("%") || !isReportCode(code)) {
@@ -70,8 +79,8 @@ function invalidReportCode(): NextResponse {
   );
 }
 
-function unsupportedQueryKey(code: ReportCode): NextResponse {
-  const accepted = reportQueryKeysOf(code);
+function unsupportedQueryKey(code: ReportCode | typeof BRANCHES_PATH): NextResponse {
+  const accepted = code === BRANCHES_PATH ? [] : reportQueryKeysOf(code);
   return NextResponse.json(
     {
       error: {
@@ -141,7 +150,7 @@ export async function GET(
   // caller learns which keys this report accepts without the API being asked.
   const searchParams = request.nextUrl.searchParams;
   for (const key of searchParams.keys()) {
-    if (!isAcceptedReportQueryKey(code, key)) {
+    if (code === BRANCHES_PATH || !isAcceptedReportQueryKey(code, key)) {
       return unsupportedQueryKey(code);
     }
   }

@@ -154,7 +154,7 @@ export async function seedCommercialDemo(): Promise<void> {
               completeSaleBody.parse({
                 payments: [
                   { method: "CASH", amount: "100000" },
-                  { method: "CARD", amount: "85000" },
+                  { method: "CARD", amount: "85000", card: { type: "CREDIT", brand: "VISA" } },
                 ],
               }),
               "demo-commercial-sale-v1"

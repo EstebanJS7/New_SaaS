@@ -54,11 +54,15 @@ describe.skipIf(!url)("Sale search — disposable real PostgreSQL", () => {
     const foreign = await prisma.customer.create({
       data: { tenantId: other, kind: "INDIVIDUAL", displayName: "Foreign confidential" },
     });
+    // MB-002: every sale belongs to a branch of its tenant.
+    const branch = await prisma.branch.create({ data: { tenantId: tenant, name: "Synthetic" } });
+    const otherBranch = await prisma.branch.create({ data: { tenantId: other, name: "Synthetic" } });
     // Synthetic headers only in the disposable database: no completion, payment or ledger command.
     await prisma.sale.createMany({
       data: Array.from({ length: 25 }, (_, i) => ({
         id: i === 0 ? ownId : randomUUID(),
         tenantId: tenant,
+        branchId: branch.id,
         currency: "PYG",
         customerId: i < 22 ? customer.id : null,
         status: i === 24 ? ("CANCELLED" as const) : ("DRAFT" as const),
@@ -66,7 +70,13 @@ describe.skipIf(!url)("Sale search — disposable real PostgreSQL", () => {
       })),
     });
     await prisma.sale.create({
-      data: { id: foreignId, tenantId: other, customerId: foreign.id, currency: "PYG" },
+      data: {
+        id: foreignId,
+        tenantId: other,
+        branchId: otherBranch.id,
+        customerId: foreign.id,
+        currency: "PYG",
+      },
     });
   });
   beforeEach(() => {

@@ -46,6 +46,8 @@ export interface PurchaseRow {
    * `CANCELLED`.
    */
   receivedAt: Date | null;
+  /** MB-003 (DEC-094 §10): the branch the goods are received into. */
+  branchId: string;
   lines: PurchaseLineRow[];
   createdAt: Date;
   updatedAt: Date;
@@ -71,6 +73,8 @@ export interface PurchaseLineWriteData {
  */
 export interface PurchaseCreateData {
   readonly supplierId: string;
+  /** MB-003: resolved server-side from the caller's working branches. */
+  readonly branchId: string;
   readonly lines: readonly PurchaseLineWriteData[];
 }
 
@@ -119,6 +123,7 @@ export interface PurchaseDelegate {
   create: (args: {
     data: {
       supplierId: string;
+      branchId: string;
       tenantId: string;
       lines: { create: readonly PurchaseLineWriteData[] };
     };
@@ -278,6 +283,7 @@ export class PurchaseRepository {
     return client.purchase.create({
       data: {
         supplierId: data.supplierId,
+        branchId: data.branchId,
         tenantId,
         lines: {
           create: data.lines.map((line) => ({

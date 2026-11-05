@@ -104,9 +104,10 @@ describe("migration 002 · tenancy core surface", () => {
     expect(TENANCY_SQL).toMatch(/migration 003/);
   });
 
-  it("keeps branch inert and promotes portal access to EPIC-08 live data", () => {
-    // Branch is still a schema-only scaffold.
-    expect(SCHEMA).toMatch(/SCHEMA-ONLY SCAFFOLD/);
+  it("promotes branch (MB-001) and portal access (EPIC-08) to live data", () => {
+    // MB-001 (DEC-094): Branch is a managed aggregate, no longer a scaffold.
+    expect(SCHEMA).not.toMatch(/SCHEMA-ONLY SCAFFOLD/);
+    expect(SCHEMA).toMatch(/model MembershipBranch\b/);
     // customer_portal_access is no longer inert: EPIC-08 links it to Customer.
     expect(SCHEMA).not.toMatch(/INERT SCAFFOLD/);
     expect(SCHEMA).toMatch(/model CustomerPortalAccess\b/);
@@ -295,7 +296,7 @@ describe("schema · inventory (EPIC-10 WU1 CAT-006)", () => {
     expect(movementModel).toMatch(/@@index\(\[tenantId, reversesMovementId\]\)/);
   });
 
-  it("keeps one balance row per (tenant, item) as a transactional projection", () => {
+  it("keeps one balance row per (tenant, item, branch) as a transactional projection", () => {
     const balanceModel = inventoryModelBlock("StockBalance");
     expect(balanceModel).toMatch(/tenantId\s+String\s+@map\("tenant_id"\)/);
     expect(balanceModel).toMatch(/catalogItemId\s+String\s+@map\("catalog_item_id"\)/);
@@ -303,7 +304,8 @@ describe("schema · inventory (EPIC-10 WU1 CAT-006)", () => {
     expect(balanceModel).toMatch(
       /catalogItem\s+CatalogItem\s+@relation\(fields: \[tenantId, catalogItemId\], references: \[tenantId, id\], onDelete: Restrict/
     );
-    expect(balanceModel).toMatch(/@@unique\(\[tenantId, catalogItemId\]\)/);
+    // MB-003 (DEC-094 §10): the balance is kept per branch.
+    expect(balanceModel).toMatch(/@@unique\(\[tenantId, catalogItemId, branchId\]\)/);
   });
 
   it("exposes the Tenant side of the ledger relations", () => {

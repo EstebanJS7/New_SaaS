@@ -12,20 +12,139 @@ import {
 import {
   PAYMENT_METHODS,
   isWirePaymentAmount,
+  type PaymentCardBrand,
+  type PaymentCardType,
   type PaymentMethod,
+  type PaymentQrKind,
   type SalePaymentInput,
 } from "./sales-api";
-import { PAYMENT_METHOD_LABELS } from "./sales-display";
+import {
+  PAYMENT_CARD_BRAND_LABELS,
+  PAYMENT_CARD_TYPE_LABELS,
+  PAYMENT_METHOD_LABELS,
+  PAYMENT_QR_KIND_LABELS,
+} from "./sales-display";
 import { addWireDecimals, paymentsSumExactly } from "./wire-decimal";
 
 const inputClassName =
   "h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
-/** One locally entered payment; both values stay strings until submit. */
+/**
+ * One locally entered payment; every value stays a string until submit. The
+ * detail fields (PAY-DET-001) are only read for the method they belong to.
+ */
 interface PaymentDraft {
   readonly key: string;
   readonly method: PaymentMethod;
   readonly amount: string;
+  readonly cardType: PaymentCardType | "";
+  readonly cardBrand: PaymentCardBrand | "";
+  readonly cardBrandName: string;
+  readonly qrKind: PaymentQrKind | "";
+  readonly checkNumber: string;
+  readonly checkBank: string;
+  readonly otherDescription: string;
+}
+
+const EMPTY_DETAIL = {
+  cardType: "",
+  cardBrand: "",
+  cardBrandName: "",
+  qrKind: "",
+  checkNumber: "",
+  checkBank: "",
+  otherDescription: "",
+} as const;
+
+const CARD_TYPES = Object.keys(PAYMENT_CARD_TYPE_LABELS) as PaymentCardType[];
+const CARD_BRANDS = Object.keys(PAYMENT_CARD_BRAND_LABELS) as PaymentCardBrand[];
+const QR_KINDS = Object.keys(PAYMENT_QR_KIND_LABELS) as PaymentQrKind[];
+
+function lengthBetween(value: string, min: number, max: number): boolean {
+  const trimmed = value.trim();
+  return trimmed.length >= min && trimmed.length <= max;
+}
+
+/**
+ * PAY-DET-001 / DEC-091: what SIFEN needs to describe this payment on the
+ * factura electrónica. `null` when complete, otherwise the sentence to show.
+ */
+export function paymentDetailProblem(payment: PaymentDraft): string | null {
+  switch (payment.method) {
+    case "CARD":
+      if (payment.cardType === "" || payment.cardBrand === "") {
+        return "Elegí si la tarjeta es de crédito o de débito, y su marca.";
+      }
+      if (payment.cardBrand === "OTHER" && !lengthBetween(payment.cardBrandName, 4, 20)) {
+        return "Escribí el nombre de la marca (de 4 a 20 caracteres).";
+      }
+      return null;
+    case "QR":
+      return payment.qrKind === ""
+        ? "Elegí si el QR es de una billetera o de la app del banco."
+        : null;
+    case "CHECK":
+      if (
+        !/^[0-9]{1,8}$/.test(payment.checkNumber.trim()) ||
+        !lengthBetween(payment.checkBank, 4, 20)
+      ) {
+        return "Escribí el número del cheque (hasta 8 dígitos) y el banco (de 4 a 20 caracteres).";
+      }
+      return null;
+    case "OTHER":
+      return lengthBetween(payment.otherDescription, 4, 30)
+        ? null
+        : "Describí el medio de pago (de 4 a 30 caracteres).";
+    default:
+      return null;
+  }
+}
+
+/** The wire payment, with only the detail its method takes. */
+function toPaymentInput(payment: PaymentDraft): SalePaymentInput {
+  const amount = normalizeEsPyDecimalInput(payment.amount) ?? payment.amount.trim();
+  switch (payment.method) {
+    case "CARD":
+      return {
+        method: payment.method,
+        amount,
+        card: {
+          type: payment.cardType as PaymentCardType,
+          brand: payment.cardBrand as PaymentCardBrand,
+          ...(payment.cardBrand === "OTHER" ? { brandName: payment.cardBrandName.trim() } : {}),
+        },
+      };
+    case "QR":
+      return { method: payment.method, amount, qrKind: payment.qrKind as PaymentQrKind };
+    case "CHECK":
+      return {
+        method: payment.method,
+        amount,
+        check: { number: payment.checkNumber.trim(), bank: payment.checkBank.trim() },
+      };
+    case "OTHER":
+      return { method: payment.method, amount, otherDescription: payment.otherDescription.trim() };
+    default:
+      return { method: payment.method, amount };
+  }
+}
+
+/** How the review lists a payment: "Tarjeta · Crédito Visa". */
+function paymentLabel(payment: PaymentDraft): string {
+  const base = PAYMENT_METHOD_LABELS[payment.method];
+  if (payment.method === "CARD" && payment.cardType !== "" && payment.cardBrand !== "") {
+    const brand =
+      payment.cardBrand === "OTHER"
+        ? payment.cardBrandName.trim()
+        : PAYMENT_CARD_BRAND_LABELS[payment.cardBrand];
+    return `${base} · ${PAYMENT_CARD_TYPE_LABELS[payment.cardType]} ${brand}`;
+  }
+  if (payment.method === "QR" && payment.qrKind !== "") {
+    return `${base} · ${PAYMENT_QR_KIND_LABELS[payment.qrKind]}`;
+  }
+  if (payment.method === "CHECK") return `${base} N° ${payment.checkNumber.trim()}`;
+  if (payment.method === "OTHER") return `${base} · ${payment.otherDescription.trim()}`;
+  return base;
 }
 
 interface PaymentCaptureProps {
@@ -64,7 +183,7 @@ export function PaymentCapture({
 }: PaymentCaptureProps): JSX.Element {
   const nextKeyRef = useRef(1);
   const [payments, setPayments] = useState<PaymentDraft[]>([
-    { key: "payment-0", method: "CASH", amount: formatEsPyDecimalInput(total) },
+    { key: "payment-0", method: "CASH", amount: formatEsPyDecimalInput(total), ...EMPTY_DETAIL },
   ]);
   const [reviewOpen, setReviewOpen] = useState(false);
 
@@ -74,6 +193,8 @@ export function PaymentCapture({
   );
   const everyAmountValid = payments.length > 0 && exactAmounts.length === payments.length;
   const exact = everyAmountValid && paymentsSumExactly(exactAmounts, total);
+  const detailsComplete = payments.every((payment) => paymentDetailProblem(payment) === null);
+  const ready = exact && detailsComplete;
   const sum = everyAmountValid ? addWireDecimals(exactAmounts) : null;
   const isLocked = disabled || isPending;
 
@@ -86,7 +207,7 @@ export function PaymentCapture({
   function addPayment(): void {
     const key = `payment-${nextKeyRef.current}`;
     nextKeyRef.current += 1;
-    setPayments((previous) => [...previous, { key, method: "CARD", amount: "" }]);
+    setPayments((previous) => [...previous, { key, method: "CARD", amount: "", ...EMPTY_DETAIL }]);
   }
 
   function removePayment(key: string): void {
@@ -97,7 +218,7 @@ export function PaymentCapture({
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault();
-    if (!exact || isLocked) {
+    if (!ready || isLocked) {
       return;
     }
     setReviewOpen(true);
@@ -163,6 +284,11 @@ export function PaymentCapture({
                 </p>
               )}
             </div>
+            <PaymentDetailFields
+              payment={payment}
+              disabled={isLocked}
+              onChange={(patch) => setPayment(payment.key, patch)}
+            />
             <div className="flex justify-end sm:col-span-2">
               <Button
                 type="button"
@@ -204,7 +330,7 @@ export function PaymentCapture({
         saldo a crédito.
       </p>
 
-      <Button type="submit" disabled={!exact || isLocked}>
+      <Button type="submit" disabled={!ready || isLocked}>
         {isPending ? "Confirmando venta…" : "Revisar venta"}
       </Button>
       <ConfirmActionDialog
@@ -217,18 +343,14 @@ export function PaymentCapture({
         confirmLabel="Confirmar venta"
         confirmVariant="default"
         pending={isPending}
-        confirmDisabled={disabled || !exact}
+        confirmDisabled={disabled || !ready}
         pendingLabel="Confirmando venta…"
         errorMessage={errorMessage}
         onConfirm={async () => {
           if (isLocked) throw new Error("Consultá el estado de la venta antes de continuar.");
           if (!exact) throw new Error("Los pagos ya no coinciden con el total.");
-          await onSubmit(
-            payments.map((payment) => ({
-              method: payment.method,
-              amount: normalizeEsPyDecimalInput(payment.amount) ?? payment.amount.trim(),
-            }))
-          );
+          if (!detailsComplete) throw new Error("Completá los datos de cada pago.");
+          await onSubmit(payments.map(toPaymentInput));
         }}
       >
         <div className="mt-4 space-y-3">
@@ -240,7 +362,7 @@ export function PaymentCapture({
             {payments.map((payment, index) => (
               <div key={payment.key} className="flex items-center justify-between gap-4">
                 <dt>
-                  {PAYMENT_METHOD_LABELS[payment.method]} · pago {index + 1}
+                  {paymentLabel(payment)} · pago {index + 1}
                 </dt>
                 <dd className="tabular-nums">
                   {formatStaffMoney(
@@ -264,4 +386,173 @@ export function PaymentCapture({
       </ConfirmActionDialog>
     </form>
   );
+}
+
+/**
+ * PAY-DET-001 / DEC-091: the per-method fields a factura electrónica needs.
+ * Nothing renders for cash or a bank transfer, which SIFEN describes by type.
+ */
+function PaymentDetailFields({
+  payment,
+  disabled,
+  onChange,
+}: {
+  readonly payment: PaymentDraft;
+  readonly disabled: boolean;
+  readonly onChange: (patch: Partial<Omit<PaymentDraft, "key">>) => void;
+}): JSX.Element | null {
+  const id = payment.key;
+  const problem = paymentDetailProblem(payment);
+  const hint =
+    problem === null ? null : (
+      <p id={`${id}-detail-hint`} className="text-xs text-destructive sm:col-span-2">
+        {problem}
+      </p>
+    );
+  const field = (suffix: string, label: string, control: JSX.Element): JSX.Element => (
+    <div className="space-y-2">
+      <label htmlFor={`${id}-${suffix}`} className="text-sm font-medium">
+        {label}
+      </label>
+      {control}
+    </div>
+  );
+
+  if (payment.method === "CARD") {
+    return (
+      <>
+        {field(
+          "card-type",
+          "Tipo de tarjeta",
+          <select
+            id={`${id}-card-type`}
+            value={payment.cardType}
+            onChange={(event) => onChange({ cardType: event.target.value as PaymentCardType })}
+            disabled={disabled}
+            className={inputClassName}
+          >
+            <option value="">Elegí…</option>
+            {CARD_TYPES.map((type) => (
+              <option key={type} value={type}>
+                {PAYMENT_CARD_TYPE_LABELS[type]}
+              </option>
+            ))}
+          </select>
+        )}
+        {field(
+          "card-brand",
+          "Marca de la tarjeta",
+          <select
+            id={`${id}-card-brand`}
+            value={payment.cardBrand}
+            onChange={(event) => onChange({ cardBrand: event.target.value as PaymentCardBrand })}
+            disabled={disabled}
+            className={inputClassName}
+          >
+            <option value="">Elegí…</option>
+            {CARD_BRANDS.map((brand) => (
+              <option key={brand} value={brand}>
+                {PAYMENT_CARD_BRAND_LABELS[brand]}
+              </option>
+            ))}
+          </select>
+        )}
+        {payment.cardBrand === "OTHER" &&
+          field(
+            "card-brand-name",
+            "Nombre de la marca",
+            <input
+              id={`${id}-card-brand-name`}
+              type="text"
+              maxLength={20}
+              value={payment.cardBrandName}
+              onChange={(event) => onChange({ cardBrandName: event.target.value })}
+              disabled={disabled}
+              className={inputClassName}
+            />
+          )}
+        {hint}
+      </>
+    );
+  }
+  if (payment.method === "QR") {
+    return (
+      <>
+        {field(
+          "qr-kind",
+          "Tipo de QR",
+          <select
+            id={`${id}-qr-kind`}
+            value={payment.qrKind}
+            onChange={(event) => onChange({ qrKind: event.target.value as PaymentQrKind })}
+            disabled={disabled}
+            className={inputClassName}
+          >
+            <option value="">Elegí…</option>
+            {QR_KINDS.map((kind) => (
+              <option key={kind} value={kind}>
+                {PAYMENT_QR_KIND_LABELS[kind]}
+              </option>
+            ))}
+          </select>
+        )}
+        {hint}
+      </>
+    );
+  }
+  if (payment.method === "CHECK") {
+    return (
+      <>
+        {field(
+          "check-number",
+          "Número de cheque",
+          <input
+            id={`${id}-check-number`}
+            type="text"
+            inputMode="numeric"
+            maxLength={8}
+            value={payment.checkNumber}
+            onChange={(event) => onChange({ checkNumber: event.target.value })}
+            disabled={disabled}
+            className={inputClassName}
+          />
+        )}
+        {field(
+          "check-bank",
+          "Banco del cheque",
+          <input
+            id={`${id}-check-bank`}
+            type="text"
+            maxLength={20}
+            value={payment.checkBank}
+            onChange={(event) => onChange({ checkBank: event.target.value })}
+            disabled={disabled}
+            className={inputClassName}
+          />
+        )}
+        {hint}
+      </>
+    );
+  }
+  if (payment.method === "OTHER") {
+    return (
+      <>
+        {field(
+          "other-description",
+          "Descripción del medio de pago",
+          <input
+            id={`${id}-other-description`}
+            type="text"
+            maxLength={30}
+            value={payment.otherDescription}
+            onChange={(event) => onChange({ otherDescription: event.target.value })}
+            disabled={disabled}
+            className={inputClassName}
+          />
+        )}
+        {hint}
+      </>
+    );
+  }
+  return null;
 }

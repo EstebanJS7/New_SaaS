@@ -110,6 +110,11 @@ export const purchaseIdParam = z.object({ id: z.string().uuid() });
 export const createPurchaseBody = z
   .object({
     supplierId: z.string().uuid(),
+    /**
+     * MB-003 (DEC-094 §10): the branch the goods will be received into.
+     * Omitted means the only active branch the caller works at.
+     */
+    branchId: z.string().uuid().optional(),
     lines: purchaseLines,
   })
   .strict();

@@ -104,6 +104,17 @@ function harness(
   const saleQueries: Prisma.SaleFindManyArgs[] = [];
   const catalogQueries: Prisma.CatalogItemFindManyArgs[] = [];
   const prisma: ReportingReadPrisma = {
+    // MB-004: reached only by a branch-narrowed report, which these cases never ask for.
+    branch: {
+      findMany: () => {
+        throw new Error("unexpected branch read");
+      },
+    },
+    cashRegister: {
+      findMany: () => {
+        throw new Error("unexpected cash register read");
+      },
+    },
     sale: {
       findMany: (args) => {
         saleQueries.push(args);

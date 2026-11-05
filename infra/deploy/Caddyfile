@@ -1,0 +1,31 @@
+# Caddy obtiene y renueva los certificados HTTPS automáticamente.
+# Los dominios vienen de env.production (APP_DOMAIN, API_DOMAIN, ACME_EMAIL).
+{
+	email {$ACME_EMAIL}
+}
+
+# Aplicación del personal y portal de clientes (Next.js). La web llama a la API
+# por la red interna; el navegador nunca habla directo con la API salvo para
+# los recursos de marca firmados.
+# Caddy reemplaza cualquier X-Forwarded-For que mande el navegador por la
+# dirección real del cliente; la web la pasa a la API para los límites de
+# intentos de inicio de sesión (DEC-093).
+{$APP_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy web:3000
+}
+
+# API pública: solo la necesitan los recursos de marca del portal
+# (BRANDING_ASSET_PUBLIC_BASE_URL) y el monitoreo de salud. CORS y CSP los
+# resuelve la propia API. DEC-093: todo lo demás (login, ventas, datos clínicos)
+# responde 404 acá; el navegador lo usa a través de la web.
+{$API_DOMAIN} {
+	encode zstd gzip
+	@public path /api/v1/public/* /health/live /health/ready
+	handle @public {
+		reverse_proxy api:3001
+	}
+	handle {
+		respond 404
+	}
+}

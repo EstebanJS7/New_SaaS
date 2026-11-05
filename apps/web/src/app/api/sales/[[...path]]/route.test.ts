@@ -528,8 +528,9 @@ describe("/api/sales proxy", () => {
       });
     }
 
-    // The update shape accepts `customerId` and `lines` only.
-    for (const key of ["status", "currency", "total"]) {
+    // The update shape accepts `customerId` and `lines` only (MB-002: a draft's
+    // branch is fixed at creation).
+    for (const key of ["status", "currency", "total", "branchId"]) {
       fetchMock.mockReset();
       const response = await dispatch(
         "PUT",
@@ -628,6 +629,14 @@ describe("/api/sales proxy", () => {
     expect(init.cache).toBe("no-store");
   });
 
+  it("MB-002: forwards a new sale that names its branch", async () => {
+    fetchMock.mockResolvedValue(upstreamOk({ id: SALE_ID }, 201));
+    const body = JSON.stringify({ branchId: SALE_ID, lines: [] });
+    const response = await dispatch("POST", mockNextRequest({ pathname: "/api/sales", body }));
+    expect(response.status).toBe(201);
+    expect(fetchInit().body).toBe(body);
+  });
+
   it("forwards the caller's Idempotency-Key on the completion command", async () => {
     fetchMock.mockResolvedValue(upstreamOk({ id: SALE_ID, replay: false }, 201));
 
@@ -641,6 +650,81 @@ describe("/api/sales proxy", () => {
     );
 
     expect(fetchInit().headers["idempotency-key"]).toBe("counter-1-abc");
+  });
+
+  it("UX-035: forwards the caller's Idempotency-Key on the create command", async () => {
+    fetchMock.mockResolvedValue(upstreamOk({ id: SALE_ID }, 201));
+    await dispatch(
+      "POST",
+      mockNextRequest({
+        pathname: "/api/sales",
+        body: JSON.stringify({ customerId: null, lines: [] }),
+        headers: new Headers({ "idempotency-key": "44444444-4444-4444-8444-444444444444" }),
+      })
+    );
+    expect(fetchUrl()).toBe("http://localhost:3001/sales");
+    expect(fetchInit().headers["idempotency-key"]).toBe("44444444-4444-4444-8444-444444444444");
+  });
+
+  it("UX-035: serves the create-attempt lookup on GET only, for a UUID key only", async () => {
+    const key = "44444444-4444-4444-8444-444444444444";
+    fetchMock.mockResolvedValue(upstreamOk({ id: SALE_ID }));
+    await dispatch("GET", mockNextRequest({ pathname: `/api/sales/attempts/${key}` }));
+    expect(fetchUrl()).toBe(`http://localhost:3001/sales/attempts/${key}`);
+
+    fetchMock.mockClear();
+    const notUuid = await dispatch("GET", mockNextRequest({ pathname: "/api/sales/attempts/abc" }));
+    expect(notUuid.status).toBe(404);
+    const post = await dispatch(
+      "POST",
+      mockNextRequest({ pathname: `/api/sales/attempts/${key}`, body: "{}" })
+    );
+    expect(post.status).toBe(405);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("SAL-REV-001: forwards a reversal with its reason and Idempotency-Key", async () => {
+    fetchMock.mockResolvedValue(upstreamOk({ id: "r-1" }, 201));
+    const body = JSON.stringify({ reason: "Cobro duplicado" });
+
+    await dispatch(
+      "POST",
+      mockNextRequest({
+        pathname: `/api/sales/${SALE_ID}/reverse`,
+        body,
+        headers: new Headers({ "idempotency-key": "reverse-1-abc" }),
+      })
+    );
+
+    expect(fetchUrl()).toBe(`http://localhost:3001/sales/${SALE_ID}/reverse`);
+    expect(fetchInit().body).toBe(body);
+    expect(fetchInit().headers["idempotency-key"]).toBe("reverse-1-abc");
+  });
+
+  it("SAL-REV-001: refuses a reversal body with any key but the reason", async () => {
+    const response = await dispatch(
+      "POST",
+      mockNextRequest({
+        pathname: `/api/sales/${SALE_ID}/reverse`,
+        body: JSON.stringify({ reason: "x", tenantId: "other" }),
+      })
+    );
+    expect(response.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("SAL-REV-001: serves the reversal read on GET only", async () => {
+    fetchMock.mockResolvedValue(upstreamOk({ id: "r-1" }));
+    await dispatch("GET", mockNextRequest({ pathname: `/api/sales/${SALE_ID}/reversal` }));
+    expect(fetchUrl()).toBe(`http://localhost:3001/sales/${SALE_ID}/reversal`);
+
+    fetchMock.mockReset();
+    const refused = await dispatch(
+      "POST",
+      mockNextRequest({ pathname: `/api/sales/${SALE_ID}/reversal`, body: "{}" })
+    );
+    expect(refused.status).toBe(405);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("never invents an Idempotency-Key when the caller sent none", async () => {
@@ -659,11 +743,10 @@ describe("/api/sales proxy", () => {
     expect(Object.keys(init.headers).sort()).toEqual(["content-type", "cookie"]);
   });
 
-  it("drops an Idempotency-Key on every shape but the completion command", async () => {
-    // The header is part of the completion contract alone; on any other shape it
-    // is dropped exactly like every other non-allowlisted browser header.
+  it("drops an Idempotency-Key on every shape but the create, completion and reversal commands", async () => {
+    // The header is part of those contracts alone (UX-035 added the create); on
+    // any other shape it is dropped like every other non-allowlisted header.
     for (const route of [
-      { method: "POST" as const, pathname: "/api/sales", body: CREATE_BODY },
       { method: "PUT" as const, pathname: `/api/sales/${SALE_ID}`, body: CREATE_BODY },
       { method: "POST" as const, pathname: `/api/sales/${SALE_ID}/cancel`, body: "{}" },
     ]) {

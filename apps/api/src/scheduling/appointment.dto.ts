@@ -167,6 +167,12 @@ export type RescheduleAppointmentInput = z.infer<typeof rescheduleAppointmentInp
 
 /** Agenda filter options: tenant branches plus assignable VETERINARIAN memberships. */
 export interface AppointmentOptionsResponse {
-  readonly branches: { readonly id: string; readonly name: string }[];
-  readonly professionals: { readonly membershipId: string; readonly displayName: string | null }[];
+  /** MB-001: inactive branches stay listed (history filters); no new turno goes there. */
+  readonly branches: { readonly id: string; readonly name: string; readonly isActive: boolean }[];
+  readonly professionals: {
+    readonly membershipId: string;
+    readonly displayName: string | null;
+    /** MB-001: the branches this professional works at (DEC-094 §5). */
+    readonly branchIds: readonly string[];
+  }[];
 }

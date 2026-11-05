@@ -8,6 +8,7 @@ import {
 } from "@newsaas/notifications";
 import type { ApplicationEvent, EventDispatcher } from "@newsaas/shared";
 import { PASSWORD_RESET_REQUESTED } from "../auth/password-recovery.service.js";
+import { STAFF_ACTIVATION_REQUESTED } from "../tenancy/staff-invitation.service.js";
 import {
   NotificationIntentService,
   type NotificationIntentPrisma,
@@ -103,7 +104,8 @@ describe("PasswordRecoveryScheduler — the message side of a reset request", ()
       {} as unknown as NotificationDeliveryProducer
     );
     withSpy.onModuleInit();
-    expect(subscribed).toEqual([PASSWORD_RESET_REQUESTED]);
+    // ONB-001: an invitation's activation link travels the same identity-scoped path.
+    expect(subscribed).toEqual([PASSWORD_RESET_REQUESTED, STAFF_ACTIVATION_REQUESTED]);
     expect(scheduler).toBeDefined();
   });
 

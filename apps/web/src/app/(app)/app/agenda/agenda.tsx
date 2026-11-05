@@ -30,6 +30,8 @@ import {
   type BookingRequest,
   type CreateAppointmentInput,
   type TransitionCommand,
+  bookableBranches,
+  professionalsAtBranch,
 } from "./agenda-api";
 import { listCatalogItems } from "../catalog/catalog-api";
 import { AgendaViews, type AgendaView } from "./agenda-views";
@@ -204,9 +206,18 @@ function CreateAppointmentForm({
   readonly onClose: () => void;
 }): JSX.Element {
   const [branchId, setBranchId] = useState(branches[0]?.id ?? "");
+  // MB-001: only the professionals who work at the chosen branch.
+  const branchProfessionals = professionalsAtBranch(professionals, branchId);
   const [professionalMembershipId, setProfessionalMembershipId] = useState(
-    professionals[0]?.membershipId ?? ""
+    branchProfessionals[0]?.membershipId ?? ""
   );
+  function chooseBranch(next: string): void {
+    setBranchId(next);
+    const available = professionalsAtBranch(professionals, next);
+    if (!available.some((professional) => professional.membershipId === professionalMembershipId)) {
+      setProfessionalMembershipId(available[0]?.membershipId ?? "");
+    }
+  }
   const [patient, setPatient] = useState<PatientIdentity | null>(null);
   const [serviceId, setServiceId] = useState("");
   const [startAt, setStartAt] = useState(() =>
@@ -276,7 +287,7 @@ function CreateAppointmentForm({
               }
               className={fieldClassName}
               value={branchId}
-              onChange={(event) => setBranchId(event.target.value)}
+              onChange={(event) => chooseBranch(event.target.value)}
             >
               <option value="">Elegí una sucursal</option>
               {branches.map((branch) => (
@@ -304,7 +315,7 @@ function CreateAppointmentForm({
               onChange={(event) => setProfessionalMembershipId(event.target.value)}
             >
               <option value="">Elegí un profesional</option>
-              {professionals.map((professional) => (
+              {branchProfessionals.map((professional) => (
                 <option key={professional.membershipId} value={professional.membershipId}>
                   {professionalDisplayLabel(professional.membershipId, professional.displayName)}
                 </option>
@@ -621,9 +632,18 @@ function BookingRequestDecisionForm({
   readonly onClose: () => void;
 }): JSX.Element {
   const [branchId, setBranchId] = useState(branches[0]?.id ?? "");
+  // MB-001: only the professionals who work at the chosen branch.
+  const branchProfessionals = professionalsAtBranch(professionals, branchId);
   const [professionalMembershipId, setProfessionalMembershipId] = useState(
-    professionals[0]?.membershipId ?? ""
+    branchProfessionals[0]?.membershipId ?? ""
   );
+  function chooseBranch(next: string): void {
+    setBranchId(next);
+    const available = professionalsAtBranch(professionals, next);
+    if (!available.some((professional) => professional.membershipId === professionalMembershipId)) {
+      setProfessionalMembershipId(available[0]?.membershipId ?? "");
+    }
+  }
   const [startAt, setStartAt] = useState("");
   const [endAt, setEndAt] = useState("");
   const [validation, setValidation] = useState<string | null>(null);
@@ -696,7 +716,7 @@ function BookingRequestDecisionForm({
               className={fieldClassName}
               value={branchId}
               onChange={(event) => {
-                setBranchId(event.target.value);
+                chooseBranch(event.target.value);
                 setValidation(null);
               }}
             >
@@ -729,7 +749,7 @@ function BookingRequestDecisionForm({
               }}
             >
               <option value="">Elegí un profesional</option>
-              {professionals.map((professional) => (
+              {branchProfessionals.map((professional) => (
                 <option key={professional.membershipId} value={professional.membershipId}>
                   {professionalDisplayLabel(professional.membershipId, professional.displayName)}
                 </option>
@@ -1353,7 +1373,7 @@ export function Agenda(): JSX.Element {
       )}
       {editor?.kind === "create" && (
         <CreateAppointmentForm
-          branches={branches}
+          branches={bookableBranches(branches)}
           professionals={professionals}
           services={serviceOptions}
           isPending={createMutation.isPending}
@@ -1403,7 +1423,7 @@ export function Agenda(): JSX.Element {
           key={editor.request.id}
           request={editor.request}
           patientName={patientLabel(editor.request.patientId)}
-          branches={branches}
+          branches={bookableBranches(branches)}
           professionals={professionals}
           isPending={requestMutationPending}
           error={requestMutationError}

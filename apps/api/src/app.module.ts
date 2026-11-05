@@ -30,6 +30,7 @@ import { createResponsibleCustomerRecipientPort } from "./patients/patient-guard
 import { SecretsModule } from "./secret-store/secrets.module.js";
 import { SettingsModule } from "./settings/settings.module.js";
 import { SuppliersModule } from "./suppliers/suppliers.module.js";
+import { BranchesModule } from "./branches/branches.module.js";
 import { TenancyModule } from "./tenancy/tenancy.module.js";
 
 // Guard-chain wire order (design D3 + EPIC-02 design D1): AuthModule's
@@ -90,6 +91,8 @@ import { TenancyModule } from "./tenancy/tenancy.module.js";
     // reference; it adds no APP_GUARD either, so its position is free — kept
     // after Inventory so the dependency direction reads top-down.
     SuppliersModule,
+    // MB-001 (DEC-094): branches and the staff assigned to them.
+    BranchesModule,
     // EPIC-11 PUR-001 purchases: the Core draft aggregate that references the
     // supplier registry and the catalog; it adds no APP_GUARD either, so its
     // position is free — kept after Suppliers so the dependency direction reads

@@ -2,6 +2,8 @@
 export interface FiscalDocumentResponse {
   readonly id: string;
   readonly invoiceId: string;
+  /** NCE-001: set when the document is a credit note crediting `invoiceId`. */
+  readonly creditNoteId: string | null;
   readonly provider: string;
   readonly status: string;
   readonly attemptCount: number;

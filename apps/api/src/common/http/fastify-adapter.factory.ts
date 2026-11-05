@@ -24,6 +24,11 @@ export interface CreateFastifyAdapterOptions {
    * advertises a transport guarantee the wire does not provide.
    */
   hstsEnabled?: boolean;
+  /**
+   * DEC-093: IPs/CIDRs of the reverse proxies whose `X-Forwarded-For` is
+   * believed. Empty or omitted trusts none: `request.ip` stays the TCP peer.
+   */
+  trustedProxies?: readonly string[];
 }
 
 /** Raw-request slot where `genReqId` stashes the resolved id for ALS pickup. */
@@ -82,6 +87,9 @@ export function createFastifyAdapter(options: CreateFastifyAdapterOptions = {}):
     // future upstream change cannot silently move the limit; oversized bodies
     // are rejected before parsing (413 FST_ERR_CTP_BODY_TOO_LARGE).
     bodyLimit: 1_048_576,
+    ...(options.trustedProxies !== undefined && options.trustedProxies.length > 0
+      ? { trustProxy: [...options.trustedProxies] }
+      : {}),
     genReqId: (rawRequest: IncomingMessage) => {
       const requestId = resolveRequestId(rawRequest.headers[REQUEST_ID_HEADER]);
       (rawRequest as RawRequestWithId).id = requestId;

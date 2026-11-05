@@ -1,6 +1,7 @@
 import { Catch, HttpException, type ArgumentsHost, type ExceptionFilter } from "@nestjs/common";
 import { DomainError, ERROR_CODES, getStatusForCode, type ErrorCode } from "@newsaas/shared";
 import type { FastifyReply, FastifyRequest } from "fastify";
+import { captureError } from "@newsaas/observability";
 import { toLoggableError } from "../errors/loggable-error.js";
 import { REQUEST_ID_HEADER, resolveRequestId } from "../errors/request-id.js";
 
@@ -264,6 +265,9 @@ export class GlobalExceptionFilter implements ExceptionFilter {
   private logServerError(request: FastifyRequest, exception: unknown, status: number): void {
     if (status < 500) return;
     request.log.error({ failure: toLoggableError(exception) }, "Unhandled request failure");
+    // DEC-093: the same 5xx, to error tracking when it is configured. The
+    // request id joins the event to this log line; nothing of the request goes.
+    captureError(exception, { requestId: resolveRequestId(request.id) });
   }
 }
 

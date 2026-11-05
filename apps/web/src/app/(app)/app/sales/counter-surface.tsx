@@ -4,6 +4,8 @@ import { useStaffResumeTarget } from "@/providers/staff-resume-target";
 import type { JSX } from "react";
 import { formatEsPyDecimal } from "@/lib/es-py-format";
 import { useMemo, useRef, useState } from "react";
+import { forgetAttempt, newAttemptKey, rememberAttempt } from "@/lib/pending-attempts";
+import { PendingSaleAttempts } from "./pending-sale-attempts";
 import Link from "next/link";
 import { ClinicalAssociations } from "@/components/veterinary/clinical-associations";
 import { AppointmentJourney } from "@/components/veterinary/appointment-journey";
@@ -30,6 +32,7 @@ import {
   type CartLine,
 } from "./counter-cart";
 import { CustomerSelector } from "./customer-selector";
+import { useWorkingBranches } from "@/lib/working-branches";
 import { LineEditor } from "./line-editor";
 import { PaymentCapture } from "./payment-capture";
 import { useCounterExit } from "./counter-exit";
@@ -38,6 +41,7 @@ import {
   classifySaleCompletionError,
   completeSale,
   createSale,
+  getSaleCreateAttempt,
   isSaleNotEntitled,
   isSalePermissionDenied,
   type CompleteSaleResult,
@@ -69,6 +73,13 @@ const inputClassName =
  * customer is optional and non-blocking (DEC-028). Permission and entitlement
  * branches are UX only — the backend enforces every gate.
  */
+/** What one checkout attempt sends; kept as is for an explicit retry. */
+interface CounterSaleInput {
+  readonly customerId: string | null;
+  readonly branchId?: string;
+  readonly lines: ReturnType<typeof buildSaleLines>;
+}
+
 export function CounterSurface({
   appointmentId,
   patientId,
@@ -82,6 +93,9 @@ export function CounterSurface({
   const [searchQuery, setSearchQuery] = useState("");
   const [cart, setCart] = useState<CartLine[]>([]);
   const [customerId, setCustomerId] = useState("");
+  // MB-002 (DEC-094 §9): asked only when the person works at several branches.
+  const workingBranches = useWorkingBranches();
+  const [branchId, setBranchId] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
   const [createdSale, setCreatedSale] = useState<Sale | null>(null);
   useStaffResumeTarget(createdSale ? `/app/sales/${createdSale.id}` : undefined);
@@ -93,12 +107,18 @@ export function CounterSurface({
     retry: false,
   });
 
+  // UX-035 / TD-071: one key per checkout attempt, kept for an explicit retry.
+  const attemptRef = useRef<{
+    key: string;
+    input: CounterSaleInput;
+  } | null>(null);
+  const [attemptCheck, setAttemptCheck] = useState<"idle" | "checking" | "absent" | "failed">(
+    "idle"
+  );
+
   const createMutation = useMutation({
-    mutationFn: async (input: {
-      customerId: string | null;
-      lines: ReturnType<typeof buildSaleLines>;
-    }) => {
-      const sale = await createSale(input);
+    mutationFn: async (attempt: { key: string; input: CounterSaleInput }) => {
+      const sale = await createSale(attempt.input, { idempotencyKey: attempt.key });
       if (
         !sale ||
         !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sale.id) ||
@@ -109,9 +129,19 @@ export function CounterSurface({
     },
     // A command is never retried silently by this surface.
     retry: false,
-    onSuccess: (sale) => {
+    onSuccess: (sale, attempt) => {
+      forgetAttempt(attempt.key);
       setCreatedSale(sale);
       void queryClient.invalidateQueries({ queryKey: ["sales", "list"] });
+    },
+    onError: (error, attempt) => {
+      // A definitive refusal recorded nothing; only an unknown fate stays pending.
+      if (
+        error instanceof ApiRequestError &&
+        [400, 401, 403, 404, 409, 422].includes(error.status)
+      ) {
+        forgetAttempt(attempt.key);
+      }
     },
     onSettled: () => {
       creatingRef.current = false;
@@ -181,12 +211,58 @@ export function CounterSurface({
       setLocalError(error);
       return;
     }
+    if (workingBranches.mustChoose && branchId === "") {
+      setLocalError("Elegí la sucursal de la venta.");
+      return;
+    }
     setLocalError(null);
     creatingRef.current = true;
-    createMutation.mutate({
-      customerId: customerId.length > 0 ? customerId : null,
-      lines: buildSaleLines(cart),
-    });
+    const attempt = {
+      key: newAttemptKey(),
+      input: {
+        customerId: customerId.length > 0 ? customerId : null,
+        ...(workingBranches.mustChoose && branchId !== "" ? { branchId } : {}),
+        lines: buildSaleLines(cart),
+      },
+    };
+    attemptRef.current = attempt;
+    setAttemptCheck("idle");
+    rememberAttempt("sale.create", attempt.key);
+    createMutation.mutate(attempt);
+  }
+
+  /**
+   * UX-035 / TD-071: asks the API what the uncertain attempt recorded, by its
+   * key. Found: the draft continues to payment exactly as if the answer had
+   * arrived. Absent: nothing was recorded, and the retry below is safe.
+   */
+  async function checkUncertainAttempt(): Promise<void> {
+    const attempt = attemptRef.current;
+    if (attempt === null) return;
+    setAttemptCheck("checking");
+    try {
+      const sale = await getSaleCreateAttempt(attempt.key);
+      if (sale === null) {
+        setAttemptCheck("absent");
+        return;
+      }
+      forgetAttempt(attempt.key);
+      createMutation.reset();
+      setAttemptCheck("idle");
+      setCreatedSale(sale);
+      void queryClient.invalidateQueries({ queryKey: ["sales", "list"] });
+    } catch {
+      setAttemptCheck("failed");
+    }
+  }
+
+  /** Re-sends the SAME attempt with the SAME key: the API replays, never duplicates. */
+  function retryUncertainAttempt(): void {
+    const attempt = attemptRef.current;
+    if (attempt === null || creatingRef.current) return;
+    creatingRef.current = true;
+    setAttemptCheck("idle");
+    createMutation.mutate(attempt);
   }
 
   function handleComplete(payments: SalePaymentInput[]): Promise<CompleteSaleResult> {
@@ -282,6 +358,7 @@ export function CounterSurface({
           inPOS
         />
       )}
+      <PendingSaleAttempts excludeKey={attemptRef.current?.key} />
       <CompletionOutcomeAlert completed={completed} />
 
       {completed !== null && (
@@ -308,13 +385,44 @@ export function CounterSurface({
           {permissionDenied && <p className="font-medium">Sin permiso</p>}
           <p>
             {creationUncertain
-              ? "No pudimos confirmar si se creó la venta. Conservamos el carrito bloqueado para evitar otro envío. Revisá el listado de ventas antes de crear otra; no identificamos el resultado comparando valores."
+              ? "No pudimos confirmar si se creó la venta. Conservamos el carrito bloqueado para evitar otro envío. Consultá el resultado: el sistema lo busca por la clave de este intento, no comparando valores."
               : creationDenied
                 ? permissionDenied
                   ? "No tenés permiso para gestionar ventas."
                   : "El acceso para crear ventas fue rechazado. Revisá tu sesión, permisos y funciones habilitadas antes de continuar."
-                : "La creación fue rechazada. Revisá los artículos, cantidades, precios y cliente antes de volver a intentar."}
+                : createError instanceof ApiRequestError && /sucursal/i.test(createError.message)
+                  ? createError.message
+                  : "La creación fue rechazada. Revisá los artículos, cantidades, precios y cliente antes de volver a intentar."}
           </p>
+          {creationUncertain && (
+            <div className="mt-3 space-y-2 text-foreground">
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void checkUncertainAttempt()}
+                  disabled={attemptCheck === "checking"}
+                >
+                  {attemptCheck === "checking" ? "Consultando…" : "Consultar si se creó"}
+                </Button>
+                {attemptCheck === "absent" && (
+                  <Button type="button" size="sm" onClick={retryUncertainAttempt}>
+                    Reintentar
+                  </Button>
+                )}
+              </div>
+              {attemptCheck === "absent" && (
+                <p data-testid="attempt-absent">
+                  El servidor no registró ese intento. Podés reintentar: se envía con la misma
+                  clave, así que no puede crear una venta duplicada.
+                </p>
+              )}
+              {attemptCheck === "failed" && (
+                <p>No se pudo consultar. Revisá la conexión y volvé a consultar.</p>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -408,6 +516,25 @@ export function CounterSurface({
             </div>
           )}
 
+          {workingBranches.mustChoose ? (
+            <label className="block space-y-1 text-sm">
+              <span className="font-medium">Sucursal</span>
+              <select
+                aria-label="Sucursal de la venta"
+                className="min-h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                value={branchId}
+                disabled={locked}
+                onChange={(event) => setBranchId(event.target.value)}
+              >
+                <option value="">Elegí la sucursal</option>
+                {workingBranches.branches.map((branch) => (
+                  <option key={branch.id} value={branch.id}>
+                    {branch.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <CustomerSelector customerId={customerId} onChange={setCustomerId} disabled={locked} />
 
           <div className="flex items-center justify-between border-t border-border pt-4 text-sm">

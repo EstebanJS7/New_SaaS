@@ -96,6 +96,17 @@ function harness(
   const supplierQueries: Prisma.SupplierFindManyArgs[] = [];
 
   const prisma: ReportingReadPrisma = {
+    // MB-004: reached only by a branch-narrowed report, which these cases never ask for.
+    branch: {
+      findMany: () => {
+        throw new Error("unexpected branch read");
+      },
+    },
+    cashRegister: {
+      findMany: () => {
+        throw new Error("unexpected cash register read");
+      },
+    },
     // REP-002/REP-003 reads are unreachable from REP-004 and vice versa: each
     // stub throws instead of answering `[]`.
     sale: {

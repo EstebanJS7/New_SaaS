@@ -112,6 +112,7 @@ function buildHarness(
     tenantMembership: {
       findFirst: vi.fn().mockResolvedValue({ id: VET_A, role: { code: "VETERINARIAN" } }),
     },
+    membershipBranch: { findFirst: vi.fn().mockResolvedValue({ branch: { isActive: true } }) },
     auditLog: { create: vi.fn().mockResolvedValue({ id: "audit-tx" }) },
     $queryRaw: vi.fn().mockResolvedValue([]),
   };

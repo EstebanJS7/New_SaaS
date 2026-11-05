@@ -47,6 +47,7 @@ const PURCHASE: Purchase = {
   id: "22222222-2222-4222-8222-222222222222",
   tenantId: "tenant-a",
   supplierId: SUPPLIER_ID,
+  branchId: "77777777-7777-4777-8777-777777777777",
   status: "DRAFT",
   lines: [
     { id: "line-1", catalogItemId: ITEM_ID, quantity: "2.000", unitCost: "1500.00" },
@@ -67,9 +68,14 @@ function resolveUrl(input: RequestInfo | URL): string {
   return typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
 }
 
-function installLists(): void {
+const NORTE_ID = "88888888-8888-4888-8888-888888888888";
+
+function installLists(branches: readonly { id: string; name: string }[] = []): void {
   global.fetch = vi.fn((input: RequestInfo | URL) => {
     const url = resolveUrl(input);
+    if (url.startsWith("/api/memberships/me/branches")) {
+      return Promise.resolve(jsonResponse({ branches }));
+    }
     if (url.startsWith("/api/suppliers")) {
       return Promise.resolve(jsonResponse([SUPPLIER]));
     }
@@ -118,6 +124,47 @@ describe("PurchaseForm", () => {
       supplierId: SUPPLIER_ID,
       lines: [{ catalogItemId: ITEM_ID, quantity: "2.000" }],
     });
+  });
+
+  it("MB-003: asks for the receiving branch only when the buyer works at several", async () => {
+    const onSubmit = vi.fn();
+    installLists([
+      { id: "77777777-7777-4777-8777-777777777777", name: "Casa central" },
+      { id: NORTE_ID, name: "Norte" },
+    ]);
+
+    render(wrapper(<PurchaseForm onSubmit={onSubmit} isPending={false} error={null} />));
+
+    await selectSupplier();
+    await screen.findByRole("option", { name: "Gauze roll" });
+    fireEvent.change(screen.getByLabelText("Item 1"), { target: { value: ITEM_ID } });
+    fireEvent.change(screen.getByLabelText("Quantity"), { target: { value: "1" } });
+    await screen.findByRole("option", { name: "Norte" });
+    submitForm();
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert").textContent).toContain("branch");
+
+    fireEvent.change(screen.getByLabelText("Branch"), { target: { value: NORTE_ID } });
+    submitForm();
+    expect(onSubmit).toHaveBeenCalledWith({
+      supplierId: SUPPLIER_ID,
+      lines: [{ catalogItemId: ITEM_ID, quantity: "1" }],
+      branchId: NORTE_ID,
+    });
+  });
+
+  it("never asks for the branch when editing a draft", async () => {
+    installLists([
+      { id: "77777777-7777-4777-8777-777777777777", name: "Casa central" },
+      { id: NORTE_ID, name: "Norte" },
+    ]);
+    render(
+      wrapper(
+        <PurchaseForm purchase={PURCHASE} onSubmit={vi.fn()} isPending={false} error={null} />
+      )
+    );
+    await screen.findByRole("option", { name: "Distribuidora Central" });
+    expect(screen.queryByLabelText("Branch")).toBeNull();
   });
 
   it("sends the unit cost as the exact decimal string the user typed", async () => {

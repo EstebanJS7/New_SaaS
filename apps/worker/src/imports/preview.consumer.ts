@@ -1,3 +1,4 @@
+import { reportJobFailure, reportWorkerError } from "../observability/job-failure.js";
 import { Injectable, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import { Worker, type Job } from "bullmq";
 import { Redis } from "ioredis";
@@ -100,6 +101,7 @@ export class ImportProcessingConsumer implements OnModuleInit, OnModuleDestroy {
       { connection: this.connection, concurrency: 1 }
     );
     this.worker.on("failed", (job, error) => {
+      reportJobFailure(IMPORT_PROCESSING_QUEUE, job, error);
       // The import id and a sanitized reason: no storage key, no row content.
       console.error("Import job failed", {
         importJobId: job?.data.importJobId ?? null,
@@ -108,6 +110,7 @@ export class ImportProcessingConsumer implements OnModuleInit, OnModuleDestroy {
       });
     });
     this.worker.on("error", (error) => {
+      reportWorkerError(IMPORT_PROCESSING_QUEUE, error);
       console.error("Import worker error", sanitizeWorkerError(error));
     });
   }

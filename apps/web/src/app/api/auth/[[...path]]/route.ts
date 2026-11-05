@@ -1,3 +1,4 @@
+import { forwardedForHeader } from "@/lib/forwarded-for";
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { STAFF_SESSION_COOKIE } from "@/lib/session-cookie";
@@ -72,7 +73,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return error("VALIDATION_FAILED", "Invalid auth request body.", 400);
   }
 
-  const headers: Record<string, string> = { "content-type": "application/json" };
+  // DEC-093: the client address for the API's login and recovery rate limits.
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    ...forwardedForHeader(request.headers),
+  };
   // Only the RECOVERY routes carry a session, and only when the caller has one: a locked-out
   // user asking for a reset from a signed-in browser should not have that session forwarded
   // to a route with no use for it. `login` forwards nothing at all.

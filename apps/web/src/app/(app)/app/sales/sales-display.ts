@@ -4,7 +4,13 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { listCatalogItems } from "../catalog/catalog-api";
 import { listCustomers } from "../customers/customers-api";
-import { type PaymentMethod, type SaleStatus } from "./sales-api";
+import {
+  type PaymentCardBrand,
+  type PaymentCardType,
+  type PaymentMethod,
+  type PaymentQrKind,
+  type SaleStatus,
+} from "./sales-api";
 import { formatEsPyDecimal, formatEsPyInstant, formatStaffMoney } from "@/lib/es-py-format";
 
 /**
@@ -47,6 +53,29 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   QR: "QR",
   CHECK: "Cheque",
   OTHER: "Otro",
+};
+
+/** PAY-DET-001: what the cashier picks for a card payment. */
+export const PAYMENT_CARD_TYPE_LABELS: Record<PaymentCardType, string> = {
+  CREDIT: "Crédito",
+  DEBIT: "Débito",
+};
+
+/** PAY-DET-001: the brands SIFEN codes (`iDenTarj`); any other is named by hand. */
+export const PAYMENT_CARD_BRAND_LABELS: Record<PaymentCardBrand, string> = {
+  VISA: "Visa",
+  MASTERCARD: "Mastercard",
+  AMERICAN_EXPRESS: "American Express",
+  MAESTRO: "Maestro",
+  PANAL: "Panal",
+  CABAL: "Cabal",
+  OTHER: "Otra",
+};
+
+/** PAY-DET-001: a QR is an electronic wallet or a bank app. */
+export const PAYMENT_QR_KIND_LABELS: Record<PaymentQrKind, string> = {
+  WALLET: "Billetera electrónica",
+  BANK_APP: "App del banco",
 };
 
 /**

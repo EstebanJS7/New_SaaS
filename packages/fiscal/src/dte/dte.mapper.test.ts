@@ -47,6 +47,7 @@ function mappingInput(overrides: Partial<DteMappingInput> = {}): DteMappingInput
         }),
       ],
       receptor: FIXTURE.gDatGralOpe.gDatRec,
+      payments: [{ iTiPago: 1, amount: "160.50" }],
     },
     profile: {
       emitter: FIXTURE.gDatGralOpe.gEmis,
@@ -83,6 +84,79 @@ function line(overrides: Partial<ConfirmedInvoiceLineSnapshot>): ConfirmedInvoic
   };
 }
 
+describe("buildDteRequestFromInvoice — the factura's own groups (PAY-DET-001)", () => {
+  it("opens gDtipDE with gCamFE and gCamCond, one gPaConEIni per payment", () => {
+    const { request } = buildDteRequestFromInvoice(
+      mappingInput({
+        invoice: {
+          ...mappingInput().invoice,
+          payments: [
+            { iTiPago: 3, amount: "100.50", card: { iDenTarj: 1 } },
+            { iTiPago: 2, amount: "50", cheque: { number: "00012345", bank: "Banco Itaú" } },
+            { iTiPago: 99, amount: "10", otherDescription: "Canje de puntos" },
+          ],
+        },
+      })
+    );
+    const xml = buildDteXml(request).replace(/>\s+</g, "><");
+
+    expect(request.gDtipDE?.map((element) => element.name).slice(0, 3)).toEqual([
+      "gCamFE",
+      "gCamCond",
+      "gCamItem",
+    ]);
+    expect(xml).toContain(
+      "<gCamFE><iIndPres>1</iIndPres><dDesIndPres>Operación presencial</dDesIndPres></gCamFE>"
+    );
+    expect(xml).toContain("<iCondOpe>1</iCondOpe><dDCondOpe>Contado</dDCondOpe>");
+    expect(xml).toContain(
+      "<gPaConEIni><iTiPago>3</iTiPago><dDesTiPag>Tarjeta de crédito</dDesTiPag>" +
+        "<dMonTiPag>100.5000</dMonTiPag><cMoneTiPag>PYG</cMoneTiPag><dDMoneTiPag>Guaraní</dDMoneTiPag>" +
+        "<gPagTarCD><iDenTarj>1</iDenTarj><dDesDenTarj>Visa</dDesDenTarj><iForProPa>1</iForProPa></gPagTarCD>" +
+        "</gPaConEIni>"
+    );
+    expect(xml).toContain(
+      "<gPagCheq><dNumCheq>00012345</dNumCheq><dBcoEmi>Banco Itaú</dBcoEmi></gPagCheq>"
+    );
+    expect(xml).toContain("<iTiPago>99</iTiPago><dDesTiPag>Canje de puntos</dDesTiPag>");
+  });
+
+  it("refuses a factura with no payment (1550)", () => {
+    expect(() =>
+      buildDteRequestFromInvoice(
+        mappingInput({ invoice: { ...mappingInput().invoice, payments: [] } })
+      )
+    ).toThrow(/1550/);
+  });
+
+  it.each([
+    ["a card payment without gPagTarCD (1600)", { iTiPago: 4, amount: "1" }, /1600/],
+    [
+      "gPagTarCD on a cash payment (1601)",
+      { iTiPago: 1, amount: "1", card: { iDenTarj: 1 } },
+      /1601/,
+    ],
+    ["a cheque without its number (E630)", { iTiPago: 2, amount: "1" }, /E630/],
+    [
+      "a malformed cheque number",
+      { iTiPago: 2, amount: "1", cheque: { number: "123", bank: "Banco" } },
+      /dNumCheq/,
+    ],
+    ["an 'other' payment without a description", { iTiPago: 99, amount: "1" }, /99/],
+    ["an unknown payment type (1554)", { iTiPago: 42, amount: "1" }, /1554/],
+    [
+      "an 'other' brand without a name (1602)",
+      { iTiPago: 3, amount: "1", card: { iDenTarj: 99 } },
+      /1602/,
+    ],
+  ] as const)("the builder refuses %s", (_label, payment, pattern) => {
+    const { request } = buildDteRequestFromInvoice(
+      mappingInput({ invoice: { ...mappingInput().invoice, payments: [payment] } })
+    );
+    expect(() => buildDteXml(request)).toThrow(pattern);
+  });
+});
+
 describe("buildDteRequestFromInvoice", () => {
   it("maps a confirmed invoice into a request the builder accepts", () => {
     const { request, totals } = buildDteRequestFromInvoice(mappingInput());
@@ -111,7 +185,7 @@ describe("buildDteRequestFromInvoice", () => {
 
   it("emits gCamIVA's seven required children in the schema's order", () => {
     const { request } = buildDteRequestFromInvoice(mappingInput());
-    const item = request.gDtipDE?.[0];
+    const item = request.gDtipDE?.find((element) => element.name === "gCamItem");
     const iva = item?.children?.find((child) => child.name === "gCamIVA");
 
     expect(iva?.children?.map((child) => child.name)).toEqual([

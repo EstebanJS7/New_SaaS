@@ -144,6 +144,8 @@ export interface BookingRequestTransaction {
   branch: AppointmentAnchorPrisma["branch"];
   patient: AppointmentAnchorPrisma["patient"];
   tenantMembership: AppointmentAnchorPrisma["tenantMembership"];
+  /** MB-001: the professional must work at the chosen branch (DEC-094 §5). */
+  membershipBranch: AppointmentAnchorPrisma["membershipBranch"];
   auditLog: AuditAppendTx["auditLog"];
   /** Advisory-lock seam used by the shared conflict serialization. */
   $queryRaw: (query: TemplateStringsArray, ...values: unknown[]) => Promise<unknown[]>;

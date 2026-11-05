@@ -32,6 +32,7 @@ import {
   assertSchedulingAnchors,
   compareAndSetReschedule,
   loadSchedulingSettings,
+  type AppointmentAnchorPrisma,
 } from "./appointment-invariants.js";
 import {
   computeAvailableSlots,
@@ -134,7 +135,16 @@ export interface AppointmentBranchDelegate {
   findMany: (args: {
     where: { tenantId: string };
     orderBy?: { name?: "asc" | "desc" };
-  }) => Promise<{ id: string; name: string }[]>;
+  }) => Promise<{ id: string; name: string; isActive?: boolean }[]>;
+}
+
+/** MB-001: staff-to-branch assignments (DEC-094 §5). */
+export interface AppointmentMembershipBranchDelegate {
+  findFirst: AppointmentAnchorPrisma["membershipBranch"]["findFirst"];
+  findMany: (args: {
+    where: { tenantId: string };
+    select: { membershipId: true; branchId: true };
+  }) => Promise<{ membershipId: string; branchId: string }[]>;
 }
 
 /** Read-only tenant-ownership lookup for the Patient anchor. */
@@ -191,6 +201,7 @@ export interface AppointmentPrisma {
   branch: AppointmentBranchDelegate;
   patient: AppointmentPatientDelegate;
   tenantMembership: AppointmentMembershipDelegate;
+  membershipBranch: AppointmentMembershipBranchDelegate;
   appointment: AppointmentDelegate;
   /** Read-only Catalog item lookup for the OPTIONAL SERVICE association. */
   catalogItem: AppointmentCatalogItemDelegate;
@@ -349,20 +360,33 @@ export class AppointmentService {
     const tenantId = this.requestContext.requireTenantId();
     await this.requirePermission(SCHEDULING_PERMISSIONS.read);
 
-    const [branches, memberships] = await Promise.all([
+    const [branches, memberships, assignments] = await Promise.all([
       this.prisma.branch.findMany({ where: { tenantId }, orderBy: { name: "asc" } }),
       this.prisma.tenantMembership.findMany({
         where: { tenantId, role: { code: "VETERINARIAN" } },
         orderBy: { id: "asc" },
         select: { id: true, userProfile: { select: { displayName: true } } },
       }),
+      this.prisma.membershipBranch.findMany({
+        where: { tenantId },
+        select: { membershipId: true, branchId: true },
+      }),
     ]);
 
     return {
-      branches: branches.map((branch) => ({ id: branch.id, name: branch.name })),
+      branches: branches.map((branch) => ({
+        id: branch.id,
+        name: branch.name,
+        isActive: branch.isActive ?? true,
+      })),
       professionals: memberships.map((membership) => ({
         membershipId: membership.id,
         displayName: membership.userProfile?.displayName ?? null,
+        // MB-001: where this professional can be booked (DEC-094 §5).
+        branchIds: assignments
+          .filter((assignment) => assignment.membershipId === membership.id)
+          .map((assignment) => assignment.branchId)
+          .sort(),
       })),
     };
   }

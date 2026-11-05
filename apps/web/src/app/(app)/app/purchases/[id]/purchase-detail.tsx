@@ -7,6 +7,7 @@ import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@newsaas/ui/components/ui/button";
 import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
+import { useWorkingBranches } from "@/lib/working-branches";
 import {
   Card,
   CardContent,
@@ -99,6 +100,7 @@ export function PurchaseDetail(): JSX.Element {
   const purchaseId = params.id;
   const queryClient = useQueryClient();
   const supplierNames = useSupplierNames();
+  const workingBranches = useWorkingBranches();
   const catalogItemNames = useCatalogItemNames();
   const [confirmAction, setConfirmAction] = useState<"cancel" | "receive" | null>(null);
 
@@ -208,7 +210,9 @@ export function PurchaseDetail(): JSX.Element {
 
       <ConfirmActionDialog
         open={confirmAction !== null}
-        onOpenChange={(open) => { if (!open && !transitionPending) setConfirmAction(null); }}
+        onOpenChange={(open) => {
+          if (!open && !transitionPending) setConfirmAction(null);
+        }}
         title={confirmAction === "receive" ? "Recibir compra" : "Cancelar borrador de compra"}
         description={
           confirmAction === "receive"
@@ -219,7 +223,9 @@ export function PurchaseDetail(): JSX.Element {
         confirmVariant={confirmAction === "receive" ? "default" : "destructive"}
         pending={transitionPending}
         pendingLabel="Procesando…"
-        errorMessage={transitionError === null ? undefined : userFacingPurchaseError(transitionError)}
+        errorMessage={
+          transitionError === null ? undefined : userFacingPurchaseError(transitionError)
+        }
         onConfirm={async () => {
           if (confirmAction === "receive") await receiveMutation.mutateAsync();
           if (confirmAction === "cancel") await cancelMutation.mutateAsync();
@@ -282,6 +288,13 @@ export function PurchaseDetail(): JSX.Element {
         <CardContent className="space-y-3 text-sm">
           <DetailRow label="Supplier" value={supplierNames.nameFor(purchase.supplierId)} />
           <DetailRow label="Status" value={PURCHASE_STATUS_LABELS[purchase.status]} />
+          <DetailRow
+            label="Branch"
+            value={
+              workingBranches.branches.find((branch) => branch.id === purchase.branchId)?.name ??
+              "Another branch"
+            }
+          />
           <DetailRow label="Reference" value={`#${shortId(purchase.id)}`} />
           <DetailRow label="Created" value={formatDate(purchase.createdAt)} />
           <DetailRow label="Updated" value={formatDate(purchase.updatedAt)} />

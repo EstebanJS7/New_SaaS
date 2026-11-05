@@ -298,6 +298,27 @@ export function buildKudeDocument(request: DteRequest): KudeBuildResult {
     { label: KUDE_LABELS.exchangeRate, value: operation?.dTiCam ?? "" },
     { label: KUDE_LABELS.transaction, value: operation?.dDesTipTra ?? "" },
   ];
+  // PAY-DET-001: the factura's sale condition, when the DE carries gCamCond.
+  const saleCondition = childValue(child(request.gDtipDE, "gCamCond")?.children, "dDCondOpe");
+  if (saleCondition !== undefined) {
+    general.splice(1, 0, { label: KUDE_LABELS.saleCondition, value: saleCondition });
+  }
+  // NCE-001: the note's own rows, printed only when the signed DE carries them
+  // (§26.4.6: "Motivo de la emisión", "Documento asociado CDC o preimpreso",
+  // "Tipo de documento asociado: FE o preimpreso").
+  const motive = childValue(child(request.gDtipDE, "gCamNCDE")?.children, "dDesMotEmi");
+  if (motive !== undefined) general.push({ label: KUDE_LABELS.motive, value: motive });
+  const associated = request.gCamDEAsoc?.[0];
+  const associatedCdc = childValue(associated, "dCdCDERef");
+  if (associatedCdc !== undefined) {
+    general.push({ label: KUDE_LABELS.associatedDocument, value: groupKudeCdc(associatedCdc) });
+    general.push({
+      label: KUDE_LABELS.associatedDocumentType,
+      value: associatedCdc.startsWith("01")
+        ? "FE"
+        : (childValue(associated, "dDesTipDocAso") ?? ""),
+    });
+  }
 
   const receptorRows: KudeRow[] = [
     {
@@ -321,7 +342,12 @@ export function buildKudeDocument(request: DteRequest): KudeBuildResult {
 
   const { totals, unreadableSubtotals } = buildTotals(request);
   const absences: KudeAbsence[] = [
-    ...GENERIC_ABSENCES,
+    // A DE that carries gCamCond prints its condition; a cash sale has no cuotas.
+    ...GENERIC_ABSENCES.filter(
+      (absence) =>
+        saleCondition === undefined ||
+        (absence.label !== KUDE_LABELS.saleCondition && absence.label !== KUDE_LABELS.installments)
+    ),
     ...(profile.shape === "autofactura" ? AUTOFACTURA_ABSENCES : []),
     ...(profile.shape === "remision" ? REMISION_ABSENCES : []),
     // A subtotal the DE carries but this renderer cannot add is named rather
@@ -366,18 +392,19 @@ export function buildKudeDocument(request: DteRequest): KudeBuildResult {
       cdcGrouped: groupKudeCdc(request.cdc),
     },
     footer: KUDE_FOOTER_LINES,
-    absences: profile.carriesMotive
-      ? [
-          ...absences,
-          {
-            label: KUDE_LABELS.motive,
-            reason:
-              "The motive is a gDtipDE member, and the mapper emits only the items, so the " +
-              "signed DE carries none of it. The model prints this row for the NCE and the NDE " +
-              "and not for the FE (§26.4.6).",
-          },
-        ]
-      : absences,
+    absences:
+      profile.carriesMotive && motive === undefined
+        ? [
+            ...absences,
+            {
+              label: KUDE_LABELS.motive,
+              reason:
+                "The motive is a gDtipDE member, and the mapper emits only the items, so the " +
+                "signed DE carries none of it. The model prints this row for the NCE and the NDE " +
+                "and not for the FE (§26.4.6).",
+            },
+          ]
+        : absences,
   };
 
   return { outcome: "BUILT", document };

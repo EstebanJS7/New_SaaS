@@ -16,6 +16,7 @@ import { BILLING_PERMISSIONS } from "../billing/billing.permissions.js";
 import { FISCAL_PERMISSIONS } from "../fiscal/fiscal.permissions.js";
 import { REPORTING_PERMISSIONS } from "../reporting/reporting.permissions.js";
 import { IMPORTS_PERMISSIONS } from "../imports/imports.permissions.js";
+import { BRANCH_PERMISSIONS } from "../branches/branches.permissions.js";
 import { PORTAL_ACCESS_PERMISSION } from "../portal/portal.constants.js";
 
 /**
@@ -78,6 +79,21 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "GET /memberships/me/permissions",
   "GET /memberships/:id",
   "POST /memberships/:id/role",
+  // ONB-001: the staff directory and the invitation lifecycle.
+  "GET /memberships/directory",
+  "POST /memberships/invitations",
+  "POST /memberships/:id/activation",
+  "POST /memberships/:id/suspend",
+  "POST /memberships/:id/reactivate",
+  // MB-001 (DEC-094): the branch registry and the staff assignment.
+  "GET /branches",
+  "POST /branches",
+  "PUT /branches/:id",
+  "POST /branches/:id/deactivate",
+  "POST /branches/:id/reactivate",
+  "PUT /memberships/:id/branches",
+  // MB-002: the caller's own working branches (authenticated-only).
+  "GET /memberships/me/branches",
   "GET /rbac/roles",
   "GET /rbac/permissions",
   "PUT /rbac/roles/:code/permissions",
@@ -183,7 +199,10 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   // EPIC-10 W2 — inventory stock ledger (signed adjustment + tenant reads)
   "GET /inventory/stock",
   "GET /inventory/stock/movements",
+  "GET /inventory/stock/branches",
   "POST /inventory/stock/adjustments",
+  // MB-003 (DEC-094 §10): stock transfers between branches.
+  "POST /inventory/stock/transfers",
   // EPIC-11 W2 — supplier registry (reads + create/update + deactivate command)
   "GET /suppliers",
   "POST /suppliers",
@@ -202,10 +221,15 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "GET /sales",
   "POST /sales/search",
   "POST /sales",
+  // UX-035 / TD-071: the draft a create attempt recorded, by its key.
+  "GET /sales/attempts/:key",
   "GET /sales/:id",
   "PUT /sales/:id",
   "POST /sales/:id/cancel",
   "POST /sales/:id/complete",
+  // SAL-REV-001 (DEC-089): the reversal of a COMPLETED sale and its read.
+  "POST /sales/:id/reverse",
+  "GET /sales/:id/reversal",
   // EPIC-12 POS-002 — cash register/session foundation (no PATCH, no DELETE)
   "GET /cash/registers",
   "POST /cash/registers",
@@ -215,6 +239,9 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   // which keeps this inventory a faithful transcription of the surface.
   "GET /cash/movements",
   "POST /cash/sessions",
+  // UX-035 / TD-073: what an open or a movement attempt recorded, by its key.
+  "GET /cash/sessions/attempts/:key",
+  "GET /cash/movements/attempts/:key",
   // EPIC-13 CASH-002 — standalone cash movement command (six non-sale kinds;
   // SALE is rejected by the request contract).
   "POST /cash/movements",
@@ -312,6 +339,7 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   // takes NO query at all, because it is a current-state view.
   "GET /reports/stock",
   "GET /reports/low-stock",
+  "GET /reports/branches",
   // EPIC-18 REP-006 — the two veterinary reports that need no due date: the
   // consultations CLOSED in the period (amendments counted separately, never as
   // extra consultations) and the patients REGISTERED in the period. Still reads
@@ -474,7 +502,9 @@ const CATALOG_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
 const INVENTORY_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "GET /inventory/stock": INVENTORY_PERMISSIONS.read,
   "GET /inventory/stock/movements": INVENTORY_PERMISSIONS.read,
+  "GET /inventory/stock/branches": INVENTORY_PERMISSIONS.read,
   "POST /inventory/stock/adjustments": INVENTORY_PERMISSIONS.adjust,
+  "POST /inventory/stock/transfers": INVENTORY_PERMISSIONS.transfer,
 };
 
 /**
@@ -520,7 +550,8 @@ const PURCHASES_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
  * `PATCH` — the lifecycle is server-owned, and `POST /sales/:id/cancel` and
  * `POST /sales/:id/complete` are the only status transitions — and NO delete
  * route: a draft drops a line through the update command and a settled sale is
- * immutable.
+ * immutable. SAL-REV-001 adds the third transition, `POST /sales/:id/reverse`
+ * (COMPLETED -> CANCELLED with compensations), under its own `sales.reverse`.
  */
 const SALES_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "GET /sales": SALES_PERMISSIONS.read,
@@ -530,6 +561,9 @@ const SALES_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "PUT /sales/:id": SALES_PERMISSIONS.update,
   "POST /sales/:id/cancel": SALES_PERMISSIONS.cancel,
   "POST /sales/:id/complete": SALES_PERMISSIONS.complete,
+  "POST /sales/:id/reverse": SALES_PERMISSIONS.reverse,
+  "GET /sales/:id/reversal": SALES_PERMISSIONS.read,
+  "GET /sales/attempts/:key": SALES_PERMISSIONS.read,
 };
 
 /**
@@ -550,6 +584,8 @@ const CASH_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "GET /cash/sessions": CASH_PERMISSIONS.read,
   "POST /cash/sessions": CASH_PERMISSIONS.openSession,
   "GET /cash/movements": CASH_PERMISSIONS.read,
+  "GET /cash/sessions/attempts/:key": CASH_PERMISSIONS.read,
+  "GET /cash/movements/attempts/:key": CASH_PERMISSIONS.read,
   "POST /cash/movements": CASH_PERMISSIONS.createMovement,
   "POST /cash/sessions/:id/close": CASH_PERMISSIONS.closeSession,
 };
@@ -612,6 +648,7 @@ const REPORTING_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "GET /reports/purchases": REPORTING_PERMISSIONS.read,
   "GET /reports/stock": REPORTING_PERMISSIONS.read,
   "GET /reports/low-stock": REPORTING_PERMISSIONS.read,
+  "GET /reports/branches": REPORTING_PERMISSIONS.read,
   // REP-006: the two period-shaped veterinary reports and the two DUE reports.
   // The due reports take a `horizonDays` instead of a period, and the permission
   // contract is identical — an aggregate of the tenant's own clinical records is
@@ -661,6 +698,16 @@ const IMPORTS_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "GET /imports/:id": IMPORTS_PERMISSIONS.read,
   "GET /imports/:id/summary": IMPORTS_PERMISSIONS.read,
 };
+
+/** MB-001 (DEC-094 §4): every branch route, and the assignment, need `branches.manage`. */
+const BRANCH_ROUTES: readonly string[] = [
+  "GET /branches",
+  "POST /branches",
+  "PUT /branches/:id",
+  "POST /branches/:id/deactivate",
+  "POST /branches/:id/reactivate",
+  "PUT /memberships/:id/branches",
+];
 
 describe("route-contract probe (deny-by-default)", () => {
   let booted: BootedTestApp;
@@ -1016,9 +1063,10 @@ describe("route-contract probe (deny-by-default)", () => {
     const readRoutes = Object.keys(REPORTING_PERMISSION_BY_ROUTE).filter(
       (route) => route !== exportRoute
     );
-    // Twelve reports, twelve read routes: the export is the thirteenth route on
-    // this surface and the only one that is not a read.
-    expect(readRoutes).toHaveLength(12);
+    // Twelve reports plus the MB-004 branch list, thirteen read routes: the
+    // export is the fourteenth route on this surface and the only one that is
+    // not a read.
+    expect(readRoutes).toHaveLength(13);
     for (const route of readRoutes) {
       const entry = inventory.find(
         (candidate) => `${candidate.method} ${candidate.path}` === route
@@ -1070,6 +1118,25 @@ describe("route-contract probe (deny-by-default)", () => {
       "POST /imports/:id/preview",
       "POST /imports/:id/commit",
     ]);
+  });
+
+  it("MB-002: the caller's own branches are an authenticated-only read", () => {
+    const entry = inventory.find(
+      (candidate) => candidate.method === "GET" && candidate.path === "/memberships/me/branches"
+    );
+    expect(entry?.permissions === undefined ? null : [...entry.permissions]).toEqual([]);
+  });
+
+  it("MB-001: every branch route declares exactly branches.manage", () => {
+    const actual = new Map(
+      inventory.map((entry) => [
+        `${entry.method} ${entry.path}`,
+        entry.permissions === undefined ? [] : [...entry.permissions],
+      ])
+    );
+    for (const route of BRANCH_ROUTES) {
+      expect(actual.get(route), route).toEqual([BRANCH_PERMISSIONS.manage]);
+    }
   });
 
   it("buckets EVERY route as public-exempt, portal-surface, or declared — violations are named", () => {

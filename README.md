@@ -214,6 +214,7 @@ docs/                 Vault de documentación (producto, roadmap, stories,
                       gobernanza, plantillas)
 openspec/             Propuestas SDD activas, specs y cambios archivados
 infra/scripts/        Scripts de preflight (bash y PowerShell)
+infra/deploy/         Despliegue en VPS: Dockerfile, compose de producción, Caddy
 docker-compose.yml    Servicios locales (PostgreSQL y Redis)
 AGENTS.md             Reglas de trabajo para agentes y contribuyentes
 ```

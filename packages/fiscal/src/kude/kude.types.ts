@@ -271,6 +271,8 @@ export const KUDE_LABELS = Object.freeze({
   exchangeRate: "Tipo de Cambio:",
   transaction: "Tipo de transacción:",
   motive: "Motivo de la emisión:",
+  associatedDocument: "Documento asociado CDC:",
+  associatedDocumentType: "Tipo de documento asociado:",
   receptorIdentity: "RUC/Documento de Identidad N°:",
   receptorName: "Nombre o Razón Social:",
   receptorAddress: "Dirección:",

@@ -210,6 +210,31 @@ describe("the reports proxy · the query allowlist", () => {
     expect(fetchUrl(2)).toBe("http://localhost:3001/reports/low-stock");
   });
 
+  it("MB-004: forwards a branch on the reports that take one, and serves the branch list", async () => {
+    cookiesMock.mockResolvedValue(cookieStore({ name: STAFF_SESSION_COOKIE, value: "token-123" }));
+    fetchMock.mockImplementation(() => Promise.resolve(upstreamJson(LOW_STOCK_BODY)));
+    const branchId = "22222222-2222-4222-8222-222222222222";
+
+    await callRoute(["stock"], mockNextRequest({ search: `preset=today&branchId=${branchId}` }));
+    expect(fetchUrl(0)).toBe(
+      `http://localhost:3001/reports/stock?preset=today&branchId=${branchId}`
+    );
+    await callRoute(["low-stock"], mockNextRequest({ search: `branchId=${branchId}` }));
+    expect(fetchUrl(1)).toBe(`http://localhost:3001/reports/low-stock?branchId=${branchId}`);
+    await callRoute(["branches"]);
+    expect(fetchUrl(2)).toBe("http://localhost:3001/reports/branches");
+
+    // Refused locally: a branch on a veterinary report, any query on the list.
+    const vet = await callRoute(
+      ["consultations"],
+      mockNextRequest({ search: `preset=today&branchId=${branchId}` })
+    );
+    expect(vet.status).toBe(400);
+    const list = await callRoute(["branches"], mockNextRequest({ search: "x=1" }));
+    expect(list.status).toBe(400);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it("refuses a period key on a due report and a horizon on a period report", async () => {
     cookiesMock.mockResolvedValue(cookieStore({ name: STAFF_SESSION_COOKIE, value: "token-123" }));
 
@@ -233,9 +258,10 @@ describe("the reports proxy · the query allowlist", () => {
 
     const response = await callRoute(["low-stock"], mockNextRequest({ search: "preset=today" }));
 
+    // MB-004: the current-state report takes a branch and nothing else.
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
-      error: { code: "VALIDATION_FAILED", message: "This report takes no query parameters." },
+      error: { code: "VALIDATION_FAILED", message: "A report query accepts only: branchId." },
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });

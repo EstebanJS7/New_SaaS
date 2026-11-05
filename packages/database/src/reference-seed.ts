@@ -206,6 +206,14 @@ export const PERMISSION_SEEDS = [
   // completing a sale writes money, stock and cash, so `OWNER`/`ADMIN`/`CASHIER`
   // hold it and no other role does.
   { key: "sales.complete", name: "Complete sales" },
+  // SAL-REV-001 (DEC-089): reversing a COMPLETED sale — compensating stock, cash
+  // and payment refunds. Held by OWNER and ADMIN only: a cashier completes sales
+  // but does not undo them.
+  { key: "sales.reverse", name: "Reverse completed sales" },
+  // MB-001 (DEC-094 §4): creating, editing and deactivating branches and
+  // assigning staff to them. Owning roles only: a branch is where money and
+  // stock live from MB-002 on.
+  { key: "branches.manage", name: "Manage branches and staff assignment" },
   // EPIC-13 CASH-002 adds `cash.movement.create` (DEC-034): the standalone
   // non-sale movement command writes money into the immutable cash ledger, so it
   // follows the existing cash write shape — `OWNER`/`ADMIN`/`CASHIER` hold it,
@@ -319,6 +327,8 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "cash.register.create",
     "cash.session.open",
     "sales.complete",
+    "sales.reverse",
+    "branches.manage",
     "cash.movement.create",
     "billing.read",
     "fiscal.read",
@@ -392,6 +402,8 @@ export const ROLE_PERMISSION_MATRIX: Record<RoleCode, readonly PermissionKey[]> 
     "cash.register.create",
     "cash.session.open",
     "sales.complete",
+    "sales.reverse",
+    "branches.manage",
     "cash.movement.create",
     "billing.read",
     "fiscal.read",

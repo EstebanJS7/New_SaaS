@@ -8,6 +8,7 @@ import {
   ApiRequestError,
   createCashRegister,
   createMovement,
+  getSessionAttempt,
   isCashNotEntitled,
   listCashRegisters,
   listCashSessions,
@@ -16,14 +17,18 @@ import {
   type CashSession,
   type CloseCashSessionInput,
   type CreateCashMovementInput,
+  type OpenCashSessionInput,
 } from "./cash-api";
 import { ClosePanel } from "./close-panel";
 import { MovementPanel } from "./movement-panel";
 import { RegisterPanel } from "./register-panel";
 import { SessionPanel, type CashSessionFilter } from "./session-panel";
 import { Button } from "@newsaas/ui/components/ui/button";
+import { forgetAttempt, newAttemptKey, rememberAttempt } from "@/lib/pending-attempts";
+import { PendingCashAttempts } from "./pending-cash-attempts";
 import { useCashAttemptExit } from "./cash-attempt-exit";
 import { DEFAULT_CLINIC_TIME_ZONE } from "@/lib/es-py-format";
+import { useWorkingBranches } from "@/lib/working-branches";
 
 type CashCommandKind = "register" | "open" | "movement" | "close";
 const uuid = (value: unknown): value is string =>
@@ -69,12 +74,17 @@ function sessionReceipt(value: CashSession | null | undefined): value is CashSes
  * capability problem and the backend remains the authority either way.
  */
 export function CashSurface(): JSX.Element {
+  // MB-002: where the person works, for the new-drawer form.
+  const workingBranches = useWorkingBranches();
   const gate = useRef(false);
   const [commandPending, setCommandPending] = useState(false);
   const uncertainRef = useRef<CashCommandKind | null>(null);
   const [uncertain, setUncertain] = useState<CashCommandKind | null>(null);
   const movementAttempt = useRef<{ body: CreateCashMovementInput; key: string } | null>(null);
   const closeTarget = useRef<string | null>(null);
+  // UX-035 / TD-073: the open attempt and its key, kept for lookup and retry.
+  const openAttempt = useRef<{ input: OpenCashSessionInput; key: string } | null>(null);
+  const [openAbsent, setOpenAbsent] = useState(false);
   const [movementRevision, setMovementRevision] = useState(0);
   const [recovering, setRecovering] = useState(false);
   const [recoveryError, setRecoveryError] = useState(false);
@@ -146,14 +156,16 @@ export function CashSurface(): JSX.Element {
   });
 
   const openSessionMutation = useMutation({
-    mutationFn: async (input: Parameters<typeof openCashSession>[0]) => {
-      const row = await openCashSession(input);
+    mutationFn: async (attempt: { input: OpenCashSessionInput; key: string }) => {
+      const input = attempt.input;
+      const row = await openCashSession(input, { idempotencyKey: attempt.key });
       if (!sessionReceipt(row) || row.registerId !== input.registerId || row.status !== "OPEN")
         throw new Error("Unconfirmed opening receipt");
       return row;
     },
     retry: false,
-    onSuccess: (session) => {
+    onSuccess: (session, attempt) => {
+      forgetAttempt(attempt.key);
       // The session the API just opened is the one the operator now operates.
       setSelectedSession(session);
       void queryClient.invalidateQueries({ queryKey: ["cash", "sessions"] });
@@ -216,10 +228,57 @@ export function CashSurface(): JSX.Element {
           createMovementMutation.mutateAsync({ body: attempt.body, idempotencyKey: attempt.key }),
         true
       );
+      forgetAttempt(attempt.key);
       movementAttempt.current = null;
       setMovementRevision((value) => value + 1);
     } catch {
       /* Preserve the same frozen attempt and safe mutation error. */
+    } finally {
+      setRecovering(false);
+    }
+  }
+  /**
+   * UX-035 / TD-073: asks the API, by the attempt's key, whether the open was
+   * recorded. Found: the session is selected as if the answer had arrived.
+   * Absent: nothing was recorded and the same-key retry below is safe.
+   */
+  async function readOpenState(): Promise<void> {
+    const attempt = openAttempt.current;
+    if (!attempt || gate.current || uncertainRef.current !== "open") return;
+    gate.current = true;
+    setRecovering(true);
+    setRecoveryError(false);
+    try {
+      const row = await getSessionAttempt(attempt.key);
+      if (row === null) {
+        setOpenAbsent(true);
+        return;
+      }
+      if (!sessionReceipt(row)) throw new Error("Unconfirmed session state");
+      forgetAttempt(attempt.key);
+      setSelectedSession(row);
+      openSessionMutation.reset();
+      openAttempt.current = null;
+      setOpenAbsent(false);
+      markUncertain(null);
+      void queryClient.invalidateQueries({ queryKey: ["cash", "sessions"] });
+    } catch {
+      setRecoveryError(true);
+    } finally {
+      gate.current = false;
+      setRecovering(false);
+    }
+  }
+  async function retryOpen(): Promise<void> {
+    const attempt = openAttempt.current;
+    if (!attempt || gate.current || uncertainRef.current !== "open") return;
+    setRecovering(true);
+    setOpenAbsent(false);
+    try {
+      await execute("open", () => openSessionMutation.mutateAsync(attempt), true);
+      openAttempt.current = null;
+    } catch {
+      /* The same attempt and key stay for another lookup or retry. */
     } finally {
       setRecovering(false);
     }
@@ -280,6 +339,12 @@ export function CashSurface(): JSX.Element {
       </div>
 
       <p className="text-xs text-muted-foreground">Fechas y horas en {DEFAULT_CLINIC_TIME_ZONE}.</p>
+      <PendingCashAttempts
+        onSessionFound={(session) => {
+          if (!gate.current && uncertainRef.current === null) setSelectedSession(session);
+          void queryClient.invalidateQueries({ queryKey: ["cash"] });
+        }}
+      />
       {uncertain !== null && (
         <section
           aria-label="Intento de Caja sin confirmar"
@@ -299,7 +364,32 @@ export function CashSurface(): JSX.Element {
               Consultar estado de la sesión
             </Button>
           )}
-          {(uncertain === "open" || uncertain === "register") && (
+          {uncertain === "open" && (
+            <div className="space-y-2">
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" disabled={pending} onClick={() => void readOpenState()}>
+                  Consultar si se abrió
+                </Button>
+                {openAbsent && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={pending}
+                    onClick={() => void retryOpen()}
+                  >
+                    Reintentar la misma apertura
+                  </Button>
+                )}
+              </div>
+              {openAbsent && (
+                <p data-testid="open-attempt-absent">
+                  El servidor no registró esa apertura. El reintento usa la misma clave, así que no
+                  puede abrir dos sesiones.
+                </p>
+              )}
+            </div>
+          )}
+          {uncertain === "register" && (
             <p>
               No recibimos un identificador confirmado. No vuelvas a enviar la creación; revisá su
               resultado antes de iniciar otra operación.
@@ -326,6 +416,7 @@ export function CashSurface(): JSX.Element {
         isCreating={createRegisterMutation.isPending}
         createError={createRegisterMutation.error}
         created={createRegisterMutation.data ?? null}
+        branches={workingBranches.branches}
       />
 
       <SessionPanel
@@ -340,7 +431,20 @@ export function CashSurface(): JSX.Element {
         registers={registersQuery.data ?? []}
         registersLoading={registersQuery.isLoading}
         onOpen={async (input) => {
-          await execute("open", () => openSessionMutation.mutateAsync(input));
+          const attempt = { input: Object.freeze({ ...input }), key: newAttemptKey() };
+          openAttempt.current = attempt;
+          setOpenAbsent(false);
+          rememberAttempt("cash.session.open", attempt.key);
+          try {
+            await execute("open", () => openSessionMutation.mutateAsync(attempt));
+            openAttempt.current = null;
+          } catch (error) {
+            if (!uncertainFailure(error)) {
+              forgetAttempt(attempt.key);
+              openAttempt.current = null;
+            }
+            throw error;
+          }
         }}
         isOpening={openSessionMutation.isPending}
         openError={openSessionMutation.error}
@@ -369,10 +473,17 @@ export function CashSurface(): JSX.Element {
         isLoading={movementsQuery.isLoading}
         loadError={movementsQuery.error}
         onCreate={async (body, idempotencyKey) => {
-          await execute("movement", async () => {
-            movementAttempt.current = { body: Object.freeze({ ...body }), key: idempotencyKey };
-            return createMovementMutation.mutateAsync({ body, idempotencyKey });
-          });
+          rememberAttempt("cash.movement.create", idempotencyKey);
+          try {
+            await execute("movement", async () => {
+              movementAttempt.current = { body: Object.freeze({ ...body }), key: idempotencyKey };
+              return createMovementMutation.mutateAsync({ body, idempotencyKey });
+            });
+          } catch (error) {
+            if (!uncertainFailure(error)) forgetAttempt(idempotencyKey);
+            throw error;
+          }
+          forgetAttempt(idempotencyKey);
           movementAttempt.current = null;
         }}
         isCreating={createMovementMutation.isPending}

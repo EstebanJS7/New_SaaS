@@ -1,5 +1,5 @@
 import { Inject, Injectable } from "@nestjs/common";
-import type { Prisma } from "@newsaas/database";
+import { Prisma } from "@newsaas/database";
 // Value import (not `import type`): `PrismaService` is the DI token.
 import { PrismaService } from "@newsaas/database";
 import { DomainError } from "@newsaas/shared";
@@ -216,6 +216,8 @@ export interface ReportStockBalanceRow {
 export interface ReportStockMovementRow {
   readonly catalogItemId: string;
   readonly quantity: Prisma.Decimal | string;
+  /** MB-003: lets the clinic-wide flow leave transfers out (they net to zero). */
+  readonly type?: string;
 }
 
 /**
@@ -412,7 +414,25 @@ export interface ReportingClinicalDewormingDelegate {
   findMany(args: Prisma.ClinicalDewormingFindManyArgs): Promise<ReportDueDewormingReadRow[]>;
 }
 
+/** MB-004: the clinic's branches (id, name, state) — the report filter's domain. */
+export interface ReportBranchRow {
+  readonly id: string;
+  readonly name: string;
+  readonly isActive: boolean;
+}
+
+export interface ReportingBranchDelegate {
+  findMany(args: Prisma.BranchFindManyArgs): Promise<ReportBranchRow[]>;
+}
+
+/** MB-004: a branch's drawers, so the cash reports can be narrowed to it. */
+export interface ReportingCashRegisterDelegate {
+  findMany(args: Prisma.CashRegisterFindManyArgs): Promise<{ id: string }[]>;
+}
+
 export interface ReportingReadPrisma {
+  readonly branch: ReportingBranchDelegate;
+  readonly cashRegister: ReportingCashRegisterDelegate;
   readonly sale: ReportingSaleDelegate;
   readonly catalogItem: ReportingCatalogItemDelegate;
   readonly cashSession: ReportingCashSessionDelegate;
@@ -691,8 +711,12 @@ export class ReportRepository {
    * the period is over the limit without loading a second one. Nothing is
    * truncated — an over-limit period throws before any caller sees a row.
    */
-  async listCompletedSales(fromInstant: Date, toInstant: Date): Promise<ReportSaleRow[]> {
-    const rows = await this.readCompletedSales(fromInstant, toInstant, { lines: true });
+  async listCompletedSales(
+    fromInstant: Date,
+    toInstant: Date,
+    branchId?: string
+  ): Promise<ReportSaleRow[]> {
+    const rows = await this.readCompletedSales(fromInstant, toInstant, { lines: true }, branchId);
     return rows.map((row) => ({
       id: row.id,
       currency: row.currency,
@@ -716,9 +740,15 @@ export class ReportRepository {
    */
   async listCompletedSalesWithPayments(
     fromInstant: Date,
-    toInstant: Date
+    toInstant: Date,
+    branchId?: string
   ): Promise<ReportSaleWithPaymentsRow[]> {
-    const rows = await this.readCompletedSales(fromInstant, toInstant, { payments: true });
+    const rows = await this.readCompletedSales(
+      fromInstant,
+      toInstant,
+      { payments: true },
+      branchId
+    );
     return rows.map((row) => ({
       id: row.id,
       currency: row.currency,
@@ -754,13 +784,16 @@ export class ReportRepository {
   private async readCompletedSales(
     fromInstant: Date,
     toInstant: Date,
-    include: { lines: true } | { payments: true }
+    include: { lines: true } | { payments: true },
+    branchId?: string
   ): Promise<ReportSaleReadRow[]> {
     const tenantId = this.requestContext.requireTenantId();
     const rows = await this.prisma.sale.findMany({
       where: {
         tenantId,
         status: "COMPLETED",
+        // MB-004: a sale belongs to the branch it was created in (MB-002).
+        ...(branchId === undefined ? {} : { branchId }),
         completedAt: { gte: fromInstant, lt: toInstant },
       },
       include,
@@ -806,15 +839,63 @@ export class ReportRepository {
     return found !== null;
   }
 
+  /**
+   * MB-004: every branch of the caller's clinic, inactive ones included — a
+   * closed branch still has history to report on. Ordered by name.
+   */
+  async listBranches(): Promise<ReportBranchRow[]> {
+    const tenantId = this.requestContext.requireTenantId();
+    const rows = await this.prisma.branch.findMany({
+      where: { tenantId },
+      select: { id: true, name: true, isActive: true },
+    });
+    return rows
+      .map((row) => ({ id: row.id, name: row.name, isActive: row.isActive }))
+      .sort((left, right) => left.name.localeCompare(right.name, "es"));
+  }
+
+  /**
+   * MB-004: one branch of the caller's clinic, or `null`. The tenant predicate
+   * is applied HERE, so another clinic's id answers exactly like an unknown one.
+   */
+  async findBranch(branchId: string): Promise<ReportBranchRow | null> {
+    const tenantId = this.requestContext.requireTenantId();
+    const rows = await this.prisma.branch.findMany({
+      where: { tenantId, id: { in: [branchId] } },
+      select: { id: true, name: true, isActive: true },
+    });
+    const row = rows[0];
+    return row === undefined ? null : { id: row.id, name: row.name, isActive: row.isActive };
+  }
+
+  /**
+   * MB-004: the drawers of one branch, or `undefined` for «Todas». A cash
+   * session and a cash movement carry their register, never a branch, so the
+   * cash reports narrow by the branch's register ids (a handful per branch).
+   */
+  private async registerIdsOf(branchId: string | undefined): Promise<string[] | undefined> {
+    if (branchId === undefined) return undefined;
+    const tenantId = this.requestContext.requireTenantId();
+    const registers = await this.prisma.cashRegister.findMany({
+      where: { tenantId, branchId },
+      select: { id: true },
+    });
+    return registers.map((register) => register.id);
+  }
+
   async listClosedCashSessions(
     fromInstant: Date,
-    toInstant: Date
+    toInstant: Date,
+    branchId?: string
   ): Promise<ReportCashSessionRow[]> {
     const tenantId = this.requestContext.requireTenantId();
+    const registerIds = await this.registerIdsOf(branchId);
+    if (registerIds?.length === 0) return [];
     const rows = await this.prisma.cashSession.findMany({
       where: {
         tenantId,
         status: "CLOSED",
+        ...(registerIds === undefined ? {} : { registerId: { in: registerIds } }),
         closedAt: { gte: fromInstant, lt: toInstant },
       },
       orderBy: [{ closedAt: "asc" }, { id: "asc" }],
@@ -836,10 +917,20 @@ export class ReportRepository {
    * different fact and never dates it: a movement recorded at 23:59 belongs to
    * that day even if its drawer closes the next morning.
    */
-  async listCashMovements(fromInstant: Date, toInstant: Date): Promise<ReportCashMovementRow[]> {
+  async listCashMovements(
+    fromInstant: Date,
+    toInstant: Date,
+    branchId?: string
+  ): Promise<ReportCashMovementRow[]> {
     const tenantId = this.requestContext.requireTenantId();
+    const registerIds = await this.registerIdsOf(branchId);
+    if (registerIds?.length === 0) return [];
     const rows = await this.prisma.cashMovement.findMany({
-      where: { tenantId, createdAt: { gte: fromInstant, lt: toInstant } },
+      where: {
+        tenantId,
+        ...(registerIds === undefined ? {} : { registerId: { in: registerIds } }),
+        createdAt: { gte: fromInstant, lt: toInstant },
+      },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       take: REPORT_CASH_MOVEMENT_ROW_LIMIT + 1,
     });
@@ -859,12 +950,18 @@ export class ReportRepository {
    * business instant of the receive transition ([[DEC-064]]), so `createdAt` is
    * never a substitute for it.
    */
-  async listReceivedPurchases(fromInstant: Date, toInstant: Date): Promise<ReportPurchaseRow[]> {
+  async listReceivedPurchases(
+    fromInstant: Date,
+    toInstant: Date,
+    branchId?: string
+  ): Promise<ReportPurchaseRow[]> {
     const tenantId = this.requestContext.requireTenantId();
     const rows = await this.prisma.purchase.findMany({
       where: {
         tenantId,
         status: "RECEIVED",
+        // MB-004: the branch the purchase was received into (MB-003).
+        ...(branchId === undefined ? {} : { branchId }),
         receivedAt: { gte: fromInstant, lt: toInstant },
       },
       include: { lines: true },
@@ -910,18 +1007,30 @@ export class ReportRepository {
    * inventory that would need more rows REFUSES rather than returning a partial
    * snapshot that looks complete.
    */
-  async listStockBalances(): Promise<ReportStockBalanceRow[]> {
+  async listStockBalances(branchId?: string): Promise<ReportStockBalanceRow[]> {
     const tenantId = this.requestContext.requireTenantId();
     const rows = await this.prisma.stockBalance.findMany({
-      where: { tenantId },
+      where: { tenantId, ...(branchId === undefined ? {} : { branchId }) },
       orderBy: [{ catalogItemId: "asc" }],
       take: REPORT_STOCK_BALANCE_ROW_LIMIT + 1,
     });
 
+    // The cap counts stored rows — one per (item, branch) since MB-003 — so a
+    // clinic with several branches reaches it sooner, and still refuses
+    // instead of answering with a partial snapshot.
     if (rows.length > REPORT_STOCK_BALANCE_ROW_LIMIT) {
       throw new DomainError("VALIDATION_FAILED", REPORT_STOCK_BALANCE_ROW_LIMIT_EXCEEDED_MESSAGE);
     }
-    return rows;
+
+    // MB-003/MB-004 (DEC-094 §10-11): one row per item. Narrowed to a branch
+    // there is one stored row per item already; for «Todas» the per-branch rows
+    // are summed, so the report answers for the whole clinic.
+    const byItem = new Map<string, Prisma.Decimal>();
+    for (const row of rows) {
+      const current = byItem.get(row.catalogItemId) ?? new Prisma.Decimal(0);
+      byItem.set(row.catalogItemId, current.plus(new Prisma.Decimal(row.quantity)));
+    }
+    return [...byItem].map(([catalogItemId, quantity]) => ({ catalogItemId, quantity }));
   }
 
   /**
@@ -933,10 +1042,18 @@ export class ReportRepository {
    * `resolveReportPeriod` and nowhere else, and the range is half-open so two
    * consecutive periods partition without counting a boundary row twice.
    */
-  async listStockMovements(fromInstant: Date, toInstant: Date): Promise<ReportStockMovementRow[]> {
+  async listStockMovements(
+    fromInstant: Date,
+    toInstant: Date,
+    branchId?: string
+  ): Promise<ReportStockMovementRow[]> {
     const tenantId = this.requestContext.requireTenantId();
     const rows = await this.prisma.stockMovement.findMany({
-      where: { tenantId, createdAt: { gte: fromInstant, lt: toInstant } },
+      where: {
+        tenantId,
+        ...(branchId === undefined ? {} : { branchId }),
+        createdAt: { gte: fromInstant, lt: toInstant },
+      },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       take: REPORT_STOCK_MOVEMENT_ROW_LIMIT + 1,
     });

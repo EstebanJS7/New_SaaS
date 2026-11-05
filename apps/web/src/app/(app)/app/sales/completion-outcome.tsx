@@ -83,13 +83,13 @@ export function completionFailureCopy(failure: SaleCompletionFailure): Completio
       return {
         title: "Se necesita una sesión de caja abierta",
         description:
-          "No hay una sesión de caja abierta para el pago en efectivo. Abrí una sesión antes de volver a intentar.",
+          "No hay una sesión de caja abierta en la sucursal de esta venta para el pago en efectivo. Abrí una en una caja de esa sucursal antes de volver a intentar.",
       };
     case "ambiguous-cash-session":
       return {
         title: "Hay más de una sesión de caja abierta",
         description:
-          "El pago en efectivo no puede asociarse a una sola caja. Cerrá las sesiones adicionales antes de volver a intentar.",
+          "La sucursal de esta venta tiene más de una caja abierta: el pago en efectivo no puede asociarse a una sola. Cerrá las sesiones adicionales antes de volver a intentar.",
       };
     case "insufficient-stock":
       return {

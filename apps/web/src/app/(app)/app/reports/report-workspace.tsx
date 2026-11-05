@@ -4,13 +4,14 @@ import type { JSX } from "react";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@newsaas/ui/components/ui/button";
-import type { ReportCode } from "@/app/api/reports/report-codes";
+import { reportAcceptsBranch, type ReportCode } from "@/app/api/reports/report-codes";
 import { reportDefinition } from "./report-catalog";
 import { ReportEmptyState } from "./report-empty-state";
 import { ReportTable } from "./report-table";
 import {
   defaultSelectionFor,
   fetchReport,
+  fetchReportBranches,
   isReportAccessDenied,
   isReportPeriodPreset,
   REPORT_HORIZON_DEFAULT_DAYS,
@@ -30,6 +31,9 @@ export const REPORTS_EXPORT_PERMISSION = "reports.export";
 
 /** The value the period select uses for "neither preset": a custom range. */
 const CUSTOM_RANGE_OPTION = "custom";
+
+/** MB-004: the branch filter's «all branches» option — no `branchId` is sent. */
+const ALL_BRANCHES_OPTION = "";
 
 const controlClassName =
   "h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
@@ -83,12 +87,28 @@ export function ReportWorkspace({ reportCode, permissions }: ReportWorkspaceProp
   const [rangeTo, setRangeTo] = useState("");
   const [horizonInput, setHorizonInput] = useState(String(REPORT_HORIZON_DEFAULT_DAYS));
   const [controlNotice, setControlNotice] = useState<string | null>(null);
+  const [branchChoice, setBranchChoice] = useState(ALL_BRANCHES_OPTION);
+
+  // MB-004 (DEC-094 §11): the branch filter, offered only on the reports that
+  // take one and only when the clinic has more than one branch. «All branches»
+  // is the default, so nobody's numbers change unless they ask.
+  const acceptsBranch = reportAcceptsBranch(reportCode);
+  const branchesQuery = useQuery({
+    queryKey: ["reports", "branches"],
+    queryFn: fetchReportBranches,
+    retry: false,
+    enabled: acceptsBranch,
+    staleTime: 60_000,
+  });
+  const branchOptions = branchesQuery.data ?? [];
+  const showBranchFilter = acceptsBranch && branchOptions.length > 1;
+  const branchId = showBranchFilter && branchChoice !== ALL_BRANCHES_OPTION ? branchChoice : null;
 
   const query = useQuery({
     // Keyed by the CODE and the exact query string: two periods are two answers,
     // and the export action below uses the same string.
-    queryKey: ["reports", reportCode, reportQueryString(reportCode, selection)],
-    queryFn: () => fetchReport(reportCode, selection),
+    queryKey: ["reports", reportCode, reportQueryString(reportCode, selection, branchId)],
+    queryFn: () => fetchReport(reportCode, selection, branchId),
     retry: false,
   });
 
@@ -234,9 +254,32 @@ export function ReportWorkspace({ reportCode, permissions }: ReportWorkspaceProp
           </div>
         )}
 
+        {showBranchFilter && (
+          <div className="space-y-2">
+            <label htmlFor="report-branch" className="text-sm font-medium">
+              Branch
+            </label>
+            <select
+              id="report-branch"
+              className={controlClassName}
+              value={branchChoice}
+              onChange={(event) => setBranchChoice(event.target.value)}
+            >
+              <option value={ALL_BRANCHES_OPTION}>All branches</option>
+              {branchOptions.map((branch) => (
+                <option key={branch.id} value={branch.id}>
+                  {branch.isActive ? branch.name : `${branch.name} (inactive)`}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
         {definition.queryShape === "none" && (
           <p data-testid="report-no-query" className="text-sm text-muted-foreground">
-            This report is a current-state view: it takes no period and no other parameter.
+            {showBranchFilter
+              ? "This report is a current-state view: it takes no period."
+              : "This report is a current-state view: it takes no period and no other parameter."}
           </p>
         )}
 
@@ -248,7 +291,7 @@ export function ReportWorkspace({ reportCode, permissions }: ReportWorkspaceProp
               `download` attribute is deliberately NOT set — it would override the
               API's filename with one derived from the URL.
             */}
-            <a data-testid="report-export" href={reportExportPath(reportCode, selection)}>
+            <a data-testid="report-export" href={reportExportPath(reportCode, selection, branchId)}>
               Export CSV
             </a>
           </Button>

@@ -162,6 +162,17 @@ describe("portal availability union read (DEC-007 A2a)", () => {
     });
     vetA2 = seedVet(tenantA, "A2");
     vetB = seedVet(tenantB, "B1");
+    // MB-001 (DEC-094 §8): every professional works at every branch of its
+    // clinic, as the backfill leaves existing data.
+    for (const [tenantId, membershipId, branchId] of [
+      [tenantA, vetA1, branchA],
+      [tenantA, vetA1, branchA2],
+      [tenantA, vetA2, branchA],
+      [tenantA, vetA2, branchA2],
+      [tenantB, vetB, branchB],
+    ] as const) {
+      prisma.membershipBranch.create({ data: { tenantId, membershipId, branchId } });
+    }
 
     // STAFF half of the write-path agreement test: an actor that holds only
     // `scheduling.appointment.manage` on tenant A, plus the anchors a staff

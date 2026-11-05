@@ -51,6 +51,8 @@ export interface SaleRow {
    * by the completion transaction and `null` while `DRAFT` and for `CANCELLED`.
    */
   completedAt: Date | null;
+  /** MB-002 (DEC-094 §9): where the sale happens. */
+  branchId: string;
   lines: SaleLineRow[];
   createdAt: Date;
   updatedAt: Date;
@@ -82,6 +84,8 @@ export interface SaleLineWriteData {
 export interface SaleCreateData {
   readonly customerId?: string | null;
   readonly currency: string;
+  /** MB-002: resolved server-side from the caller's working branches. */
+  readonly branchId: string;
   readonly lines: readonly SaleLineWriteData[];
 }
 
@@ -129,6 +133,7 @@ export interface SaleDelegate {
     data: {
       customerId?: string | null;
       currency: string;
+      branchId: string;
       tenantId: string;
       lines: { create: readonly SaleLineWriteData[] };
     };
@@ -247,6 +252,23 @@ export interface PaymentRow {
 export interface PaymentWriteData {
   readonly method: PaymentMethodValue;
   readonly amount: string;
+  /**
+   * PAY-DET-001 / DEC-091: the detail SIFEN's gPaConEIni needs. Validated per
+   * method by the request contract; the migration's INSERT guard requires it.
+   */
+  readonly detail?: PaymentDetailData;
+}
+
+/** PAY-DET-001: the payment columns a method may carry (all others stay NULL). */
+export interface PaymentDetailData {
+  readonly cardType?: "CREDIT" | "DEBIT";
+  readonly cardBrand?:
+    "VISA" | "MASTERCARD" | "AMERICAN_EXPRESS" | "MAESTRO" | "PANAL" | "CABAL" | "OTHER";
+  readonly cardBrandName?: string;
+  readonly qrKind?: "WALLET" | "BANK_APP";
+  readonly checkNumber?: string;
+  readonly checkBank?: string;
+  readonly otherDescription?: string;
 }
 
 /**
@@ -257,7 +279,12 @@ export interface PaymentWriteData {
  */
 export interface PaymentDelegate {
   create: (args: {
-    data: { tenantId: string; saleId: string; method: PaymentMethodValue; amount: string };
+    data: {
+      tenantId: string;
+      saleId: string;
+      method: PaymentMethodValue;
+      amount: string;
+    } & PaymentDetailData;
   }) => Promise<PaymentRow>;
   findMany: (args: {
     where: { tenantId: string; saleId: string };
@@ -430,6 +457,7 @@ export class SaleRepository {
       data: {
         customerId: data.customerId ?? null,
         currency: data.currency,
+        branchId: data.branchId,
         tenantId,
         lines: {
           create: data.lines.map((line) => ({
@@ -634,7 +662,13 @@ export class SaleRepository {
     for (const payment of payments) {
       created.push(
         await client.payment.create({
-          data: { tenantId, saleId, method: payment.method, amount: payment.amount },
+          data: {
+            tenantId,
+            saleId,
+            method: payment.method,
+            amount: payment.amount,
+            ...(payment.detail ?? {}),
+          },
         })
       );
     }

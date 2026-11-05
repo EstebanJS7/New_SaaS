@@ -32,6 +32,8 @@ export interface FiscalDocumentRow {
   id: string;
   tenantId: string;
   invoiceId: string;
+  /** NCE-001: the credit note this document carries; null for the invoice's own FE. */
+  creditNoteId?: string | null;
   provider: string;
   status: FiscalDocumentStatus;
   attemptCount: number;
@@ -55,12 +57,18 @@ interface FiscalWhere {
   id?: string;
   tenantId: string;
   invoiceId?: string;
+  creditNoteId?: null;
   status?: FiscalDocumentStatus | { in: readonly FiscalDocumentStatus[] } | { not: "CANCELLED" };
 }
 export interface FiscalDocumentReadTx {
   fiscalDocument: {
     findFirst(args: {
-      where: { tenantId: string; invoiceId: string; status: { not: "CANCELLED" } };
+      where: {
+        tenantId: string;
+        invoiceId: string;
+        creditNoteId: null;
+        status: { not: "CANCELLED" };
+      };
     }): Promise<{ id: string } | null>;
   };
 }
@@ -176,7 +184,13 @@ export class FiscalRepository {
     tx: FiscalRepositoryTx
   ): Promise<FiscalDocumentRow | null> {
     return tx.fiscalDocument.findFirst({
-      where: { tenantId: this.context.requireTenantId(), invoiceId, status: { not: "CANCELLED" } },
+      where: {
+        tenantId: this.context.requireTenantId(),
+        invoiceId,
+        // NCE-001: the invoice's own factura; a credit note's document is not it.
+        creditNoteId: null,
+        status: { not: "CANCELLED" },
+      },
     });
   }
   /**
@@ -187,7 +201,13 @@ export class FiscalRepository {
    */
   async hasLiveDocument(invoiceId: string, tx: FiscalDocumentReadTx): Promise<boolean> {
     const row = await tx.fiscalDocument.findFirst({
-      where: { tenantId: this.context.requireTenantId(), invoiceId, status: { not: "CANCELLED" } },
+      where: {
+        tenantId: this.context.requireTenantId(),
+        invoiceId,
+        // NCE-001: the invoice's own factura; a credit note's document is not it.
+        creditNoteId: null,
+        status: { not: "CANCELLED" },
+      },
     });
     return row !== null;
   }

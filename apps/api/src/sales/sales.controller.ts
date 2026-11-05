@@ -6,9 +6,11 @@ import { RequirePermissions } from "../rbac/require-permissions.decorator.js";
 import type { CompletedSaleResponse, SaleResponse } from "./sales.dto.js";
 import { SALES_PERMISSIONS } from "./sales.permissions.js";
 import { SalesService } from "./sales.service.js";
+import { SaleReversalService, type SaleReversalView } from "./sale-reversal.service.js";
 import {
   completeSaleBody,
   createSaleBody,
+  reverseSaleBody,
   saleIdempotencyKey,
   saleIdParam,
   saleListQuery,
@@ -33,7 +35,10 @@ import {
  */
 @Controller("sales")
 export class SalesController {
-  constructor(private readonly sales: SalesService) {}
+  constructor(
+    private readonly sales: SalesService,
+    private readonly reversals: SaleReversalService
+  ) {}
 
   /**
    * Lists the caller tenant's sales with their lines, newest first. The optional
@@ -49,9 +54,24 @@ export class SalesController {
   /** Creates a `DRAFT` sale; the mutation and its audit row co-commit. */
   @Post()
   @RequirePermissions(SALES_PERMISSIONS.create)
-  async create(@Body() body: unknown): Promise<SaleResponse> {
+  async create(
+    @Body() body: unknown,
+    @Headers() headers: unknown,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<SaleResponse> {
     const input = parseInput(createSaleBody, body, "Invalid sale create body.");
-    return this.sales.create(input);
+    // UX-035 / TD-071: OPTIONAL key; `201` for a new draft, `200` for its replay.
+    const result = await this.sales.createAttempt(input, readIdempotencyKey(headers));
+    reply.status(result.replay ? 200 : 201);
+    return result.sale;
+  }
+
+  /** UX-035 / TD-071: the draft a create attempt recorded, by its key; `404` if none. */
+  @Get("attempts/:key")
+  @RequirePermissions(SALES_PERMISSIONS.read)
+  async findCreateAttempt(@Param("key") key: unknown): Promise<SaleResponse> {
+    const parsed = parseInput(saleIdempotencyKey, key, "Invalid Idempotency-Key.");
+    return this.sales.findCreateAttempt(parsed);
   }
 
   /** Gets one sale by UUID; a cross-tenant id returns the same `404` as absent. */
@@ -98,6 +118,35 @@ export class SalesController {
    * `201` and an identical idempotency replay is `200`, with the SAME completed
    * sale body in both cases (DEC-024, resolution 3 of 2026-09-29).
    */
+  /**
+   * SAL-REV-001: reverses a COMPLETED sale (DEC-089). A separate route rather than an
+   * overload of `:id/cancel`, which cancels a DRAFT under a different permission and
+   * with no body: the two commands differ in who may run them and in what they write.
+   * `201` for a fresh reversal, `200` for an identical replay of the same key.
+   */
+  @Post(":id/reverse")
+  @RequirePermissions(SALES_PERMISSIONS.reverse)
+  async reverse(
+    @Param() params: unknown,
+    @Body() body: unknown,
+    @Headers() headers: unknown,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<SaleReversalView> {
+    const { id } = parseInput(saleIdParam, params, "Invalid sale id.");
+    const input = parseInput(reverseSaleBody, body, "Invalid sale reversal body.");
+    const idempotencyKey = readIdempotencyKey(headers);
+    const result = await this.reversals.reverse(id, input, idempotencyKey);
+    reply.status(result.replay ? 200 : 201);
+    return result.reversal;
+  }
+
+  @Get(":id/reversal")
+  @RequirePermissions(SALES_PERMISSIONS.read)
+  async reversal(@Param() params: unknown): Promise<SaleReversalView> {
+    const { id } = parseInput(saleIdParam, params, "Invalid sale id.");
+    return this.reversals.getReversal(id);
+  }
+
   @Post(":id/complete")
   @RequirePermissions(SALES_PERMISSIONS.complete)
   async complete(

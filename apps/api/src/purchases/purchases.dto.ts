@@ -49,6 +49,8 @@ export interface PurchaseResponse {
    * substitute for it.
    */
   readonly receivedAt: string | null;
+  /** MB-003: the branch the goods are received into. */
+  readonly branchId: string;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
