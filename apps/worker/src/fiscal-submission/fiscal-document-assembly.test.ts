@@ -59,12 +59,14 @@ import type {
   InvoiceItemRow,
   InvoiceLineSnapshotRow,
   InvoiceRateRow,
+  PaymentSnapshotRow,
   TenantTaxClassificationRow,
 } from "@newsaas/fiscal-persistence";
 import {
   createFiscalDocumentAssembly,
   FISCAL_ASSEMBLY_REASON_CODES,
   type FiscalDocumentAssemblyClient,
+  type FiscalDocumentAssemblyCreditNoteRow,
   type FiscalDocumentAssemblyInvoiceRow,
 } from "./fiscal-document-assembly.js";
 import type { FiscalDocumentBuildOutcome } from "./fiscal-document-builder.js";
@@ -109,6 +111,20 @@ const INVOICE_ROW: FiscalDocumentAssemblyInvoiceRow = {
   currency: "PYG",
   confirmedAt: CONFIRMED_AT,
   customerId: CUSTOMER_ID,
+  saleId: "77777777-7777-4777-8777-777777777777",
+};
+
+/** PAY-DET-001: the invoiced sale paid with one Visa credit card. */
+const CARD_PAYMENT: PaymentSnapshotRow = {
+  method: "CARD",
+  amount: { toFixed: () => "200.00" },
+  cardType: "CREDIT",
+  cardBrand: "VISA",
+  cardBrandName: null,
+  qrKind: null,
+  checkNumber: null,
+  checkBank: null,
+  otherDescription: null,
 };
 
 const CUSTOMER_ROW: CustomerReceptorRow = {
@@ -133,7 +149,9 @@ const IVA_5_CLASSIFICATION: TenantTaxClassificationRow = {
 };
 
 interface FixtureState {
-  readonly document: { invoiceId: string } | null;
+  readonly document: { invoiceId: string; creditNoteId?: string | null } | null;
+  readonly creditNote?: FiscalDocumentAssemblyCreditNoteRow | null;
+  readonly payments?: readonly PaymentSnapshotRow[];
   readonly invoice: FiscalDocumentAssemblyInvoiceRow | null;
   readonly range: { validityStart: Date } | null;
   readonly profileRow: FiscalEmitterProfileRow | null;
@@ -254,6 +272,8 @@ function fixtureCredential(): FiscalTransportCredential {
 function createFakeClient(state: FixtureState): FiscalDocumentAssemblyClient {
   return {
     fiscalDocument: { findFirst: () => Promise.resolve(state.document) },
+    creditNote: { findFirst: () => Promise.resolve(state.creditNote ?? null) },
+    payment: { findMany: () => Promise.resolve(state.payments ?? [CARD_PAYMENT]) },
     invoice: { findFirst: () => Promise.resolve(state.invoice) },
     fiscalTimbradoRange: { findFirst: () => Promise.resolve(state.range) },
     fiscalEmitterProfile: { findUnique: () => Promise.resolve(state.profileRow) },
@@ -613,6 +633,90 @@ describe("the assembly — the chain", () => {
     expect(document.signedXml.indexOf("<dCarQR>")).toBeGreaterThan(
       document.signedXml.indexOf("</DE>")
     );
+  });
+});
+
+describe("the assembly — the factura's payments (PAY-DET-001)", () => {
+  it("emits gCamFE and gCamCond with the card's type and brand", async () => {
+    const { result } = await build();
+    const xml = built(result).signedXml.replace(/>\s+</g, "><");
+
+    expect(xml).toContain("<gCamFE><iIndPres>1</iIndPres>");
+    expect(xml).toContain("<iCondOpe>1</iCondOpe><dDCondOpe>Contado</dDCondOpe>");
+    expect(xml).toContain("<iTiPago>3</iTiPago><dDesTiPag>Tarjeta de crédito</dDesTiPag>");
+    expect(xml).toContain("<iDenTarj>1</iDenTarj><dDesDenTarj>Visa</dDesDenTarj>");
+  });
+
+  it("answers PAYMENT_DETAIL_MISSING for a card recorded before the detail existed", async () => {
+    const { result } = await build({
+      state: { payments: [{ ...CARD_PAYMENT, cardType: null, cardBrand: null }] },
+    });
+    expectUnavailable(result, "PAYMENT_DETAIL_MISSING");
+  });
+
+  it("emits neither group on a credit note", async () => {
+    const { result } = await build({
+      state: {
+        document: { invoiceId: INVOICE_ID, creditNoteId: "cn-1" },
+        creditNote: {
+          motive: 2,
+          associatedCdc: `01${"8".repeat(42)}`,
+          issuedAt: new Date("2026-11-04T09:00:00.000Z"),
+          rangeId: RANGE_ID,
+          timbradoNumber: "87654321",
+          establishmentId: ESTABLISHMENT_ID,
+          expeditionPoint: "002",
+          documentType: 5,
+          series: null,
+          documentNumber: "0000003",
+        },
+      },
+    });
+    const xml = built(result).signedXml;
+    expect(xml).not.toContain("<gCamFE>");
+    expect(xml).not.toContain("<gCamCond>");
+  });
+});
+
+describe("the assembly — a credit note's document (NCE-001)", () => {
+  const FE_CDC = `01${"8".repeat(42)}`;
+  const NOTE: FiscalDocumentAssemblyCreditNoteRow = {
+    motive: 2,
+    associatedCdc: FE_CDC,
+    issuedAt: new Date("2026-11-04T09:00:00.000Z"),
+    rangeId: RANGE_ID,
+    timbradoNumber: "87654321",
+    establishmentId: ESTABLISHMENT_ID,
+    expeditionPoint: "002",
+    documentType: 5,
+    series: null,
+    documentNumber: "0000003",
+  };
+
+  it("builds a type-5 DE numbered by the note, dated by the note, referencing the factura", async () => {
+    const { result } = await build({
+      state: { document: { invoiceId: INVOICE_ID, creditNoteId: "cn-1" }, creditNote: NOTE },
+    });
+    const { cdc, signedXml } = built(result);
+    const xml = signedXml.replace(/>\s+</g, "><");
+
+    expect(cdc.startsWith("05")).toBe(true);
+    expect(xml).toContain("<iTiDE>5</iTiDE>");
+    expect(xml).toContain("<dNumTim>87654321</dNumTim>");
+    expect(xml).toContain("<dNumDoc>0000003</dNumDoc>");
+    expect(xml).toContain("<dFeEmiDE>2026-11-04T09:00:00</dFeEmiDE>");
+    expect(xml).toContain(
+      "<gCamNCDE><iMotEmi>2</iMotEmi><dDesMotEmi>Devolución</dDesMotEmi></gCamNCDE>"
+    );
+    expect(xml).toContain(`<dCdCDERef>${FE_CDC}</dCdCDERef>`);
+    expect(xml).not.toContain("<iTipTra>");
+  });
+
+  it("answers CREDIT_NOTE_UNAVAILABLE when the note is not readable", async () => {
+    const { result } = await build({
+      state: { document: { invoiceId: INVOICE_ID, creditNoteId: "cn-1" }, creditNote: null },
+    });
+    expectUnavailable(result, "CREDIT_NOTE_UNAVAILABLE");
   });
 });
 

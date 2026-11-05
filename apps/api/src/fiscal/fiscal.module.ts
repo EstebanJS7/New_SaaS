@@ -9,6 +9,7 @@ import { createFiscalCredentialReader } from "@newsaas/fiscal-persistence";
 import { SECRET_STORE, type SecretStore } from "@newsaas/secret-store";
 import { FiscalController } from "./fiscal.controller.js";
 import { FiscalAllocationService } from "./fiscal-allocation.service.js";
+import { FiscalCreditNoteService } from "./fiscal-credit-note.service.js";
 import { FiscalRepository } from "./fiscal.repository.js";
 import { FISCAL_SIGNING_ENVIRONMENT, FiscalService } from "./fiscal.service.js";
 import { FiscalSigningMaterialRepository } from "./signing-material/signing-material.repository.js";
@@ -40,6 +41,7 @@ import {
  * hand-off uses).
  */
 export { FiscalAllocationService } from "./fiscal-allocation.service.js";
+export { FiscalCreditNoteService } from "./fiscal-credit-note.service.js";
 export type { FiscalAllocationTx } from "./fiscal-allocation.service.js";
 
 /**
@@ -101,12 +103,14 @@ const signingEnvironment: Provider = {
     FiscalSigningMaterialService,
     FiscalProfileService,
     FiscalAllocationService,
+    FiscalCreditNoteService,
   ],
   providers: [
     FiscalRepository,
     FiscalService,
     signingEnvironment,
     FiscalAllocationService,
+    FiscalCreditNoteService,
     FiscalSigningMaterialRepository,
     FiscalSigningMaterialService,
     SigningMaterialPipe,

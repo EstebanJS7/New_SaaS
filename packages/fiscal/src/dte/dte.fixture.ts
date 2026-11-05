@@ -23,6 +23,7 @@
  *    contents (`QUJDREVGRw==`). Producing the real signature is [[FISC-009]]'s.
  */
 
+import { buildCamCond, buildCamFE } from "./dte.payment.js";
 import {
   TEST_CERTIFICATE_DER_BASE64,
   TEST_PRIVATE_KEY_PKCS8_DER_BASE64,
@@ -141,6 +142,14 @@ export function validFacturaElectronicaRequest(): DteRequest {
       },
     },
     gDtipDE: [
+      // PAY-DET-001 (TD-074): rules 1350 and 1500 make both obligatory for a factura.
+      buildCamFE(),
+      buildCamCond({
+        payments: [{ iTiPago: 1, amount: "1" }],
+        currency: "PYG",
+        currencyDescription: "Guaraní",
+        scaleAmount: (value) => `${value}.0000`,
+      }),
       {
         name: "gCamItem",
         children: [

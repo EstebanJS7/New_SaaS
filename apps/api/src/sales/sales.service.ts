@@ -8,6 +8,7 @@ import { DomainError } from "@newsaas/shared";
 import { AuditWriter, type AuditAppendTx } from "../audit/audit-writer.service.js";
 import { CatalogRepository } from "../catalog/catalog.repository.js";
 import { CashRepository, type CashSessionRow, type CashTx } from "../cash/cash.repository.js";
+import { assertWorksAtBranch, resolveWorkingBranch } from "../branches/branch-scope.js";
 import { RequestContextService } from "../context/request-context.service.js";
 import { EntitlementsService } from "../entitlements/entitlements.service.js";
 import {
@@ -38,6 +39,7 @@ import {
   SALE_CUSTOMER_NOT_FOUND_MESSAGE,
   SaleRepository,
   type PaymentRow,
+  type PaymentDetailData,
   type PaymentWriteData,
   type SaleLineRow,
   type SaleLineSnapshotData,
@@ -232,6 +234,7 @@ function toSaleResponse(row: SaleRow): SaleResponse {
     // The business instant the sale became revenue (DEC-064), projected the same
     // way `createdAt` is: an ISO string, or `null` while not terminal.
     completedAt: row.completedAt === null ? null : row.completedAt.toISOString(),
+    branchId: row.branchId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -280,16 +283,64 @@ function toCompletedSaleResponse(
  */
 export function saleCompletionFingerprint(
   saleId: string,
-  payments: readonly { method: string; amount: string }[]
+  payments: readonly { method: string; amount: string; detail?: PaymentDetailData }[]
 ): string {
+  // PAY-DET-001: the detail joins the fingerprint only when present, so a payment
+  // that carries none (CASH, BANK_TRANSFER) keeps the fingerprint it always had.
   const canonicalPayments = payments
-    .map(
-      (payment) =>
-        `${payment.method}:${new Prisma.Decimal(payment.amount).toFixed(SALE_MONEY_SCALE)}`
-    )
+    .map((payment) => {
+      const base = `${payment.method}:${new Prisma.Decimal(payment.amount).toFixed(SALE_MONEY_SCALE)}`;
+      const detail = payment.detail ?? {};
+      const keys = Object.keys(detail).sort() as (keyof PaymentDetailData)[];
+      return keys.length === 0
+        ? base
+        : `${base}:${keys.map((key) => `${key}=${detail[key] ?? ""}`).join(",")}`;
+    })
     .sort();
   const canonical = JSON.stringify({ saleId, payments: canonicalPayments });
   return createHash("sha256").update(canonical).digest("hex");
+}
+
+/**
+ * PAY-DET-001 / DEC-091: the request's per-method detail as payment columns.
+ * The request contract already checked which detail belongs to which method; a
+ * cheque number is zero-padded to the eight digits `dNumCheq` requires.
+ */
+export function paymentDetail(
+  payment: CompleteSaleInput["payments"][number]
+): PaymentDetailData | undefined {
+  if (payment.card !== undefined) {
+    return {
+      cardType: payment.card.type,
+      cardBrand: payment.card.brand,
+      ...(payment.card.brandName === undefined ? {} : { cardBrandName: payment.card.brandName }),
+    };
+  }
+  if (payment.qrKind !== undefined) return { qrKind: payment.qrKind };
+  if (payment.check !== undefined) {
+    return { checkNumber: payment.check.number.padStart(8, "0"), checkBank: payment.check.bank };
+  }
+  if (payment.otherDescription !== undefined) return { otherDescription: payment.otherDescription };
+  return undefined;
+}
+
+/** UX-035 / TD-071: the idempotency operation of a draft creation. */
+export const SALE_CREATE_OPERATION = "sale.create";
+export const SALE_CREATE_ATTEMPT_NOT_FOUND_MESSAGE =
+  "No sale was created under that Idempotency-Key.";
+
+/** The create request's canonical SHA-256: the customer and the submitted lines. */
+export function saleCreateFingerprint(input: CreateSaleInput): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        customerId: input.customerId ?? null,
+        // MB-002: part of the request only when the caller chose a branch.
+        ...(input.branchId === undefined ? {} : { branchId: input.branchId }),
+        lines: input.lines,
+      })
+    )
+    .digest("hex");
 }
 
 /**
@@ -442,41 +493,120 @@ export class SalesService {
    * `DRAFT` until the cancel command or `CompleteSale`.
    */
   async create(input: CreateSaleInput): Promise<SaleResponse> {
+    return (await this.createAttempt(input)).sale;
+  }
+
+  /**
+   * UX-035 / TD-071: {@link create} with an OPTIONAL `Idempotency-Key`. With a
+   * key, the draft and an `idempotency_record` (`sale.create`) co-commit, so a
+   * retry of an attempt whose answer was lost replays the SAME draft (`200`)
+   * instead of creating a second one, and a page that lost the answer can ask
+   * for the draft by key ({@link findCreateAttempt}). The fingerprint covers the
+   * customer and the submitted lines; the same key with another body is `409`.
+   */
+  async createAttempt(
+    input: CreateSaleInput,
+    idempotencyKey?: string
+  ): Promise<{ sale: SaleResponse; replay: boolean }> {
     await this.assertSalesEnabled();
     await this.requirePermission(SALES_PERMISSIONS.create);
     const actorUserProfileId = this.requestContext.requireUserProfileId();
     const { currency, minorUnit } = await this.resolveCurrency();
+    const fingerprint = saleCreateFingerprint(input);
 
-    const row = await this.prisma.$transaction(async (tx) => {
-      if (input.customerId !== undefined && input.customerId !== null) {
-        await this.sales.assertCustomerExists(input.customerId, tx);
+    const replayOf = async (
+      record: { fingerprint: string; resultSaleId: string },
+      tx?: Parameters<SaleRepository["findById"]>[1]
+    ) => {
+      if (record.fingerprint !== fingerprint) {
+        throw new DomainError("CONFLICT", SALE_IDEMPOTENCY_KEY_CONFLICT_MESSAGE);
       }
-      const lines = await this.buildLineWrites(input.lines, currency, minorUnit, tx);
+      return {
+        sale: toSaleResponse(await this.sales.findById(record.resultSaleId, tx)),
+        replay: true,
+      };
+    };
 
-      const created = await this.sales.create(
-        { customerId: input.customerId ?? null, currency, lines },
-        tx
-      );
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        if (idempotencyKey !== undefined) {
+          const record = await this.sales.findIdempotencyRecord(
+            SALE_CREATE_OPERATION,
+            idempotencyKey,
+            tx
+          );
+          if (record) return replayOf(record, tx);
+        }
+        if (input.customerId !== undefined && input.customerId !== null) {
+          await this.sales.assertCustomerExists(input.customerId, tx);
+        }
+        // MB-002 (DEC-094 §9): the sale belongs to an active branch the
+        // caller works at — the requested one, or their only one.
+        const branchId = await resolveWorkingBranch(
+          tx,
+          { tenantId: this.requestContext.requireTenantId(), userProfileId: actorUserProfileId },
+          input.branchId
+        );
+        const lines = await this.buildLineWrites(input.lines, currency, minorUnit, tx);
 
-      await this.audit.append(
-        {
-          action: SALE_CREATED_ACTION,
-          tenantId: created.tenantId,
-          actorUserProfileId,
-          targetType: SALE_TARGET_TYPE,
-          targetId: created.id,
-          metadata: {
-            schemaVersion: SALES_DTO_SCHEMA_VERSION,
-            changedFields: [...SALE_CREATE_CHANGED_FIELDS],
+        const created = await this.sales.create(
+          { customerId: input.customerId ?? null, currency, branchId, lines },
+          tx
+        );
+
+        await this.audit.append(
+          {
+            action: SALE_CREATED_ACTION,
+            tenantId: created.tenantId,
+            actorUserProfileId,
+            targetType: SALE_TARGET_TYPE,
+            targetId: created.id,
+            metadata: {
+              schemaVersion: SALES_DTO_SCHEMA_VERSION,
+              changedFields: [...SALE_CREATE_CHANGED_FIELDS],
+            },
           },
-        },
-        tx
-      );
+          tx
+        );
 
-      return created;
-    });
+        if (idempotencyKey !== undefined) {
+          await this.sales.createIdempotencyRecord(
+            {
+              operation: SALE_CREATE_OPERATION,
+              key: idempotencyKey,
+              fingerprint,
+              resultSaleId: created.id,
+            },
+            tx
+          );
+        }
 
-    return toSaleResponse(row);
+        return { sale: toSaleResponse(created), replay: false };
+      });
+    } catch (error) {
+      // A concurrent retry of the same attempt won the record's unique race.
+      if (idempotencyKey !== undefined && isIdempotencyKeyConflict(error)) {
+        const record = await this.sales.findIdempotencyRecord(
+          SALE_CREATE_OPERATION,
+          idempotencyKey
+        );
+        if (record) return replayOf(record);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * UX-035 / TD-071: the draft an earlier create attempt recorded under this
+   * key, or the shared `404` when nothing was recorded. The page asks this after
+   * it lost an answer, instead of re-sending or matching drafts by their values.
+   */
+  async findCreateAttempt(idempotencyKey: string): Promise<SaleResponse> {
+    await this.assertSalesEnabled();
+    await this.requirePermission(SALES_PERMISSIONS.read);
+    const record = await this.sales.findIdempotencyRecord(SALE_CREATE_OPERATION, idempotencyKey);
+    if (!record) throw new DomainError("NOT_FOUND", SALE_CREATE_ATTEMPT_NOT_FOUND_MESSAGE);
+    return toSaleResponse(await this.sales.findById(record.resultSaleId));
   }
 
   /**
@@ -637,7 +767,14 @@ export class SalesService {
     await this.assertSalesEnabled();
     await this.requirePermission(SALES_PERMISSIONS.complete);
     const actorUserProfileId = this.requestContext.requireUserProfileId();
-    const fingerprint = saleCompletionFingerprint(id, input.payments);
+    const fingerprint = saleCompletionFingerprint(
+      id,
+      input.payments.map((payment) => ({
+        method: payment.method,
+        amount: payment.amount,
+        detail: paymentDetail(payment),
+      }))
+    );
 
     try {
       return await this.prisma.$transaction(async (tx) => {
@@ -670,6 +807,13 @@ export class SalesService {
         // `409` and persists nothing.
         const locked = await this.sales.findById(id, tx);
         assertDraft(locked);
+        // MB-002 (DEC-094 §5, §9): a sale is charged by someone who works at its
+        // branch, and never in a deactivated branch.
+        await assertWorksAtBranch(
+          tx,
+          { tenantId: locked.tenantId, userProfileId: actorUserProfileId },
+          locked.branchId
+        );
         const minorUnit = resolveMinorUnit(locked.currency);
 
         // Stable ascending order over the line items: the lock order DEC-014
@@ -712,6 +856,7 @@ export class SalesService {
         const payments: PaymentWriteData[] = input.payments.map((payment) => ({
           method: payment.method,
           amount: new Prisma.Decimal(payment.amount).toFixed(SALE_MONEY_SCALE),
+          ...(paymentDetail(payment) === undefined ? {} : { detail: paymentDetail(payment) }),
         }));
         const paymentSum = payments.reduce(
           (sum, payment) => sum.plus(new Prisma.Decimal(payment.amount)),
@@ -750,7 +895,7 @@ export class SalesService {
         const hasCashPayment = payments.some((payment) => payment.method === "CASH");
         let cashSession: CashSessionRow | undefined;
         if (hasCashPayment) {
-          cashSession = await this.cash.resolveSingleOpenSession(tx);
+          cashSession = await this.cash.resolveSingleOpenSession(locked.branchId, tx);
         }
 
         // STEP 8 — stock writes, per line, in the already-ascending order. The
@@ -763,9 +908,14 @@ export class SalesService {
           if (!item?.tracksStock) {
             continue;
           }
-          await this.inventory.lockItemStock(entry.line.catalogItemId, tx);
+          // MB-003 (DEC-094 §10): the stock leaves the sale's own branch.
+          await this.inventory.lockItemStock(entry.line.catalogItemId, locked.branchId, tx);
 
-          const balance = await this.inventory.findBalance(entry.line.catalogItemId, tx);
+          const balance = await this.inventory.findBalance(
+            entry.line.catalogItemId,
+            locked.branchId,
+            tx
+          );
           const quantity = new Prisma.Decimal(entry.line.quantity);
           const projected = new Prisma.Decimal(balance?.quantity ?? 0).plus(quantity.negated());
           if (projected.isNegative()) {
@@ -778,10 +928,18 @@ export class SalesService {
               type: "SALE",
               quantity: quantity.negated(),
               reason: SALE_COMPLETION_MOVEMENT_REASON,
+              // SAL-REV-001: stamped so a later reversal can find what it compensates.
+              saleId: id,
+              branchId: locked.branchId,
             },
             tx
           );
-          await this.inventory.upsertBalance(entry.line.catalogItemId, projected, tx);
+          await this.inventory.upsertBalance(
+            entry.line.catalogItemId,
+            locked.branchId,
+            projected,
+            tx
+          );
         }
 
         // STEP 9 — exactly one `SALE` cash movement per CASH payment against
@@ -796,6 +954,7 @@ export class SalesService {
                 registerId: cashSession.registerId,
                 sessionId: cashSession.id,
                 amount: payment.amount,
+                saleId: id,
               },
               tx
             );

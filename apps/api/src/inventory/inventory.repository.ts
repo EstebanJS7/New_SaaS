@@ -4,6 +4,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { Prisma, PrismaService } from "@newsaas/database";
 import { DomainError } from "@newsaas/shared";
 import type { AuditAppendTx } from "../audit/audit-writer.service.js";
+import type { BranchScopeClient } from "../branches/branch-scope.js";
 import { RequestContextService } from "../context/request-context.service.js";
 
 /**
@@ -23,7 +24,14 @@ export type StockItemKindValue = "PRODUCT" | "SERVICE" | "MEDICATION" | "SUPPLY"
  * compensations arrive with the epics that own their commands and must be
  * added additively.
  */
-export type StockMovementTypeValue = "ADJUSTMENT" | "PURCHASE" | "SALE";
+export type StockMovementTypeValue =
+  | "ADJUSTMENT"
+  | "PURCHASE"
+  | "SALE"
+  | "SALE_REVERSAL"
+  // MB-003 (DEC-094 §10): the two halves of a transfer between branches.
+  | "TRANSFER_OUT"
+  | "TRANSFER_IN";
 
 /**
  * Persistence row for a tenant-scoped catalog item as the inventory boundary
@@ -54,15 +62,21 @@ export interface StockMovementRow {
   quantity: Prisma.Decimal | string;
   reason: string;
   reversesMovementId: string | null;
+  /** MB-003: the branch whose stock this movement changed. */
+  branchId: string;
+  /** MB-003: the transfer a TRANSFER_OUT / TRANSFER_IN pair belongs to. */
+  transferId?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
 
-/** Transactional projection row, one per (tenant, item). Never negative. */
+/** Transactional projection row, one per (tenant, item, branch). Never negative. */
 export interface StockBalanceRow {
   id: string;
   tenantId: string;
   catalogItemId: string;
+  /** MB-003: the branch this balance is kept in. */
+  branchId: string;
   quantity: Prisma.Decimal | string;
   createdAt: Date;
   updatedAt: Date;
@@ -79,11 +93,26 @@ export interface StockMovementCreateData {
   /** Signed exact quantity: positive is an input, negative an output. */
   readonly quantity: Prisma.Decimal | string;
   readonly reason: string;
+  /** SAL-REV-001: the sale a `SALE` or `SALE_REVERSAL` movement belongs to. */
+  readonly saleId?: string | null;
+  /** SAL-REV-001: the original movement a `SALE_REVERSAL` compensates, when known. */
+  readonly reversesMovementId?: string | null;
+  /** MB-003: the branch whose stock moves. */
+  readonly branchId: string;
+  /** MB-003: set exactly for TRANSFER_OUT / TRANSFER_IN. */
+  readonly transferId?: string | null;
 }
 
 /** Supported read filters for {@link InventoryRepository.listMovements}. */
 export interface StockMovementListFilters {
   catalogItemId?: string;
+  /** MB-003: one branch's ledger. */
+  branchId?: string;
+}
+
+/** MB-003: balance list filters. */
+export interface StockBalanceListFilters {
+  branchId?: string;
 }
 
 /** Deterministic ordering clauses accepted by the movement `findMany`. */
@@ -115,7 +144,7 @@ export interface StockMovementDelegate {
     data: StockMovementCreateData & { tenantId: string };
   }) => Promise<StockMovementRow>;
   findMany: (args: {
-    where: { tenantId: string; catalogItemId?: string };
+    where: { tenantId: string; catalogItemId?: string; branchId?: string };
     orderBy?: StockMovementOrderBy[];
   }) => Promise<StockMovementRow[]>;
 }
@@ -127,15 +156,26 @@ export interface StockMovementDelegate {
  */
 export interface StockBalanceDelegate {
   findFirst: (args: {
-    where: { tenantId: string; catalogItemId: string };
+    where: { tenantId: string; catalogItemId: string; branchId: string };
   }) => Promise<StockBalanceRow | null>;
   findMany: (args: {
-    where: { tenantId: string };
+    where: { tenantId: string; branchId?: string };
     orderBy?: StockBalanceOrderBy[];
   }) => Promise<StockBalanceRow[]>;
   upsert: (args: {
-    where: { tenantId_catalogItemId: { tenantId: string; catalogItemId: string } };
-    create: { tenantId: string; catalogItemId: string; quantity: Prisma.Decimal | string };
+    where: {
+      tenantId_catalogItemId_branchId: {
+        tenantId: string;
+        catalogItemId: string;
+        branchId: string;
+      };
+    };
+    create: {
+      tenantId: string;
+      catalogItemId: string;
+      branchId: string;
+      quantity: Prisma.Decimal | string;
+    };
     update: { quantity: Prisma.Decimal | string };
   }) => Promise<StockBalanceRow>;
 }
@@ -156,7 +196,7 @@ export interface InventoryRawClient {
  * transaction seam: a caller that must co-commit a movement, its balance and
  * its audit row passes its open transaction handle here.
  */
-export interface InventoryClient extends InventoryRawClient {
+export interface InventoryClient extends InventoryRawClient, BranchScopeClient {
   catalogItem: StockItemDelegate;
   stockMovement: StockMovementDelegate;
   stockBalance: StockBalanceDelegate;
@@ -182,8 +222,13 @@ export const INVENTORY_ITEM_NOT_FOUND_MESSAGE = "Inventory item was not found.";
  * command locks and prove the overlap is scoped to that key rather than to the
  * whole database.
  */
-export function stockSerializationLockKey(tenantId: string, catalogItemId: string): string {
-  return `${tenantId}:${catalogItemId}`;
+export function stockSerializationLockKey(
+  tenantId: string,
+  catalogItemId: string,
+  branchId: string
+): string {
+  // MB-003: a balance is per (item, branch), so the lock is too.
+  return `${tenantId}:${catalogItemId}:${branchId}`;
 }
 
 /**
@@ -278,16 +323,21 @@ export class InventoryRepository {
       where: {
         tenantId,
         ...(filters.catalogItemId !== undefined ? { catalogItemId: filters.catalogItemId } : {}),
+        ...(filters.branchId !== undefined ? { branchId: filters.branchId } : {}),
       },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
   }
 
-  /** The single balance row of one item, or `null` when the item has none yet. */
-  async findBalance(catalogItemId: string, tx?: InventoryClient): Promise<StockBalanceRow | null> {
+  /** The balance of one item in one branch, or `null` when there is none yet. */
+  async findBalance(
+    catalogItemId: string,
+    branchId: string,
+    tx?: InventoryClient
+  ): Promise<StockBalanceRow | null> {
     const tenantId = this.requestContext.requireTenantId();
     const client = tx ?? this.prisma;
-    return client.stockBalance.findFirst({ where: { tenantId, catalogItemId } });
+    return client.stockBalance.findFirst({ where: { tenantId, catalogItemId, branchId } });
   }
 
   /**
@@ -314,19 +364,29 @@ export class InventoryRepository {
    * optimization — every future stock command MUST take this same lock before
    * it reads or writes `stock_balance`.
    */
-  async lockItemStock(catalogItemId: string, tx?: InventoryClient): Promise<void> {
+  async lockItemStock(
+    catalogItemId: string,
+    branchId: string,
+    tx?: InventoryClient
+  ): Promise<void> {
     const tenantId = this.requestContext.requireTenantId();
     const client = tx ?? this.prisma;
-    const lockKey = stockSerializationLockKey(tenantId, catalogItemId);
+    const lockKey = stockSerializationLockKey(tenantId, catalogItemId, branchId);
     await client.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))::text`;
   }
 
   /** Every balance row of the caller's active tenant in stable item order. */
-  async listBalances(tx?: InventoryClient): Promise<StockBalanceRow[]> {
+  async listBalances(
+    filters: StockBalanceListFilters = {},
+    tx?: InventoryClient
+  ): Promise<StockBalanceRow[]> {
     const tenantId = this.requestContext.requireTenantId();
     const client = tx ?? this.prisma;
     return client.stockBalance.findMany({
-      where: { tenantId },
+      where: {
+        tenantId,
+        ...(filters.branchId !== undefined ? { branchId: filters.branchId } : {}),
+      },
       orderBy: [{ catalogItemId: "asc" }],
     });
   }
@@ -339,14 +399,15 @@ export class InventoryRepository {
    */
   async upsertBalance(
     catalogItemId: string,
+    branchId: string,
     quantity: Prisma.Decimal | string,
     tx?: InventoryClient
   ): Promise<StockBalanceRow> {
     const tenantId = this.requestContext.requireTenantId();
     const client = tx ?? this.prisma;
     return client.stockBalance.upsert({
-      where: { tenantId_catalogItemId: { tenantId, catalogItemId } },
-      create: { tenantId, catalogItemId, quantity },
+      where: { tenantId_catalogItemId_branchId: { tenantId, catalogItemId, branchId } },
+      create: { tenantId, catalogItemId, branchId, quantity },
       update: { quantity },
     });
   }

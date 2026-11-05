@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { Prisma, PrismaService } from "@newsaas/database";
 import { DomainError } from "@newsaas/shared";
 import { AuditWriter, type AuditAppendTx } from "../audit/audit-writer.service.js";
+import { assertWorksAtBranch, resolveWorkingBranch } from "../branches/branch-scope.js";
 import { RequestContextService } from "../context/request-context.service.js";
 import { EntitlementsService } from "../entitlements/entitlements.service.js";
 import { PermissionResolver } from "../rbac/permission-resolver.service.js";
@@ -114,6 +115,19 @@ function movementIdempotencyId(tenantId: string, idempotencyKey: string): string
     .digest("hex");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
+
+/** UX-035: the same derivation for a session open, in its own namespace. */
+const CASH_SESSION_ID_NAMESPACE = "cash-session-idempotency";
+
+export function sessionIdempotencyId(tenantId: string, idempotencyKey: string): string {
+  const hex = createHash("sha256")
+    .update(`${tenantId}:${CASH_SESSION_ID_NAMESPACE}:${idempotencyKey}`)
+    .digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+/** UX-035: no session or movement exists for that attempt's key (yet). */
+export const CASH_ATTEMPT_NOT_FOUND_MESSAGE = "Nothing was recorded under that Idempotency-Key.";
 
 /** True for the movement PRIMARY KEY collision of a concurrent retry. */
 function isMovementIdConflict(error: unknown): boolean {
@@ -319,11 +333,16 @@ function nullableDecimalToScaleString(
 }
 
 /** Maps one register row to its allowlisted INTERNAL response DTO. */
-function toCashRegisterResponse(row: CashRegisterRow): CashRegisterResponse {
+function toCashRegisterResponse(
+  row: CashRegisterRow,
+  branchNames: ReadonlyMap<string, string> = new Map()
+): CashRegisterResponse {
   return {
     id: row.id,
     name: row.name,
     isActive: row.isActive,
+    branchId: row.branchId,
+    branchName: branchNames.get(row.branchId) ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -468,7 +487,8 @@ export class CashService {
     await this.assertCashEnabled();
     await this.requirePermission(CASH_PERMISSIONS.read);
     const rows = await this.cash.listRegisters();
-    return rows.map(toCashRegisterResponse);
+    const names = await this.cash.branchNames(rows.map((row) => row.branchId));
+    return rows.map((row) => toCashRegisterResponse(row, names));
   }
 
   /**
@@ -512,7 +532,14 @@ export class CashService {
 
     try {
       const row = await this.prisma.$transaction(async (tx) => {
-        const created = await this.cash.createRegister({ name: input.name }, tx);
+        // MB-002 (DEC-094 §9): a drawer is created in an active branch the
+        // caller works at — the requested one, or their only one.
+        const branchId = await resolveWorkingBranch(
+          tx,
+          { tenantId, userProfileId: actorUserProfileId },
+          input.branchId
+        );
+        const created = await this.cash.createRegister({ name: input.name, branchId }, tx);
 
         await this.audit.append(
           {
@@ -529,10 +556,10 @@ export class CashService {
           tx
         );
 
-        return created;
+        return { created, names: await this.cash.branchNames([created.branchId], tx) };
       });
 
-      return toCashRegisterResponse(row);
+      return toCashRegisterResponse(row.created, row.names);
     } catch (error) {
       // The register-name unique index rejected a duplicate name for this
       // tenant: surface the stable 409 instead of leaking the raw P2002 as an
@@ -562,18 +589,64 @@ export class CashService {
    * by application convention (PRD §20, DEC-020).
    */
   async openSession(input: OpenCashSessionInput): Promise<CashSessionResponse> {
+    return (await this.openSessionAttempt(input)).session;
+  }
+
+  /**
+   * UX-035 / TD-073: {@link openSession} with an OPTIONAL `Idempotency-Key`,
+   * answering whether this call replayed an earlier attempt.
+   */
+  async openSessionAttempt(
+    input: OpenCashSessionInput,
+    idempotencyKeyHeader?: unknown
+  ): Promise<{ session: CashSessionResponse; replay: boolean }> {
     const tenantId = await this.assertCashEnabled();
     await this.requirePermission(CASH_PERMISSIONS.openSession);
     const actorUserProfileId = this.requestContext.requireUserProfileId();
 
+    // UX-035 / TD-073: an OPTIONAL key makes the open recoverable. The session's
+    // id is derived from it, so a retry of an attempt whose answer was lost
+    // replays the session instead of hitting "already open", and a page that
+    // lost the answer can ask for it by key.
+    let sessionId: string | undefined;
+    if (idempotencyKeyHeader !== undefined) {
+      const parsedKey = cashMovementIdempotencyKey.safeParse(idempotencyKeyHeader);
+      if (!parsedKey.success) {
+        throw new DomainError("VALIDATION_FAILED", CASH_IDEMPOTENCY_KEY_REQUIRED_MESSAGE);
+      }
+      sessionId = sessionIdempotencyId(tenantId, parsedKey.data);
+    }
+    const openingAmount = decimalToScaleString(input.openingAmount, CASH_MONEY_SCALE);
+    const replayOf = (prior: CashSessionRow) => {
+      const sameRequest =
+        prior.registerId === input.registerId &&
+        decimalToScaleString(prior.openingAmount, CASH_MONEY_SCALE) === openingAmount;
+      if (!sameRequest) {
+        throw new DomainError("CONFLICT", CASH_IDEMPOTENCY_KEY_CONFLICT_MESSAGE);
+      }
+      return { session: toCashSessionResponse(prior), replay: true };
+    };
+
     try {
       const row = await this.prisma.$transaction(async (tx) => {
         // Tenant-safe resolution: a foreign or unknown register is the shared 404.
-        await this.cash.findRegisterById(input.registerId, tx);
+        const register = await this.cash.findRegisterById(input.registerId, tx);
+        // MB-002 (DEC-094 §5): a drawer is opened only by someone who works at
+        // its branch, and never in a deactivated branch.
+        await assertWorksAtBranch(
+          tx,
+          { tenantId, userProfileId: actorUserProfileId },
+          register.branchId
+        );
+        if (sessionId !== undefined) {
+          const prior = await this.cash.findSessionByIdOrNull(sessionId, tx);
+          if (prior !== null) return replayOf(prior);
+        }
         const openedByMembershipId = await this.cash.resolveActiveMembershipId(tx);
 
         const created = await this.cash.createSession(
           {
+            ...(sessionId === undefined ? {} : { id: sessionId }),
             registerId: input.registerId,
             openedByMembershipId,
             openingAmount: input.openingAmount,
@@ -596,11 +669,16 @@ export class CashService {
           tx
         );
 
-        return created;
+        return { session: toCashSessionResponse(created), replay: false };
       });
 
-      return toCashSessionResponse(row);
+      return row;
     } catch (error) {
+      // A concurrent retry of the same attempt won the PRIMARY KEY race.
+      if (sessionId !== undefined && isMovementIdConflict(error)) {
+        const prior = await this.cash.findSessionByIdOrNull(sessionId);
+        if (prior !== null) return replayOf(prior);
+      }
       // The partial one-OPEN-session index rejected a second open for this
       // register: surface the stable 409 instead of leaking the raw P2002 as an
       // INTERNAL 500. Anything else (an unrelated P2002, the shared 404, an
@@ -735,6 +813,38 @@ export class CashService {
       }
       throw error;
     }
+  }
+
+  /**
+   * UX-035 / TD-073: what an attempt recorded, by its `Idempotency-Key`. A page
+   * that lost the answer of an open or a movement asks here instead of
+   * re-sending or guessing by values; `404` means nothing was recorded under
+   * that key, which a retry with the SAME key can then safely complete.
+   */
+  async findSessionAttempt(key: unknown): Promise<CashSessionResponse> {
+    const tenantId = await this.assertCashEnabled();
+    await this.requirePermission(CASH_PERMISSIONS.read);
+    const parsedKey = cashMovementIdempotencyKey.safeParse(key);
+    if (!parsedKey.success) {
+      throw new DomainError("VALIDATION_FAILED", CASH_IDEMPOTENCY_KEY_REQUIRED_MESSAGE);
+    }
+    const row = await this.cash.findSessionByIdOrNull(
+      sessionIdempotencyId(tenantId, parsedKey.data)
+    );
+    if (row === null) throw new DomainError("NOT_FOUND", CASH_ATTEMPT_NOT_FOUND_MESSAGE);
+    return toCashSessionResponse(row);
+  }
+
+  async findMovementAttempt(key: unknown): Promise<CashMovementResponse> {
+    const tenantId = await this.assertCashEnabled();
+    await this.requirePermission(CASH_PERMISSIONS.read);
+    const parsedKey = cashMovementIdempotencyKey.safeParse(key);
+    if (!parsedKey.success) {
+      throw new DomainError("VALIDATION_FAILED", CASH_IDEMPOTENCY_KEY_REQUIRED_MESSAGE);
+    }
+    const row = await this.cash.findMovementById(movementIdempotencyId(tenantId, parsedKey.data));
+    if (row === null) throw new DomainError("NOT_FOUND", CASH_ATTEMPT_NOT_FOUND_MESSAGE);
+    return toCashMovementResponse(row);
   }
 
   /**

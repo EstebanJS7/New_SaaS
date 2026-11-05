@@ -5,6 +5,7 @@ import { createApiLogger, type ApiLogger } from "./common/http/api-logger.factor
 import { createFastifyAdapter } from "./common/http/fastify-adapter.factory.js";
 import { toLoggableError } from "./common/errors/loggable-error.js";
 import { apiEnv } from "./config/api-env.js";
+import { initErrorTracking } from "@newsaas/observability";
 async function bootstrap(logger: ApiLogger): Promise<void> {
   const envResult = apiEnv(process.env);
   if (!envResult.success) {
@@ -13,6 +14,15 @@ async function bootstrap(logger: ApiLogger): Promise<void> {
     logger.fatal({ missing: [...envResult.missing] }, envResult.error);
     process.exit(1);
   }
+
+  // DEC-093: off unless SENTRY_DSN is set.
+  const tracking = initErrorTracking({
+    service: "api",
+    dsn: envResult.env.SENTRY_DSN,
+    environment: envResult.env.SENTRY_ENVIRONMENT,
+    release: envResult.env.SENTRY_RELEASE,
+  });
+  logger.info({ errorTracking: tracking }, "Error tracking");
 
   // Single adapter construction point: request-id generation/echo, CORS
   // allowlist and security-header baseline.
@@ -24,6 +34,9 @@ async function bootstrap(logger: ApiLogger): Promise<void> {
       // HSTS only when the transport is HTTPS-grade (same posture that makes
       // session cookies Secure outside development).
       hstsEnabled: envResult.env.NODE_ENV !== "development",
+      // DEC-093: only the hops this deployment declares are trusted to say who
+      // the client is (Caddy and the web BFF on the internal network).
+      trustedProxies: envResult.env.API_TRUSTED_PROXIES,
     }),
     // Nest's console-based default logger is replaced by pino entirely.
     { logger: false, abortOnError: false }

@@ -1,3 +1,4 @@
+import { reportJobFailure, reportWorkerError } from "../observability/job-failure.js";
 import { Injectable, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import { Worker, type Job } from "bullmq";
 import { Redis } from "ioredis";
@@ -47,12 +48,14 @@ export class BrandingResetCleanupConsumer implements OnModuleInit, OnModuleDestr
     );
 
     this.worker.on("failed", (job, error) => {
+      reportJobFailure(BRANDING_RESET_CLEANUP_QUEUE, job, error);
       console.error("Branding reset cleanup job failed", {
         intentId: job?.data.intentId ?? null,
         error: sanitizeCleanupError(error),
       });
     });
     this.worker.on("error", (error) => {
+      reportWorkerError(BRANDING_RESET_CLEANUP_QUEUE, error);
       console.error("Branding reset cleanup worker error", sanitizeCleanupError(error));
     });
   }

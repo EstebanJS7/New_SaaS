@@ -37,7 +37,7 @@ function setup(args: {
   readonly branch?: { name: string } | null;
   readonly fiscalDocument?: { status: string; invoiceId: string; cdc: string | null } | null;
   readonly invoice?: { series: string; number: number | null } | null;
-  readonly profile?: { id: string; credential?: unknown } | null;
+  readonly profile?: { id: string; credential?: unknown; memberships?: unknown } | null;
   readonly portalAccess?: { id: string; status: string; credential?: unknown } | null;
 }) {
   // Locals hold the mocks: an assertion against `client.x.findFirst` would detach
@@ -352,6 +352,100 @@ describe("the staff password-recovery message (DAT-007)", () => {
     // person. A tenant predicate here would find nobody.
     expect(profileFind.mock.calls[0]?.[0].where).toEqual({ id: staffProfileId });
     expect(JSON.stringify(profileFind.mock.calls[0]?.[0]?.where)).not.toContain(tenantId);
+  });
+});
+
+describe("the staff account-activation message (ONB-001)", () => {
+  const invited = (memberships: unknown) => ({
+    id: staffProfileId,
+    credential: null,
+    memberships,
+  });
+
+  it("sends an activation link to an invited profile with no password yet", async () => {
+    const { builder } = setup({
+      delivery: staffDelivery,
+      profile: invited([{ tenant: { name: "Veterinaria San Roque" } }]),
+    });
+    const outcome = await builder.build(request);
+
+    if (outcome.outcome !== "READY") throw new Error(`expected READY, got ${outcome.outcome}`);
+    // It names the clinic: the person did not ask for this mail.
+    expect(outcome.subject).toBe("Invitación a Veterinaria San Roque");
+    expect(outcome.body).toContain("Te invitaron a Veterinaria San Roque");
+    expect(outcome.body).toContain(`${WEB_APP_BASE_URL}/reset-password?token=`);
+    expect(outcome.body).toContain("&activate=1");
+    expect(outcome.parameters[0]).toBe("Veterinaria San Roque");
+  });
+
+  it("gives the activation token 72 hours, not the recovery window", async () => {
+    const before = Date.now();
+    const { builder, tokenCreate } = setup({
+      delivery: staffDelivery,
+      profile: invited([{ tenant: { name: "Clínica A" } }]),
+    });
+    await builder.build(request);
+    const created = tokenCreate.mock.calls[0]?.[0] as {
+      data: { userProfileId: string; tokenHash: string; expiresAt: Date };
+    };
+    expect(created.data.userProfileId).toBe(staffProfileId);
+    expect(created.data.tokenHash).toMatch(/^[0-9a-f]{64}$/);
+    const lifetime = created.data.expiresAt.getTime() - before;
+    expect(lifetime).toBeGreaterThanOrEqual(72 * 60 * 60 * 1000 - 1000);
+    expect(lifetime).toBeLessThanOrEqual(72 * 60 * 60 * 1000 + 1000);
+  });
+
+  it("lists each clinic once when the profile was invited to several", async () => {
+    const { builder } = setup({
+      delivery: staffDelivery,
+      profile: invited([
+        { tenant: { name: "Clínica A" } },
+        { tenant: { name: "Clínica B" } },
+        { tenant: { name: "Clínica A" } },
+      ]),
+    });
+    const outcome = await builder.build(request);
+    if (outcome.outcome !== "READY") throw new Error(`expected READY, got ${outcome.outcome}`);
+    expect(outcome.parameters[0]).toBe("Clínica A, Clínica B");
+  });
+
+  it("sends nothing when the invitation no longer stands (no active membership)", async () => {
+    const { builder, tokenCreate } = setup({ delivery: staffDelivery, profile: invited([]) });
+    await expect(builder.build(request)).resolves.toMatchObject({
+      outcome: "UNAVAILABLE",
+      reasonCode: NOTIFICATION_DELIVERY_REASON.SOURCE_UNAVAILABLE,
+    });
+    expect(tokenCreate).not.toHaveBeenCalled();
+  });
+
+  it("asks only for ACTIVE memberships in ACTIVE clinics", async () => {
+    const { builder, profileFind } = setup({
+      delivery: staffDelivery,
+      profile: invited([{ tenant: { name: "Clínica A" } }]),
+    });
+    await builder.build(request);
+    const args = profileFind.mock.calls[0]?.[0] as unknown as {
+      select: { memberships: { where: unknown } };
+    };
+    expect(args.select.memberships.where).toEqual({
+      status: "ACTIVE",
+      tenant: { status: "ACTIVE" },
+    });
+  });
+
+  it("keeps sending a RECOVERY message to a profile that already has a password", async () => {
+    const { builder } = setup({
+      delivery: staffDelivery,
+      profile: {
+        id: staffProfileId,
+        credential: { userProfileId: staffProfileId },
+        memberships: [{ tenant: { name: "Clínica A" } }],
+      },
+    });
+    const outcome = await builder.build(request);
+    if (outcome.outcome !== "READY") throw new Error(`expected READY, got ${outcome.outcome}`);
+    expect(outcome.subject).toBe("Recuperación de contraseña");
+    expect(outcome.body).not.toContain("activate=1");
   });
 });
 

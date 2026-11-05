@@ -98,6 +98,14 @@ describe("PasswordRecoveryService — what a caller may learn", () => {
     expect(audits).toHaveLength(0);
   });
 
+  it("answers an INVITED profile (no credential, active membership) too (ONB-001)", async () => {
+    const { service, published } = harness({
+      profile: { id: PROFILE, credential: null, memberships: [{ id: "m-1" }] },
+    });
+    await service.requestReset("invited@clinic.test", IP, NOW);
+    expect(published).toHaveLength(1);
+  });
+
   it("does not query for an empty address, and stays silent", async () => {
     const { service, finds, published } = harness();
     await service.requestReset("   ", IP, NOW);

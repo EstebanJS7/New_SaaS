@@ -25,10 +25,12 @@ import {
   type InvoiceSnapshotRefusal,
   type InvoiceSnapshotRow,
 } from "./invoice-snapshot.read.js";
+import type { PaymentSnapshotRow } from "./payment-snapshot.js";
 
 const TENANT_A = "11111111-1111-4111-8111-111111111111";
 const TENANT_B = "22222222-2222-4222-8222-222222222222";
 const INVOICE_A = "44444444-4444-4444-8444-444444444444";
+const SALE_A = "55555555-5555-4555-8555-555555555555";
 const ITEM_A = "55555555-5555-4555-8555-555555555555";
 
 const RECEPTOR: DteReceptor = {
@@ -88,6 +90,7 @@ function invoice(overrides: Partial<InvoiceRow> = {}): InvoiceRow {
     id: INVOICE_A,
     currency: "PYG",
     confirmedAt: new Date("2026-10-10T14:02:26.123Z"),
+    saleId: SALE_A,
     ...overrides,
   };
 }
@@ -130,6 +133,28 @@ function classification(
   };
 }
 
+interface PaymentRow extends PaymentSnapshotRow {
+  readonly tenantId: string;
+  readonly saleId: string;
+}
+
+function cashPayment(overrides: Partial<PaymentRow> = {}): PaymentRow {
+  return {
+    tenantId: TENANT_A,
+    saleId: SALE_A,
+    method: "CASH",
+    amount: decimal("100.00"),
+    cardType: null,
+    cardBrand: null,
+    cardBrandName: null,
+    qrKind: null,
+    checkNumber: null,
+    checkBank: null,
+    otherDescription: null,
+    ...overrides,
+  };
+}
+
 class ScopedInvoiceClient implements InvoiceSnapshotReadClient {
   readonly invoiceArgs: Prisma.InvoiceFindFirstArgs[] = [];
   readonly lineArgs: Prisma.InvoiceLineFindManyArgs[] = [];
@@ -141,6 +166,10 @@ class ScopedInvoiceClient implements InvoiceSnapshotReadClient {
   readonly catalogItem: InvoiceSnapshotReadClient["catalogItem"];
   readonly taxRate: InvoiceSnapshotReadClient["taxRate"];
   readonly tenantTaxClassification: InvoiceSnapshotReadClient["tenantTaxClassification"];
+  readonly payment: InvoiceSnapshotReadClient["payment"];
+  readonly paymentArgs: Prisma.PaymentFindManyArgs[] = [];
+  /** PAY-DET-001: the sale's payments; one cash payment unless a case sets them. */
+  payments: readonly PaymentRow[] = [cashPayment()];
 
   constructor(
     private readonly invoices: readonly InvoiceRow[],
@@ -149,6 +178,17 @@ class ScopedInvoiceClient implements InvoiceSnapshotReadClient {
     private readonly rates: readonly RateRow[],
     private readonly classifications: readonly ClassificationRow[] = []
   ) {
+    this.payment = {
+      findMany: (args) => {
+        this.paymentArgs.push(args);
+        const where = args.where ?? {};
+        return Promise.resolve(
+          this.payments.filter(
+            (row) => row.tenantId === where.tenantId && row.saleId === where.saleId
+          )
+        );
+      },
+    };
     this.invoice = {
       findFirst: (args) => {
         this.invoiceArgs.push(args);
@@ -281,6 +321,7 @@ describe("createInvoiceSnapshotReader", () => {
       // `dDesMoneOpe` from Monedas_v150.xsd, never a caller's default.
       currencyDescription: "Guarani",
       receptor: RECEPTOR,
+      payments: [{ iTiPago: 1, amount: "100.00" }],
       lines: [
         {
           // `dCodInt`: the catalog item's own identity. `CatalogItem` has NO code
@@ -496,5 +537,70 @@ describe("createInvoiceSnapshotReader", () => {
       // was refused and how many the artifact publishes.
       expect((error as Error).message).toContain("ZZZ");
     }
+  });
+});
+
+describe("createInvoiceSnapshotReader — the sale's payments (PAY-DET-001)", () => {
+  function withPayments(payments: readonly PaymentRow[]) {
+    const reader = readFrom([invoice()], [line()], [classification("EXEMPT", "EXENTO")]);
+    reader.client.payments = payments;
+    return reader;
+  }
+
+  it("maps every method to its iTiPago, with the card, cheque and description detail", async () => {
+    const { read, client } = withPayments([
+      cashPayment({ amount: decimal("10.00") }),
+      cashPayment({
+        method: "CARD",
+        cardType: "CREDIT",
+        cardBrand: "VISA",
+        amount: decimal("20.00"),
+      }),
+      cashPayment({
+        method: "CARD",
+        cardType: "DEBIT",
+        cardBrand: "OTHER",
+        cardBrandName: "Bancard Débito",
+        amount: decimal("30.00"),
+      }),
+      cashPayment({ method: "BANK_TRANSFER", amount: decimal("5.00") }),
+      cashPayment({ method: "QR", qrKind: "WALLET", amount: decimal("6.00") }),
+      cashPayment({ method: "QR", qrKind: "BANK_APP", amount: decimal("7.00") }),
+      cashPayment({
+        method: "CHECK",
+        checkNumber: "00001234",
+        checkBank: "Banco Basa",
+        amount: decimal("8.00"),
+      }),
+      cashPayment({
+        method: "OTHER",
+        otherDescription: "Canje de puntos",
+        amount: decimal("9.00"),
+      }),
+    ]);
+    const snapshot = await read();
+
+    expect(snapshot?.payments).toEqual([
+      { iTiPago: 1, amount: "10.00" },
+      { iTiPago: 3, amount: "20.00", card: { iDenTarj: 1 } },
+      { iTiPago: 4, amount: "30.00", card: { iDenTarj: 99, brandName: "Bancard Débito" } },
+      { iTiPago: 5, amount: "5.00" },
+      { iTiPago: 7, amount: "6.00" },
+      { iTiPago: 21, amount: "7.00" },
+      { iTiPago: 2, amount: "8.00", cheque: { number: "00001234", bank: "Banco Basa" } },
+      { iTiPago: 99, amount: "9.00", otherDescription: "Canje de puntos" },
+    ]);
+    expect(client.paymentArgs[0]?.where).toEqual({ tenantId: TENANT_A, saleId: SALE_A });
+  });
+
+  it.each([
+    ["a card without credit/debit", { method: "CARD", cardBrand: "VISA" }],
+    ["a card without its brand", { method: "CARD", cardType: "CREDIT" }],
+    ["a QR without its kind", { method: "QR" }],
+    ["a cheque without its number", { method: "CHECK", checkBank: "Banco Basa" }],
+    ["an 'other' without a description", { method: "OTHER" }],
+  ] as const)("refuses %s with PAYMENT_DETAIL_MISSING", async (_label, overrides) => {
+    const { read } = withPayments([cashPayment(overrides)]);
+    await expect(refusalOf(read())).resolves.toBe("PAYMENT_DETAIL_MISSING");
   });
 });

@@ -7,6 +7,8 @@ import {
   REPORT_DUE_QUERY_INVALID_MESSAGE,
   REPORT_PERIOD_QUERY_INVALID_MESSAGE,
   REPORT_QUERY_NOT_ALLOWED_MESSAGE,
+  reportBranchOnlyQuerySchema,
+  reportBranchPeriodQuerySchema,
   reportDueQuerySchema,
   reportNoQuerySchema,
   reportPeriodQuerySchema,
@@ -18,6 +20,8 @@ import {
   type NewPatientsResponse,
   type PaymentMethodsResponse,
   type PurchasesResponse,
+  type ReportBranchOptionDto,
+  type ReportBranchPeriodQuery,
   type ReportDueQuery,
   type ReportPeriodQuery,
   type SalesByPeriodResponse,
@@ -60,7 +64,7 @@ export class ReportingController {
   @Get("sales-by-period")
   @RequirePermissions(REPORTING_PERMISSIONS.read)
   async salesByPeriod(@Query() query: unknown): Promise<SalesByPeriodResponse> {
-    return this.reporting.salesByPeriod(this.parsePeriod(query));
+    return this.reporting.salesByPeriod(this.parseBranchPeriod(query));
   }
 
   /**
@@ -70,7 +74,7 @@ export class ReportingController {
   @Get("payment-methods")
   @RequirePermissions(REPORTING_PERMISSIONS.read)
   async paymentMethods(@Query() query: unknown): Promise<PaymentMethodsResponse> {
-    return this.reporting.paymentMethods(this.parsePeriod(query));
+    return this.reporting.paymentMethods(this.parseBranchPeriod(query));
   }
 
   /**
@@ -80,7 +84,7 @@ export class ReportingController {
   @Get("sales-by-product-service")
   @RequirePermissions(REPORTING_PERMISSIONS.read)
   async salesByProductService(@Query() query: unknown): Promise<SalesByProductServiceResponse> {
-    return this.reporting.salesByProductService(this.parsePeriod(query));
+    return this.reporting.salesByProductService(this.parseBranchPeriod(query));
   }
 
   /**
@@ -91,7 +95,7 @@ export class ReportingController {
   @Get("cash-sessions")
   @RequirePermissions(REPORTING_PERMISSIONS.read)
   async cashSessions(@Query() query: unknown): Promise<CashSessionsResponse> {
-    return this.reporting.cashSessions(this.parsePeriod(query));
+    return this.reporting.cashSessions(this.parseBranchPeriod(query));
   }
 
   /**
@@ -102,7 +106,7 @@ export class ReportingController {
   @Get("cash-movements")
   @RequirePermissions(REPORTING_PERMISSIONS.read)
   async cashMovements(@Query() query: unknown): Promise<CashMovementsResponse> {
-    return this.reporting.cashMovements(this.parsePeriod(query));
+    return this.reporting.cashMovements(this.parseBranchPeriod(query));
   }
 
   /**
@@ -113,7 +117,7 @@ export class ReportingController {
   @Get("purchases")
   @RequirePermissions(REPORTING_PERMISSIONS.read)
   async purchases(@Query() query: unknown): Promise<PurchasesResponse> {
-    return this.reporting.purchases(this.parsePeriod(query));
+    return this.reporting.purchases(this.parseBranchPeriod(query));
   }
 
   /**
@@ -125,7 +129,7 @@ export class ReportingController {
   @Get("stock")
   @RequirePermissions(REPORTING_PERMISSIONS.read)
   async stock(@Query() query: unknown): Promise<StockReportResponse> {
-    return this.reporting.stock(this.parsePeriod(query));
+    return this.reporting.stock(this.parseBranchPeriod(query));
   }
 
   /**
@@ -138,8 +142,12 @@ export class ReportingController {
   @Get("low-stock")
   @RequirePermissions(REPORTING_PERMISSIONS.read)
   async lowStock(@Query() query: unknown): Promise<LowStockReportResponse> {
-    this.assertNoQuery(query);
-    return this.reporting.lowStock();
+    // MB-004: a branch is the ONE key a current-state view accepts.
+    const parsed = reportBranchOnlyQuerySchema.safeParse(query);
+    if (!parsed.success) {
+      throw new DomainError("VALIDATION_FAILED", REPORT_QUERY_NOT_ALLOWED_MESSAGE);
+    }
+    return this.reporting.lowStock(parsed.data);
   }
 
   /**
@@ -186,6 +194,29 @@ export class ReportingController {
   @RequirePermissions(REPORTING_PERMISSIONS.read)
   async dewormingDue(@Query() query: unknown): Promise<DewormingDueResponse> {
     return this.reporting.dewormingDue(this.parseHorizon(query));
+  }
+
+  /**
+   * MB-004: the clinic's branches for the report filter (`reports.read`), so
+   * the reports screen does not need `branches.manage` to offer the choice.
+   */
+  @Get("branches")
+  @RequirePermissions(REPORTING_PERMISSIONS.read)
+  async branches(@Query() query: unknown): Promise<ReportBranchOptionDto[]> {
+    this.assertNoQuery(query);
+    return this.reporting.branches();
+  }
+
+  /**
+   * MB-004: the period parser of the reports that take a branch — the same
+   * period keys plus an optional `branchId`, refused with the same message.
+   */
+  private parseBranchPeriod(query: unknown): ReportBranchPeriodQuery {
+    const parsed = reportBranchPeriodQuerySchema.safeParse(query);
+    if (!parsed.success) {
+      throw new DomainError("VALIDATION_FAILED", REPORT_PERIOD_QUERY_INVALID_MESSAGE);
+    }
+    return parsed.data;
   }
 
   /**

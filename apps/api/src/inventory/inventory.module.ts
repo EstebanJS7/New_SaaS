@@ -2,7 +2,7 @@ import { Module } from "@nestjs/common";
 import { AuditModule } from "../audit/audit.module.js";
 import { ContextModule } from "../context/context.module.js";
 import { RbacModule } from "../rbac/rbac.module.js";
-import { InventoryController } from "./inventory.controller.js";
+import { InventoryController, StockTransfersController } from "./inventory.controller.js";
 import { InventoryRepository } from "./inventory.repository.js";
 import { InventoryService } from "./inventory.service.js";
 
@@ -22,7 +22,7 @@ import { InventoryService } from "./inventory.service.js";
  */
 @Module({
   imports: [ContextModule, RbacModule, AuditModule],
-  controllers: [InventoryController],
+  controllers: [InventoryController, StockTransfersController],
   providers: [InventoryRepository, InventoryService],
 })
 export class InventoryModule {}

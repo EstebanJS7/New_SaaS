@@ -4,8 +4,18 @@ import type { SafeParseReturnType } from "zod";
 import { RequirePermissions } from "../rbac/require-permissions.decorator.js";
 import { INVENTORY_PERMISSIONS } from "./inventory.permissions.js";
 import { InventoryService } from "./inventory.service.js";
-import { createStockAdjustmentBody, stockMovementListQuery } from "./inventory.zod.js";
-import type { StockBalanceResponse, StockMovementResponse } from "./inventory.dto.js";
+import {
+  createStockAdjustmentBody,
+  createStockTransferBody,
+  stockBalanceListQuery,
+  stockMovementListQuery,
+} from "./inventory.zod.js";
+import type {
+  StockBalanceResponse,
+  StockBranchResponse,
+  StockMovementResponse,
+  StockTransferResponse,
+} from "./inventory.dto.js";
 
 /**
  * Private tenant-scoped inventory stock surface (EPIC-10 W2).
@@ -29,8 +39,21 @@ export class InventoryController {
   /** Lists the caller tenant's stock balances with their item identity. */
   @Get()
   @RequirePermissions(INVENTORY_PERMISSIONS.read)
-  async listBalances(): Promise<StockBalanceResponse[]> {
-    return this.inventory.listBalances();
+  async listBalances(@Query() query: unknown): Promise<StockBalanceResponse[]> {
+    // MB-003: one row per (item, branch); `?branchId=` narrows to one branch.
+    const filters = parseInput(stockBalanceListQuery, query, "Invalid stock balance filters.");
+    return this.inventory.listBalances(filters);
+  }
+
+  /**
+   * MB-003: the clinic's active branches (id and name only), so the stock
+   * screen can filter and offer a transfer destination without
+   * `branches.manage`.
+   */
+  @Get("branches")
+  @RequirePermissions(INVENTORY_PERMISSIONS.read)
+  async listBranches(): Promise<StockBranchResponse[]> {
+    return this.inventory.listStockBranches();
   }
 
   /**
@@ -59,6 +82,22 @@ export class InventoryController {
 }
 
 /** Rejects the whole request with 400 `VALIDATION_FAILED` when invalid. */
+/**
+ * MB-003 (DEC-094 §10): stock transfers between branches. Its own controller
+ * path under the same prefix keeps the single-verb shape the adjustment has.
+ */
+@Controller("inventory/stock/transfers")
+export class StockTransfersController {
+  constructor(private readonly inventory: InventoryService) {}
+
+  @Post()
+  @RequirePermissions(INVENTORY_PERMISSIONS.transfer)
+  async transfer(@Body() body: unknown): Promise<StockTransferResponse> {
+    const input = parseInput(createStockTransferBody, body, "Invalid stock transfer body.");
+    return this.inventory.transfer(input);
+  }
+}
+
 function parseInput<T>(
   schema: { safeParse: (value: unknown) => SafeParseReturnType<unknown, T> },
   value: unknown,

@@ -30,15 +30,21 @@ interface RegisterPanelProps {
   readonly createError: Error | null;
   /** The register the API just created, present only after a confirmed create. */
   readonly created: CashRegister | null;
+  /**
+   * MB-002: the branches the person works at. With two or more, the form asks
+   * where the new drawer goes; with one or none, it sends no branch and the API
+   * uses the only one (or explains what is missing).
+   */
+  readonly branches?: readonly { readonly id: string; readonly name: string }[];
 }
 
 /**
  * The register panel (EPIC-13 CASH-004).
  *
- * Lists the tenant's drawers and creates one by name. The name is the only field
- * — the tenant is server-resolved, `isActive` is server-owned and there is no
- * Branch dimension (DEC-020) — so this panel sends nothing else and the proxy
- * would refuse it if it did. A duplicate name is the stable `409` produced by
+ * Lists the tenant's drawers and creates one by name — plus, for a person who
+ * works at several branches, the branch it goes to (MB-002). The tenant is
+ * server-resolved and `isActive` is server-owned, so this panel sends nothing
+ * else and the proxy would refuse it if it did. A duplicate name is the stable `409` produced by
  * the tenant-unique index, rendered as its own outcome rather than a retryable
  * failure of the same intent.
  */
@@ -51,8 +57,11 @@ export function RegisterPanel({
   isCreating,
   createError,
   created,
+  branches = [],
 }: RegisterPanelProps): JSX.Element {
   const [name, setName] = useState("");
+  const mustChooseBranch = branches.length > 1;
+  const [branchId, setBranchId] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
 
   async function submitRegister(): Promise<void> {
@@ -62,9 +71,13 @@ export function RegisterPanel({
       setLocalError(error);
       return;
     }
+    if (mustChooseBranch && branchId === "") {
+      setLocalError("Elegí la sucursal de la caja.");
+      return;
+    }
     setLocalError(null);
     try {
-      await onCreate({ name: name.trim() });
+      await onCreate(mustChooseBranch ? { name: name.trim(), branchId } : { name: name.trim() });
       setName("");
     } catch {
       // The refusal is rendered from `createError`; the entered name is kept so
@@ -107,7 +120,13 @@ export function RegisterPanel({
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-foreground">{register.name}</p>
                   <p className="text-xs text-muted-foreground">
-                    {`#${shortId(register.id)} · creada ${formatDate(register.createdAt)}`}
+                    {[
+                      register.branchName ?? null,
+                      `#${shortId(register.id)}`,
+                      `creada ${formatDate(register.createdAt)}`,
+                    ]
+                      .filter((part): part is string => part !== null)
+                      .join(" · ")}
                   </p>
                 </div>
                 <span className="shrink-0 text-xs text-muted-foreground">
@@ -152,6 +171,28 @@ export function RegisterPanel({
               className={cashInputClassName}
             />
           </div>
+
+          {mustChooseBranch && (
+            <div className="space-y-2">
+              <label htmlFor="cash-register-branch" className="text-sm font-medium">
+                Sucursal
+              </label>
+              <select
+                id="cash-register-branch"
+                value={branchId}
+                onChange={(event) => setBranchId(event.target.value)}
+                disabled={isCreating || commandsBlocked}
+                className={cashInputClassName}
+              >
+                <option value="">Elegí la sucursal</option>
+                {branches.map((branch) => (
+                  <option key={branch.id} value={branch.id}>
+                    {branch.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {localError !== null && (
             <p role="alert" data-testid="register-name-error" className="text-sm text-destructive">

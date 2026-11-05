@@ -3,6 +3,7 @@ import { Inject, Injectable } from "@nestjs/common";
 // `Prisma` provides the exact `Decimal` type of the opening amount.
 import { Prisma, PrismaService } from "@newsaas/database";
 import { DomainError } from "@newsaas/shared";
+import type { BranchScopeClient } from "../branches/branch-scope.js";
 import { RequestContextService } from "../context/request-context.service.js";
 
 /**
@@ -24,6 +25,8 @@ export interface CashRegisterRow {
   tenantId: string;
   name: string;
   isActive: boolean;
+  /** MB-002 (DEC-094 §9): the branch this drawer is in. */
+  branchId: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -77,6 +80,8 @@ export interface CashSessionRow {
  */
 export interface CashRegisterCreateData {
   readonly name: string;
+  /** MB-002: resolved server-side from the caller's working branches. */
+  readonly branchId: string;
 }
 
 /**
@@ -87,6 +92,8 @@ export interface CashRegisterCreateData {
  * string validated by the request contract before it reaches this seam.
  */
 export interface CashSessionCreateData {
+  /** UX-035: the deterministic id derived from an `Idempotency-Key`, when one was sent. */
+  readonly id?: string;
   readonly registerId: string;
   readonly openedByMembershipId: string;
   readonly openingAmount: string;
@@ -111,6 +118,8 @@ export interface CashMovementListFilters {
 export interface CashRegisterWhere {
   id?: string;
   tenantId?: string;
+  /** MB-002: the drawers of one branch. */
+  branchId?: string;
 }
 
 /** Predicate fields the tenant-scoped session queries are allowed to build. */
@@ -118,6 +127,8 @@ export interface CashSessionWhere {
   id?: string;
   tenantId?: string;
   status?: CashSessionStatusValue;
+  /** MB-002: sessions of the drawers of one branch. */
+  registerId?: { in: string[] };
 }
 
 /** Deterministic ordering clauses accepted by the cash list delegates. */
@@ -259,6 +270,8 @@ export interface CashMovementCreateData {
   readonly amount: Prisma.Decimal | string;
   readonly reason?: string | null;
   readonly direction?: CashMovementDirectionValue | null;
+  /** SAL-REV-001: the sale this movement belongs to (DEC-089). */
+  readonly saleId?: string | null;
 }
 
 /**
@@ -320,6 +333,9 @@ export interface CashTx extends CashRawClient {
   cashSession: CashSessionDelegate;
   cashMovement: CashMovementDelegate;
   tenantMembership: CashMembershipLookup;
+  /** MB-002: where the caller works, and the branch names a drawer list shows. */
+  membershipBranch: BranchScopeClient["membershipBranch"];
+  branch: BranchScopeClient["branch"];
 }
 
 /** Single stable message behind every cash-register 404 (byte-equivalence by construction). */
@@ -344,6 +360,12 @@ export const CASH_SESSION_REQUIRED_MESSAGE = "A cash payment requires an open ca
  */
 export const CASH_SESSIONS_AMBIGUOUS_MESSAGE =
   "More than one cash session is open for this tenant.";
+
+/*
+ * MB-002 (DEC-094 §9): both messages above now speak about the sale's BRANCH —
+ * the open session must be one of a register in that branch. The strings stay
+ * byte-identical because the web maps them to its Spanish copy.
+ */
 
 /**
  * Stable `403 FORBIDDEN` message for a request whose own ACTIVE membership
@@ -397,7 +419,9 @@ export class CashRepository {
   async createRegister(data: CashRegisterCreateData, tx?: CashTx): Promise<CashRegisterRow> {
     const tenantId = this.requestContext.requireTenantId();
     const client = tx ?? this.prisma;
-    return client.cashRegister.create({ data: { name: data.name, tenantId } });
+    return client.cashRegister.create({
+      data: { name: data.name, branchId: data.branchId, tenantId },
+    });
   }
 
   /**
@@ -434,6 +458,18 @@ export class CashRepository {
     return row;
   }
 
+  /** MB-002: `{ id -> name }` for the given branches of the caller's tenant. */
+  async branchNames(ids: readonly string[], tx?: CashTx): Promise<Map<string, string>> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    if (ids.length === 0) return new Map();
+    const rows = await client.branch.findMany({
+      where: { tenantId, id: { in: [...new Set(ids)] } },
+      select: { id: true, name: true },
+    });
+    return new Map(rows.map((row) => [row.id, row.name]));
+  }
+
   /**
    * Opens one session against an in-tenant register. `tenantId` is resolved from
    * the request context, `status` is server-owned (`OPEN`) and the opener is the
@@ -451,6 +487,7 @@ export class CashRepository {
     const client = tx ?? this.prisma;
     return client.cashSession.create({
       data: {
+        ...(data.id === undefined ? {} : { id: data.id }),
         registerId: data.registerId,
         openedByMembershipId: data.openedByMembershipId,
         openingAmount: data.openingAmount,
@@ -628,6 +665,9 @@ export class CashRepository {
   }
 
   /**
+   * MB-002: the search is narrowed to the registers of `branchId`, the sale's
+   * branch, so a branch's cash goes to that branch's drawer.
+   *
    * Resolves the caller tenant's SINGLE open cash session for a completion that
    * needs somewhere to attribute its CASH movements (DEC-020, resolution 4 of
    * 2026-09-29). The sale carries no register reference and a tenant may hold
@@ -638,13 +678,22 @@ export class CashRepository {
    * body — and the deterministic `(createdAt, id)` ordering keeps the lookup
    * stable, though the result is rejected when it is not unique.
    */
-  async resolveSingleOpenSession(tx?: CashTx): Promise<CashSessionRow> {
+  async resolveSingleOpenSession(branchId: string, tx?: CashTx): Promise<CashSessionRow> {
     const tenantId = this.requestContext.requireTenantId();
     const client = tx ?? this.prisma;
-    const sessions = await client.cashSession.findMany({
-      where: { tenantId, status: "OPEN" },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-    });
+    // MB-002: only the drawers of the sale's branch can take its cash.
+    const registers = await client.cashRegister.findMany({ where: { tenantId, branchId } });
+    const sessions =
+      registers.length === 0
+        ? []
+        : await client.cashSession.findMany({
+            where: {
+              tenantId,
+              status: "OPEN",
+              registerId: { in: registers.map((register) => register.id) },
+            },
+            orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+          });
     if (sessions.length === 0) {
       throw new DomainError("CONFLICT", CASH_SESSION_REQUIRED_MESSAGE);
     }
@@ -672,6 +721,34 @@ export class CashRepository {
         sessionId: data.sessionId,
         type: "SALE",
         amount: data.amount,
+        saleId: data.saleId ?? null,
+        tenantId,
+      },
+    });
+  }
+
+  /**
+   * Appends one immutable `REFUND` cash movement for a sale reversal ([[SAL-REV-001]]).
+   * Like {@link createSaleMovement}, the kind is fixed here and the tenant comes from
+   * the request context; the reason is mandatory (the database CHECK requires it for
+   * every kind but SALE/INCOME) and the sale reference links the refund to the sale
+   * it gives the money back for. The session is the CURRENT open one, which need not
+   * be the session the sale was paid into.
+   */
+  async createRefundMovement(
+    data: CashMovementCreateData & { readonly saleId: string; readonly reason: string },
+    tx?: CashTx
+  ): Promise<CashMovementRow> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    return client.cashMovement.create({
+      data: {
+        registerId: data.registerId,
+        sessionId: data.sessionId,
+        type: "REFUND",
+        amount: data.amount,
+        reason: data.reason,
+        saleId: data.saleId,
         tenantId,
       },
     });
@@ -709,6 +786,17 @@ export class CashRepository {
 
   /** One movement of the caller's ACTIVE tenant by id (DEC-024 replay path), or
    * `null`; another tenant's id is never readable. */
+  /**
+   * UX-035: one session of the caller's tenant by id, or `null` — the
+   * idempotent open's replay probe and the attempt lookup, which must not throw
+   * the shared `404` for "not created (yet)".
+   */
+  async findSessionByIdOrNull(id: string, tx?: CashTx): Promise<CashSessionRow | null> {
+    const tenantId = this.requestContext.requireTenantId();
+    const client = tx ?? this.prisma;
+    return client.cashSession.findFirst({ where: { id, tenantId } });
+  }
+
   async findMovementById(id: string, tx?: CashTx): Promise<CashMovementRow | null> {
     const tenantId = this.requestContext.requireTenantId();
     const client = tx ?? this.prisma;

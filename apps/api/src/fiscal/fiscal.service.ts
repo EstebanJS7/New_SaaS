@@ -293,6 +293,7 @@ function toResponse(row: FiscalDocumentRow): FiscalDocumentResponse {
   return {
     id: row.id,
     invoiceId: row.invoiceId,
+    creditNoteId: row.creditNoteId ?? null,
     provider: row.provider,
     status: row.status,
     attemptCount: row.attemptCount,

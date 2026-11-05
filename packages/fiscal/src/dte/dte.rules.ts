@@ -34,14 +34,24 @@ import {
   type DteRequest,
   type DteXmlElement,
 } from "./dte.types.js";
+import {
+  COND_OPE_DESCRIPTIONS,
+  DEN_TARJ_DESCRIPTIONS,
+  DEN_TARJ_OTRO,
+  IND_PRES_DESCRIPTIONS,
+  TIPO_PAGO_DESCRIPTIONS,
+  TIPO_PAGO_OTRO,
+} from "./dte.payment.js";
 
 export type DteValidationFailure =
   | "INVALID_ACTIVITY_COUNT"
+  | "INVALID_ASSOCIATED_DOCUMENT"
   | "INVALID_ASSOCIATED_DOCUMENT_COUNT"
   | "INVALID_CDC"
   | "INVALID_CDC_FIELD"
   | "INVALID_CURRENCY"
   | "INVALID_DATE_BOUND"
+  | "INVALID_DOCUMENT_TYPE_GROUP"
   | "INVALID_DOCUMENT_NUMBER"
   | "INVALID_DV_ID"
   | "INVALID_EMITTER"
@@ -69,6 +79,18 @@ export class DteValidationError extends Error {
 }
 
 /** `tCDC` (§21.3): 44 characters, position 10 admits `A`-`D`. */
+/** `tdDesMotEmi`, keyed by `tiMotEmi` (DE_Types_v150.xsd, Manual E401/E402). */
+export const CREDIT_NOTE_MOTIVE_DESCRIPTIONS: Readonly<Record<number, string>> = Object.freeze({
+  1: "Devolución y Ajuste de precios",
+  2: "Devolución",
+  3: "Descuento",
+  4: "Bonificación",
+  5: "Crédito incobrable",
+  6: "Recupero de costo",
+  7: "Recupero de gasto",
+  8: "Ajuste de precio",
+});
+
 const CDC_PATTERN = /^[0-9]{2}([0-9]{7}[0-9A-D])[0-9]{34}$/;
 /** `tDVer` (§21.3). */
 const SINGLE_DIGIT_PATTERN = /^[0-9]$/;
@@ -148,6 +170,115 @@ export function assertValidDteRequest(request: DteRequest): void {
   assertTimbrado(request);
   assertGeneralOperation(request);
   assertCamposFueraFirma(request);
+  assertDocumentTypeGroups(request);
+}
+
+/**
+ * Manual Técnico v150 rules that tie groups to `C002 iTiDE` (SIFEN-BASELINE §27).
+ * The schema makes every one of these groups optional, so only these rules can
+ * stop a document SIFEN would reject on reception:
+ *
+ * ```text
+ * D011 iTipTra     No informar si C002 ≠ 1 o 4
+ * E400 gCamNCDE    1450 obligatorio si C002 = 5 o 6 ; 1451 no informar si C002 ≠ 5 o 6
+ * E402 dDesMotEmi  1452 must match E401
+ * H001 gCamDEAsoc  2400 obligatorio si C002 = 4, 5, 6 (NT 023) ; 2415 once for 4, 5, 6
+ * H002/H004        2434 no Constancia (3) for 1, 5, 6, 7 ; 2402 CDC when H002 = 1
+ * H004             2414 a note may only reference a Factura electrónica (CDC "01…")
+ * ```
+ *
+ * PAY-DET-001 (DEC-091, TD-074) adds the factura's own groups:
+ *
+ * ```text
+ * E010 gCamFE      1350 obligatorio si C002 = 1 ; 1351 no informar si C002 ≠ 1 ; 1352 E012
+ * E600 gCamCond    1500 obligatorio si C002 = 1 o 4 ; 1501 no informar si ≠ ; 1502 E602
+ * E605 gPaConEIni  1550 obligatorio si E601 = 1 ; 1554 E607 matches E606
+ * E620 gPagTarCD   1600 si E606 = 3 o 4 ; 1601 no informar si ≠ ; 1602 E622 matches E621
+ * E630 gPagCheq    se activa si E606 = 2 ; dNumCheq eight digits
+ * ```
+ */
+function assertDocumentTypeGroups(request: DteRequest): void {
+  const type = request.gTimb.iTiDE;
+  const groups = request.gDtipDE ?? [];
+  const notes = groups.filter((element) => element.name === "gCamNCDE");
+  const isNote = type === 5 || type === 6;
+  if (isNote && notes.length !== 1) {
+    throw new DteValidationError(
+      "INVALID_DOCUMENT_TYPE_GROUP",
+      "E400/1450: a Nota de Crédito or Débito carries exactly one gCamNCDE."
+    );
+  }
+  if (!isNote && notes.length > 0) {
+    throw new DteValidationError(
+      "INVALID_DOCUMENT_TYPE_GROUP",
+      "E400a/1451: gCamNCDE must not be informed unless iTiDE is 5 or 6."
+    );
+  }
+  const note = notes[0];
+  if (note !== undefined) {
+    const motive = note.children?.find((element) => element.name === "iMotEmi")?.value;
+    const description = note.children?.find((element) => element.name === "dDesMotEmi")?.value;
+    const expected =
+      motive === undefined ? undefined : CREDIT_NOTE_MOTIVE_DESCRIPTIONS[Number(motive)];
+    if (expected === undefined || description !== expected) {
+      throw new DteValidationError(
+        "INVALID_DOCUMENT_TYPE_GROUP",
+        "E401/E402/1452: iMotEmi must be 1..8 and dDesMotEmi its exact description."
+      );
+    }
+    const itemIndex = groups.findIndex((element) => element.name === "gCamItem");
+    if (itemIndex !== -1 && itemIndex < groups.indexOf(note)) {
+      throw new DteValidationError(
+        "INVALID_DOCUMENT_TYPE_GROUP",
+        "tgDtipDE orders gCamNCDE before gCamItem."
+      );
+    }
+  }
+
+  assertFacturaGroups(type, groups);
+
+  const iTipTra = request.gDatGralOpe.gOpeCom?.iTipTra;
+  if (iTipTra !== undefined && type !== 1 && type !== 4) {
+    throw new DteValidationError(
+      "INVALID_GENERAL_OPERATION",
+      "D011: iTipTra must not be informed unless iTiDE is 1 or 4."
+    );
+  }
+
+  const associated = request.gCamDEAsoc ?? [];
+  if ([4, 5, 6].includes(type) && associated.length !== 1) {
+    throw new DteValidationError(
+      "INVALID_ASSOCIATED_DOCUMENT_COUNT",
+      "H001/2400 and H001b/2415: document types 4, 5 and 6 carry exactly one gCamDEAsoc."
+    );
+  }
+  if (isNote) {
+    for (const group of associated) {
+      const kind = group.find((element) => element.name === "iTipDocAso")?.value;
+      const cdc = group.find((element) => element.name === "dCdCDERef")?.value;
+      if (kind === "3") {
+        throw new DteValidationError(
+          "INVALID_ASSOCIATED_DOCUMENT",
+          "H002a/2434: a note cannot reference a Constancia electrónica."
+        );
+      }
+      if (kind === "1") {
+        if (cdc === undefined) {
+          throw new DteValidationError(
+            "INVALID_ASSOCIATED_DOCUMENT",
+            "H004/2402: an electronic associated document needs dCdCDERef."
+          );
+        }
+        assertTcdc(cdc);
+        if (!cdc.startsWith("01")) {
+          throw new DteValidationError(
+            "INVALID_ASSOCIATED_DOCUMENT",
+            "H001a/2414: a note may only reference a Factura electrónica (a CDC starting 01)."
+          );
+        }
+      }
+    }
+  }
 }
 
 /** `tCDC` (§21.3). Exported so the case can be proven without building a DE. */
@@ -592,4 +723,120 @@ function normalizeDecimal(value: string): { readonly integer: bigint; readonly s
   }
   const [integerPart, fractionPart = ""] = value.split(".");
   return { integer: BigInt(`${integerPart}${fractionPart}`), scale: fractionPart.length };
+}
+
+function childValueOf(element: DteXmlElement, name: string): string | undefined {
+  return element.children?.find((child) => child.name === name)?.value;
+}
+
+function groupRefusal(message: string): DteValidationError {
+  return new DteValidationError("INVALID_DOCUMENT_TYPE_GROUP", message);
+}
+
+/** The `gCamFE` / `gCamCond` rules of PAY-DET-001 (see `assertDocumentTypeGroups`). */
+function assertFacturaGroups(type: number, groups: readonly DteXmlElement[]): void {
+  const fe = groups.filter((element) => element.name === "gCamFE");
+  if (type === 1 && fe.length !== 1) {
+    throw groupRefusal("E010/1350: a Factura electrónica carries exactly one gCamFE.");
+  }
+  if (type !== 1 && fe.length > 0) {
+    throw groupRefusal("E010a/1351: gCamFE must not be informed unless iTiDE is 1.");
+  }
+  const feGroup = fe[0];
+  if (feGroup !== undefined) {
+    const code = Number(childValueOf(feGroup, "iIndPres"));
+    const expected = IND_PRES_DESCRIPTIONS[code];
+    const description = childValueOf(feGroup, "dDesIndPres") ?? "";
+    const valid =
+      code === 9 ? description.length >= 10 && description.length <= 30 : description === expected;
+    if (!valid) {
+      throw groupRefusal(
+        "E011/E012/1352: iIndPres must be 1..6 or 9 and dDesIndPres its description."
+      );
+    }
+  }
+
+  const cond = groups.filter((element) => element.name === "gCamCond");
+  const needsCond = type === 1 || type === 4;
+  if (needsCond && cond.length !== 1) {
+    throw groupRefusal("E600/1500: document types 1 and 4 carry exactly one gCamCond.");
+  }
+  if (!needsCond && cond.length > 0) {
+    throw groupRefusal("E600a/1501: gCamCond must not be informed unless iTiDE is 1 or 4.");
+  }
+  const condGroup = cond[0];
+  if (condGroup === undefined) return;
+  const itemIndex = groups.findIndex((element) => element.name === "gCamItem");
+  if (itemIndex !== -1 && itemIndex < groups.indexOf(condGroup)) {
+    throw groupRefusal("tgDtipDE orders gCamCond before gCamItem.");
+  }
+  const condition = Number(childValueOf(condGroup, "iCondOpe"));
+  if (COND_OPE_DESCRIPTIONS[condition] !== childValueOf(condGroup, "dDCondOpe")) {
+    throw groupRefusal("E601/E602/1502: iCondOpe must be 1 or 2 and dDCondOpe its description.");
+  }
+  const payments = (condGroup.children ?? []).filter((element) => element.name === "gPaConEIni");
+  if (condition === 1 && payments.length === 0) {
+    throw groupRefusal("E605/1550: a cash operation (iCondOpe = 1) needs at least one gPaConEIni.");
+  }
+  for (const payment of payments) {
+    assertPayment(payment);
+  }
+}
+
+function assertPayment(payment: DteXmlElement): void {
+  const kind = Number(childValueOf(payment, "iTiPago"));
+  const description = childValueOf(payment, "dDesTiPag") ?? "";
+  const known = TIPO_PAGO_DESCRIPTIONS[kind];
+  if (kind === TIPO_PAGO_OTRO) {
+    if (description.trim().length < 4 || description.length > 30) {
+      throw groupRefusal("E607: an iTiPago = 99 payment describes itself in 4 to 30 characters.");
+    }
+  } else if (known === undefined || description !== known) {
+    throw groupRefusal(
+      "E606/E607/1554: iTiPago must be a tiTiPago code and dDesTiPag its description."
+    );
+  }
+
+  const card = payment.children?.find((element) => element.name === "gPagTarCD");
+  const isCard = kind === 3 || kind === 4;
+  if (isCard && card === undefined) {
+    throw groupRefusal("E620/1600: a card payment (iTiPago 3 or 4) needs gPagTarCD.");
+  }
+  if (!isCard && card !== undefined) {
+    throw groupRefusal("E620a/1601: gPagTarCD is only for card payments.");
+  }
+  if (card !== undefined) {
+    const brand = Number(childValueOf(card, "iDenTarj"));
+    const brandDescription = childValueOf(card, "dDesDenTarj") ?? "";
+    const validBrand =
+      brand === DEN_TARJ_OTRO
+        ? brandDescription.trim().length >= 4 && brandDescription.length <= 20
+        : DEN_TARJ_DESCRIPTIONS[brand] === brandDescription;
+    if (!validBrand) {
+      throw groupRefusal(
+        "E621/E622/1602: iDenTarj must be a tiDenTarj code and dDesDenTarj its description."
+      );
+    }
+    if (!["1", "2", "9"].includes(childValueOf(card, "iForProPa") ?? "")) {
+      throw groupRefusal("E626: iForProPa must be 1, 2 or 9.");
+    }
+  }
+
+  const cheque = payment.children?.find((element) => element.name === "gPagCheq");
+  if (kind === 2 && cheque === undefined) {
+    throw groupRefusal("E630: a cheque payment (iTiPago 2) needs gPagCheq.");
+  }
+  if (kind !== 2 && cheque !== undefined) {
+    throw groupRefusal("E630: gPagCheq is only for cheque payments.");
+  }
+  if (cheque !== undefined) {
+    const bank = childValueOf(cheque, "dBcoEmi") ?? "";
+    if (
+      !/^[0-9]{8}$/.test(childValueOf(cheque, "dNumCheq") ?? "") ||
+      bank.trim().length < 4 ||
+      bank.length > 20
+    ) {
+      throw groupRefusal("E631/E632: dNumCheq is eight digits and dBcoEmi 4 to 20 characters.");
+    }
+  }
 }

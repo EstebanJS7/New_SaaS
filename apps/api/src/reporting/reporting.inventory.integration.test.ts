@@ -560,3 +560,76 @@ describe("the inventory reports (REP-005)", () => {
     });
   });
 });
+
+/**
+ * MB-003 (DEC-094 §10/§11): until MB-004 adds a branch filter, the stock
+ * report is «Todas»: one row per item summing every branch, and a transfer
+ * between two branches is neither inbound nor outbound for the clinic.
+ */
+describe("Stock report across branches (MB-003)", () => {
+  let booted: BootedTestApp;
+  let fixture: InventoryFixture;
+
+  beforeAll(async () => {
+    booted = await bootTestApp();
+    fixture = seedInventory(booted.db);
+  });
+
+  afterAll(async () => {
+    await booted.close();
+  });
+
+  it("sums the balance of every branch and leaves transfers out of the flow", async () => {
+    const db = booted.db;
+    const tenantId = fixture.a.id;
+    const central = [...db.tables.branches.values()].find((row) => row.tenantId === tenantId);
+    if (!central) throw new Error("fixture: the tenant has no first branch");
+    const norte = db.prisma.branch.create({ data: { tenantId, name: "Norte" } });
+    const itemId = fixture.createItem(fixture.a, { name: "Pipeta" }).id;
+
+    for (const [branchId, quantity] of [
+      [central.id, "4.000"],
+      [norte.id, "2.000"],
+    ] as const) {
+      db.prisma.stockBalance.upsert({
+        where: { tenantId_catalogItemId_branchId: { tenantId, catalogItemId: itemId, branchId } },
+        create: { tenantId, catalogItemId: itemId, branchId, quantity },
+        update: { quantity },
+      });
+    }
+    const transferId = randomUUID();
+    for (const [type, branchId, quantity] of [
+      ["TRANSFER_OUT", central.id, "-2.000"],
+      ["TRANSFER_IN", norte.id, "2.000"],
+    ] as const) {
+      const created = db.prisma.stockMovement.create({
+        data: {
+          tenantId,
+          catalogItemId: itemId,
+          branchId,
+          transferId,
+          type,
+          quantity,
+          reason: "x",
+        },
+      });
+      const stored = db.tables.stockMovements.get(created.id);
+      if (!stored) throw new Error("fixture: movement not stored");
+      stored.createdAt = new Date("2026-06-10T12:00:00.000Z");
+    }
+
+    const response = await supertest(booted.app.getHttpServer())
+      .get(`/reports/stock?${PERIOD_QUERY}`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(200);
+    const row = (response.body as StockReportResponse).rows.find(
+      (candidate) => candidate.catalogItemId === itemId
+    );
+    expect(row).toMatchObject({
+      quantity: "6.000",
+      inbound: "0.000",
+      outbound: "0.000",
+      net: "0.000",
+    });
+  });
+});

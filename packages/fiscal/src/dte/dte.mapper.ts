@@ -39,6 +39,7 @@
  */
 
 import { composeCdc } from "./dte.cdc.js";
+import { buildCamCond, buildCamFE, type DtePaymentSnapshot } from "./dte.payment.js";
 import { DteValidationError } from "./dte.rules.js";
 import {
   AFEC_IVA_DESCRIPTIONS,
@@ -62,6 +63,8 @@ const QUANTITY_SCALE = 8;
 const MONEY_SCALE = 8;
 const PROPORTIONALITY_SCALE = 8;
 const PROPORTIONALITY_FULL = "100.00000000";
+/** `dMonTiPag` is `tMontoBase4`. */
+const PAYMENT_SCALE = 4;
 
 export interface ConfirmedInvoiceLineSnapshot {
   /** `dCodInt` — 1..50 characters; the invoice's `catalogItemId` maps here. */
@@ -101,6 +104,12 @@ export interface ConfirmedInvoiceSnapshot {
   readonly currencyDescription: string;
   readonly lines: readonly ConfirmedInvoiceLineSnapshot[];
   readonly receptor: DteReceptor;
+  /**
+   * PAY-DET-001 / DEC-091: the sale's payments, in the DE's vocabulary. Required
+   * for a factura (`iTiDE = 1`), which carries `gCamFE` and `gCamCond` (rules
+   * 1350, 1500, 1550); ignored for any other type, which must not carry them.
+   */
+  readonly payments?: readonly DtePaymentSnapshot[];
 }
 
 /**
@@ -204,6 +213,28 @@ export function buildDteRequestFromInvoice(input: DteMappingInput): MappedDteReq
   }
 
   const totals = computeTotals(invoice.lines);
+
+  // PAY-DET-001: a factura opens gDtipDE with gCamFE and gCamCond, in tgDtipDE's
+  // order (gCamFE, gCamAE, gCamNCDE, gCamNRE, gCamCond, gCamItem).
+  const isFactura = profile.timbrado.iTiDE === 1;
+  if (isFactura && (invoice.payments === undefined || invoice.payments.length === 0)) {
+    throw new DteValidationError(
+      "INVALID_DOCUMENT_TYPE_GROUP",
+      "E605/1550: a cash factura needs at least one payment to describe in gCamCond."
+    );
+  }
+  const typeGroups: DteXmlElement[] = isFactura
+    ? [
+        buildCamFE(),
+        buildCamCond({
+          payments: invoice.payments ?? [],
+          currency: invoice.currency,
+          currencyDescription: invoice.currencyDescription,
+          scaleAmount: (value) => scale(value, PAYMENT_SCALE, "dMonTiPag"),
+        }),
+      ]
+    : [];
+
   const request: DteRequest = {
     cdc: identity.cdc,
     dDVId: identity.dDVId,
@@ -228,7 +259,7 @@ export function buildDteRequestFromInvoice(input: DteMappingInput): MappedDteReq
       },
       gDatRec: invoice.receptor,
     },
-    gDtipDE: invoice.lines.map(itemElement),
+    gDtipDE: [...typeGroups, ...invoice.lines.map(itemElement)],
     gTotSub: totalsElement(totals),
     // `R3-D208C-OPTIN`: D208c is evaluated only when a total is present, so the
     // mapper always supplies the one the currency names -- `F014` for PYG, `F023`

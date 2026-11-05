@@ -347,10 +347,13 @@ export interface StockMovementRow {
    * Ledger kinds shipped so far: EPIC-10 `ADJUSTMENT`, EPIC-11 `PURCHASE` and
    * EPIC-12 POS-003 `SALE` (the signed negative output a completion writes).
    */
-  type: "ADJUSTMENT" | "PURCHASE" | "SALE";
+  type: "ADJUSTMENT" | "PURCHASE" | "SALE" | "SALE_REVERSAL" | "TRANSFER_OUT" | "TRANSFER_IN";
   quantity: string;
   reason: string;
   reversesMovementId: string | null;
+  /** MB-003: the branch whose stock moved, and the transfer pair it belongs to. */
+  branchId: string;
+  transferId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -364,6 +367,8 @@ export interface StockBalanceRow {
   id: string;
   tenantId: string;
   catalogItemId: string;
+  /** MB-003: the branch this balance is kept in. */
+  branchId: string;
   quantity: string;
   createdAt: Date;
   updatedAt: Date;
@@ -378,6 +383,8 @@ export interface StockBalanceRow {
 export interface StockMovementWhere {
   tenantId: string;
   catalogItemId?: string;
+  /** MB-003: one branch's ledger. */
+  branchId?: string;
   /**
    * Report-dated movement range (EPIC-18 REP-005): HALF-OPEN `[gte, lt)` on the
    * movement's own `createdAt`. `stock_movement` is append-only and immutable, so
@@ -433,6 +440,8 @@ export interface PurchaseHeaderRow {
   id: string;
   tenantId: string;
   supplierId: string;
+  /** MB-003: the branch the goods are received into. */
+  branchId: string;
   status: PurchaseStatusRow;
   /** Business instant of the DRAFT -> RECEIVED transition; `null` until then. */
   receivedAt: Date | null;
@@ -466,6 +475,8 @@ export interface PurchaseWhere {
   id?: string;
   tenantId?: string;
   status?: PurchaseStatusRow;
+  /** MB-004: one branch's purchases. */
+  branchId?: string;
   /**
    * Report-dated receive range (EPIC-18 REP-004): HALF-OPEN `[gte, lt)` on the
    * business instant `receivedAt`. A `null` instant matches no bound, exactly as
@@ -510,6 +521,8 @@ export interface SaleHeaderRow {
   tenantId: string;
   customerId: string | null;
   currency: string;
+  /** MB-002: where the sale happens. */
+  branchId: string;
   status: SaleStatusRow;
   /** Business instant of the DRAFT -> COMPLETED transition; `null` until then. */
   completedAt: Date | null;
@@ -554,6 +567,8 @@ export interface SaleWhere {
   id?: string;
   tenantId?: string;
   status?: SaleStatusRow;
+  /** MB-004: one branch's sales. */
+  branchId?: string;
   /**
    * Half-open business-instant window (EPIC-18 REP-002): `completedAt >= gte`
    * AND `completedAt < lt`. A row whose `completedAt` is `null` (a draft) is
@@ -895,6 +910,8 @@ export interface CashRegisterRow {
   tenantId: string;
   name: string;
   isActive: boolean;
+  /** MB-002: the branch this drawer is in. */
+  branchId: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -958,6 +975,7 @@ export interface CashMovementRow {
 export interface CashRegisterWhere {
   id?: string;
   tenantId?: string;
+  branchId?: string;
 }
 
 /** Predicate fields the in-memory session reads/writes are allowed to build. */
@@ -965,6 +983,8 @@ export interface CashSessionWhere {
   id?: string;
   tenantId?: string;
   status?: CashSessionRow["status"];
+  /** MB-002: the sessions of one branch's drawers. */
+  registerId?: { in: string[] };
   /**
    * Report-dated close range (EPIC-18 REP-004): HALF-OPEN `[gte, lt)` on `closedAt`,
    * the business instant of the `OPEN` → `CLOSED` transition. A `null` `closedAt`
@@ -982,7 +1002,8 @@ export interface CashSessionWhere {
  */
 export interface CashMovementWhere {
   tenantId: string;
-  registerId?: string;
+  /** A single drawer, or (MB-004) the drawers of one branch. */
+  registerId?: string | { in: string[] };
   sessionId?: string;
   /**
    * Report-dated movement range (EPIC-18 REP-004): HALF-OPEN `[gte, lt)` on the
@@ -1085,6 +1106,12 @@ export interface CashOrderBy {
 /** Register create payload accepted by the in-memory `cashRegister.create`. */
 export interface CashRegisterCreateData {
   name: string;
+  /**
+   * MB-002: the drawer's branch. A fixture that seeds a register directly may
+   * omit it, and the fake then uses the tenant's first branch — what the
+   * MB-002 migration does for registers that predate it.
+   */
+  branchId?: string;
 }
 
 /** Session create payload accepted by the in-memory `cashSession.create`. */
@@ -1215,8 +1242,17 @@ export interface BranchRow {
   id: string;
   tenantId: string;
   name: string;
+  /** MB-001: deactivated branches take no new turnos. */
+  isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
+}
+
+/** MB-001 (DEC-094 §5): a membership works at a branch. Keyed `${membershipId}:${branchId}`. */
+export interface MembershipBranchRow {
+  tenantId: string;
+  membershipId: string;
+  branchId: string;
 }
 
 /** Appointment lifecycle states pinned by the EPIC-07 spec. */
@@ -1722,6 +1758,8 @@ export interface IsolationDatabase {
         data: {
           tenantId: string;
           supplierId: string;
+          /** MB-003: omitted by direct fixtures → the tenant's first branch. */
+          branchId?: string;
           status?: PurchaseStatusRow;
           lines: { create: readonly PurchaseLineCreateData[] };
         };
@@ -1771,6 +1809,8 @@ export interface IsolationDatabase {
           tenantId: string;
           customerId?: string | null;
           currency: string;
+          /** MB-002: omitted by direct fixtures → the tenant's first branch. */
+          branchId?: string;
           status?: SaleStatusRow;
           lines: { create: readonly SaleLineCreateData[] };
         };
@@ -2127,6 +2167,9 @@ export interface IsolationDatabase {
           quantity: string | { toString(): string };
           reason: string;
           reversesMovementId?: string | null;
+          /** MB-003: a direct fixture may omit it → the tenant's first branch. */
+          branchId?: string;
+          transferId?: string | null;
         };
       }) => StockMovementRow;
       findMany: (args: {
@@ -2139,18 +2182,32 @@ export interface IsolationDatabase {
     };
     stockBalance: {
       findFirst: (args: {
-        where: { tenantId: string; catalogItemId: string };
+        where: { tenantId: string; catalogItemId: string; branchId?: string };
       }) => StockBalanceRow | null;
       findMany: (args: {
-        where: { tenantId: string };
+        where: { tenantId: string; branchId?: string };
         orderBy?: readonly { catalogItemId?: "asc" | "desc"; id?: "asc" | "desc" }[];
       }) => StockBalanceRow[];
-      /** Compound-unique upsert on `(tenantId, catalogItemId)` (one row per pair). */
+      /**
+       * Compound-unique upsert on `(tenantId, catalogItemId, branchId)` (MB-003).
+       * A fixture written before MB-003 may still key by `(tenantId,
+       * catalogItemId)`: that seeds the tenant's first branch, which is where the
+       * MB-003 migration puts every balance that predates it.
+       */
       upsert: (args: {
-        where: { tenantId_catalogItemId: { tenantId: string; catalogItemId: string } };
+        where:
+          | {
+              tenantId_catalogItemId_branchId: {
+                tenantId: string;
+                catalogItemId: string;
+                branchId: string;
+              };
+            }
+          | { tenantId_catalogItemId: { tenantId: string; catalogItemId: string } };
         create: {
           tenantId: string;
           catalogItemId: string;
+          branchId?: string;
           quantity: string | { toString(): string };
         };
         update: { quantity: string | { toString(): string } };
@@ -2309,12 +2366,25 @@ export interface IsolationDatabase {
         select?: unknown;
       }) => ClinicalDewormingRow[];
     };
+    membershipBranch: {
+      create: (args: {
+        data: { tenantId: string; membershipId: string; branchId: string };
+      }) => MembershipBranchRow;
+      findFirst: (args: {
+        where: { tenantId: string; membershipId: string; branchId: string };
+        select?: unknown;
+      }) => { branch: { isActive: boolean } } | null;
+      findMany: (args: {
+        where: { tenantId: string; membershipId?: string };
+      }) => MembershipBranchRow[];
+    };
     branch: {
-      create: (args: { data: { tenantId: string; name: string } }) => BranchRow;
+      create: (args: { data: { tenantId: string; name: string; isActive?: boolean } }) => BranchRow;
       findFirst: (args: { where: { id: string; tenantId: string } }) => BranchRow | null;
       findMany: (args: {
-        where: { tenantId: string };
+        where: { tenantId: string; isActive?: boolean; id?: { in: string[] } };
         orderBy?: { name?: "asc" | "desc" };
+        select?: unknown;
       }) => BranchRow[];
     };
     appointment: {
@@ -2490,6 +2560,10 @@ export interface IsolationDatabase {
         where: { userProfileId: string };
         data: { passwordHash: string };
       }) => UserCredentialRow;
+      /** ONB-001: the reset replaces a credential when there is one (count 0 = activation). */
+      updateMany: (args: { where: { userProfileId: string }; data: { passwordHash: string } }) => {
+        count: number;
+      };
     };
     /**
      * The reset token (DAT-007). The `updateMany` WHERE shapes the real callers use:
@@ -2614,6 +2688,7 @@ export interface IsolationDatabase {
     clinicalVaccinations: Map<string, ClinicalVaccinationRow>;
     clinicalDewormings: Map<string, ClinicalDewormingRow>;
     branches: Map<string, BranchRow>;
+    membershipBranches: Map<string, MembershipBranchRow>;
     appointments: Map<string, AppointmentRow>;
     portalBookingRequests: Map<string, PortalBookingRequestRow>;
   };
@@ -3365,6 +3440,15 @@ export function createIsolationDatabase(): IsolationDatabase {
   const clinicalVaccinationTable = new Map<string, ClinicalVaccinationRow>();
   const clinicalDewormingTable = new Map<string, ClinicalDewormingRow>();
   const branchTable = new Map<string, BranchRow>();
+  const membershipBranchTable = new Map<string, MembershipBranchRow>();
+  /** MB-002: the tenant's oldest branch, the default for direct fixtures. */
+  const firstBranchOf = (tenantId: string): string => {
+    const first = [...branchTable.values()]
+      .filter((candidate) => candidate.tenantId === tenantId)
+      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())[0];
+    if (first === undefined) throw new Error(`in-memory: tenant ${tenantId} has no branch`);
+    return first.id;
+  };
   const appointmentTable = new Map<string, AppointmentRow>();
   const portalBookingRequestTable = new Map<string, PortalBookingRequestRow>();
   const notificationDeliveryTable = new Map<string, NotificationDeliveryRow>();
@@ -3424,6 +3508,7 @@ export function createIsolationDatabase(): IsolationDatabase {
     clinicalVaccinations: clinicalVaccinationTable,
     clinicalDewormings: clinicalDewormingTable,
     branches: branchTable,
+    membershipBranches: membershipBranchTable,
     appointments: appointmentTable,
     portalBookingRequests: portalBookingRequestTable,
     notificationDeliveries: notificationDeliveryTable,
@@ -3619,6 +3704,17 @@ export function createIsolationDatabase(): IsolationDatabase {
           status: data.status ?? "ACTIVE",
         };
         tenants.set(created.id, created);
+        // DEC-094 §6: provisioning gives every clinic its first branch.
+        const now = new Date();
+        const branch: BranchRow = {
+          id: randomUUID(),
+          tenantId: created.id,
+          name: "Casa central",
+          isActive: true,
+          createdAt: now,
+          updatedAt: now,
+        };
+        branchTable.set(branch.id, branch);
         return created;
       },
       findUnique: ({ where }) => {
@@ -4296,6 +4392,7 @@ export function createIsolationDatabase(): IsolationDatabase {
               (where.id === undefined || candidate.id === where.id) &&
               (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
               (where.status === undefined || candidate.status === where.status) &&
+              (where.branchId === undefined || candidate.branchId === where.branchId) &&
               matchesHalfOpenInstant(candidate.receivedAt, where.receivedAt)
           ) ?? null;
         if (!header) return null;
@@ -4309,6 +4406,7 @@ export function createIsolationDatabase(): IsolationDatabase {
             (where.id === undefined || candidate.id === where.id) &&
             (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
             (where.status === undefined || candidate.status === where.status) &&
+            (where.branchId === undefined || candidate.branchId === where.branchId) &&
             matchesHalfOpenInstant(candidate.receivedAt, where.receivedAt)
         );
         const ordered = orderBy === undefined ? headers : orderPurchases(headers, orderBy);
@@ -4324,6 +4422,7 @@ export function createIsolationDatabase(): IsolationDatabase {
           id: randomUUID(),
           tenantId: data.tenantId,
           supplierId: data.supplierId,
+          branchId: data.branchId ?? firstBranchOf(data.tenantId),
           // Mirrors the schema default so an omitted status still lands DRAFT.
           status: data.status ?? "DRAFT",
           // Written ONLY by the receive command (DEC-064).
@@ -4356,6 +4455,7 @@ export function createIsolationDatabase(): IsolationDatabase {
           if (where.id !== undefined && candidate.id !== where.id) continue;
           if (where.tenantId !== undefined && candidate.tenantId !== where.tenantId) continue;
           if (where.status !== undefined && candidate.status !== where.status) continue;
+          if (where.branchId !== undefined && candidate.branchId !== where.branchId) continue;
           if (!matchesHalfOpenInstant(candidate.receivedAt, where.receivedAt)) continue;
           if (data.supplierId !== undefined) candidate.supplierId = data.supplierId;
           if (data.status !== undefined) candidate.status = data.status;
@@ -4415,6 +4515,7 @@ export function createIsolationDatabase(): IsolationDatabase {
               (where.id === undefined || candidate.id === where.id) &&
               (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
               (where.status === undefined || candidate.status === where.status) &&
+              (where.branchId === undefined || candidate.branchId === where.branchId) &&
               matchesCompletedAt(candidate, where.completedAt)
           ) ?? null;
         if (!header) return null;
@@ -4429,6 +4530,7 @@ export function createIsolationDatabase(): IsolationDatabase {
             (where.id === undefined || candidate.id === where.id) &&
             (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
             (where.status === undefined || candidate.status === where.status) &&
+            (where.branchId === undefined || candidate.branchId === where.branchId) &&
             matchesCompletedAt(candidate, where.completedAt)
         );
         const ordered = orderBy === undefined ? headers : orderSales(headers, orderBy);
@@ -4446,6 +4548,7 @@ export function createIsolationDatabase(): IsolationDatabase {
           tenantId: data.tenantId,
           customerId: data.customerId ?? null,
           currency: data.currency,
+          branchId: data.branchId ?? firstBranchOf(data.tenantId),
           // Mirrors the schema default so an omitted status still lands DRAFT.
           status: data.status ?? "DRAFT",
           // Written ONLY by the completion transaction (DEC-064).
@@ -4482,6 +4585,7 @@ export function createIsolationDatabase(): IsolationDatabase {
           if (where.id !== undefined && candidate.id !== where.id) continue;
           if (where.tenantId !== undefined && candidate.tenantId !== where.tenantId) continue;
           if (where.status !== undefined && candidate.status !== where.status) continue;
+          if (where.branchId !== undefined && candidate.branchId !== where.branchId) continue;
           // Same predicate as the reads: the where type is shared, so a filter the
           // fake accepts but ignores would silently update the wrong rows.
           if (!matchesCompletedAt(candidate, where.completedAt)) continue;
@@ -5058,13 +5162,15 @@ export function createIsolationDatabase(): IsolationDatabase {
         [...cashRegisterTable.values()].find(
           (candidate) =>
             (where.id === undefined || candidate.id === where.id) &&
-            (where.tenantId === undefined || candidate.tenantId === where.tenantId)
+            (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
+            (where.branchId === undefined || candidate.branchId === where.branchId)
         ) ?? null,
       findMany: ({ where, orderBy }) => {
         const rows = [...cashRegisterTable.values()].filter(
           (candidate) =>
             (where.id === undefined || candidate.id === where.id) &&
-            (where.tenantId === undefined || candidate.tenantId === where.tenantId)
+            (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
+            (where.branchId === undefined || candidate.branchId === where.branchId)
         );
         return orderBy === undefined ? rows : orderCashRows(rows, orderBy);
       },
@@ -5076,6 +5182,7 @@ export function createIsolationDatabase(): IsolationDatabase {
           name: data.name,
           // Mirrors the schema default so an omitted flag still lands active.
           isActive: true,
+          branchId: data.branchId ?? firstBranchOf(data.tenantId),
           createdAt: now,
           updatedAt: now,
         };
@@ -5098,14 +5205,25 @@ export function createIsolationDatabase(): IsolationDatabase {
             (where.id === undefined || candidate.id === where.id) &&
             (where.tenantId === undefined || candidate.tenantId === where.tenantId) &&
             (where.status === undefined || candidate.status === where.status) &&
+            (where.registerId === undefined ||
+              where.registerId.in.includes(candidate.registerId)) &&
             matchesHalfOpenInstant(candidate.closedAt, where.closedAt)
         );
         return orderBy === undefined ? rows : orderCashRows(rows, orderBy);
       },
       create: ({ data }) => {
         const now = new Date();
+        // UX-035: an idempotent open supplies its deterministic id; the primary key
+        // refuses a second row with it, exactly as PostgreSQL would.
+        const suppliedId = (data as { id?: string }).id;
+        if (suppliedId !== undefined && cashSessionTable.has(suppliedId)) {
+          throw Object.assign(new Error("Unique constraint failed on the fields: (`id`)"), {
+            code: "P2002",
+            meta: { target: ["id"] },
+          });
+        }
         const created: CashSessionRow = {
-          id: randomUUID(),
+          id: suppliedId ?? randomUUID(),
           tenantId: data.tenantId,
           registerId: data.registerId,
           // Mirrors the schema default so an omitted status still lands OPEN.
@@ -5174,7 +5292,10 @@ export function createIsolationDatabase(): IsolationDatabase {
         const rows = [...cashMovementTable.values()].filter(
           (candidate) =>
             candidate.tenantId === where.tenantId &&
-            (where.registerId === undefined || candidate.registerId === where.registerId) &&
+            (where.registerId === undefined ||
+              (typeof where.registerId === "string"
+                ? candidate.registerId === where.registerId
+                : where.registerId.in.includes(candidate.registerId))) &&
             (where.sessionId === undefined || candidate.sessionId === where.sessionId) &&
             matchesHalfOpenInstant(candidate.createdAt, where.createdAt)
         );
@@ -5294,6 +5415,8 @@ export function createIsolationDatabase(): IsolationDatabase {
           reason: data.reason,
           // Nullable reserved compensating link: nothing populates it in W2.
           reversesMovementId: data.reversesMovementId ?? null,
+          branchId: data.branchId ?? firstBranchOf(data.tenantId),
+          transferId: data.transferId ?? null,
           createdAt: now,
           updatedAt: now,
         };
@@ -5306,6 +5429,7 @@ export function createIsolationDatabase(): IsolationDatabase {
             candidate.tenantId === where.tenantId &&
             (where.catalogItemId === undefined ||
               candidate.catalogItemId === where.catalogItemId) &&
+            (where.branchId === undefined || candidate.branchId === where.branchId) &&
             // REP-005: the period's flow. One shared half-open predicate, so the
             // fake cannot disagree with PostgreSQL about a boundary.
             matchesHalfOpenInstant(candidate.createdAt, where.createdAt)
@@ -5317,19 +5441,31 @@ export function createIsolationDatabase(): IsolationDatabase {
       findFirst: ({ where }) =>
         [...stockBalanceTable.values()].find(
           (candidate) =>
-            candidate.tenantId === where.tenantId && candidate.catalogItemId === where.catalogItemId
+            candidate.tenantId === where.tenantId &&
+            candidate.catalogItemId === where.catalogItemId &&
+            (where.branchId === undefined || candidate.branchId === where.branchId)
         ) ?? null,
       findMany: ({ where, orderBy }) => {
         const rows = [...stockBalanceTable.values()].filter(
-          (candidate) => candidate.tenantId === where.tenantId
+          (candidate) =>
+            candidate.tenantId === where.tenantId &&
+            (where.branchId === undefined || candidate.branchId === where.branchId)
         );
         return orderBy === undefined ? rows : orderStockBalances(rows, orderBy);
       },
       upsert: ({ where, create, update }) => {
-        const key = where.tenantId_catalogItemId;
+        const key =
+          "tenantId_catalogItemId_branchId" in where
+            ? where.tenantId_catalogItemId_branchId
+            : {
+                ...where.tenantId_catalogItemId,
+                branchId: firstBranchOf(where.tenantId_catalogItemId.tenantId),
+              };
         const existing = [...stockBalanceTable.values()].find(
           (candidate) =>
-            candidate.tenantId === key.tenantId && candidate.catalogItemId === key.catalogItemId
+            candidate.tenantId === key.tenantId &&
+            candidate.catalogItemId === key.catalogItemId &&
+            candidate.branchId === key.branchId
         );
         const now = new Date();
         if (existing) {
@@ -5341,6 +5477,7 @@ export function createIsolationDatabase(): IsolationDatabase {
           id: randomUUID(),
           tenantId: create.tenantId,
           catalogItemId: create.catalogItemId,
+          branchId: key.branchId,
           quantity: toDecimalString(create.quantity),
           createdAt: now,
           updatedAt: now,
@@ -5544,6 +5681,25 @@ export function createIsolationDatabase(): IsolationDatabase {
           orderBy
         ),
     },
+    membershipBranch: {
+      create: ({ data }) => {
+        const created: MembershipBranchRow = { ...data };
+        membershipBranchTable.set(`${data.membershipId}:${data.branchId}`, created);
+        return created;
+      },
+      findFirst: ({ where }) => {
+        const row = membershipBranchTable.get(`${where.membershipId}:${where.branchId}`);
+        if (row?.tenantId !== where.tenantId) return null;
+        const branch = branchTable.get(row.branchId);
+        return { branch: { isActive: branch?.isActive ?? false } };
+      },
+      findMany: ({ where }) =>
+        [...membershipBranchTable.values()].filter(
+          (row) =>
+            row.tenantId === where.tenantId &&
+            (where.membershipId === undefined || row.membershipId === where.membershipId)
+        ),
+    },
     branch: {
       create: ({ data }) => {
         const now = new Date();
@@ -5551,6 +5707,7 @@ export function createIsolationDatabase(): IsolationDatabase {
           id: randomUUID(),
           tenantId: data.tenantId,
           name: data.name,
+          isActive: data.isActive ?? true,
           createdAt: now,
           updatedAt: now,
         };
@@ -5563,7 +5720,10 @@ export function createIsolationDatabase(): IsolationDatabase {
         ) ?? null,
       findMany: ({ where, orderBy }) => {
         const rows = [...branchTable.values()].filter(
-          (candidate) => candidate.tenantId === where.tenantId
+          (candidate) =>
+            candidate.tenantId === where.tenantId &&
+            (where.isActive === undefined || candidate.isActive === where.isActive) &&
+            (where.id === undefined || where.id.in.includes(candidate.id))
         );
         if (orderBy?.name) {
           rows.sort((left, right) => left.name.localeCompare(right.name));
@@ -5998,6 +6158,12 @@ export function createIsolationDatabase(): IsolationDatabase {
         return created;
       },
       findUnique: ({ where }) => credentials.get(where.userProfileId) ?? null,
+      updateMany: ({ where, data }) => {
+        const existing = credentials.get(where.userProfileId);
+        if (!existing) return { count: 0 };
+        credentials.set(where.userProfileId, { ...existing, passwordHash: data.passwordHash });
+        return { count: 1 };
+      },
       update: ({ where, data }) => {
         const existing = credentials.get(where.userProfileId);
         if (!existing) {
@@ -6084,6 +6250,16 @@ export function createIsolationDatabase(): IsolationDatabase {
           ...data,
         };
         memberships.set(created.id, created);
+        // DEC-094 §6: an invitation without a choice works at every active
+        // branch of the clinic, which is what a fixture's member gets here.
+        for (const branch of branchTable.values()) {
+          if (branch.tenantId !== created.tenantId || !branch.isActive) continue;
+          membershipBranchTable.set(`${created.id}:${branch.id}`, {
+            tenantId: created.tenantId,
+            membershipId: created.id,
+            branchId: branch.id,
+          });
+        }
         return created;
       },
       findFirst: ({ where, orderBy, include, select }) => {
@@ -6248,6 +6424,7 @@ export function createIsolationDatabase(): IsolationDatabase {
       clinicalVaccinations: clinicalVaccinationTable,
       clinicalDewormings: clinicalDewormingTable,
       branches: branchTable,
+      membershipBranches: membershipBranchTable,
       appointments: appointmentTable,
       portalBookingRequests: portalBookingRequestTable,
     },

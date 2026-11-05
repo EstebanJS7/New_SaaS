@@ -27,8 +27,9 @@ interface MembershipListBody {
  * - authenticated without ACTIVE membership ⇒ 403 envelope (never data);
  * - foreign resource ⇒ 404 indistinguishable from nonexistent;
  * - body/query/header tenant hints NEVER steer server-side scoping;
- * - no self-service tenant/role/branch surface exists anywhere;
- * - Branch/CustomerPortalAccess stay untouched by any route;
+ * - no self-service tenant/role surface exists anywhere; branches are
+ *   administered only under `branches.manage` (MB-001, DEC-094);
+ * - CustomerPortalAccess stays untouched by any route;
  * - zero cross-tenant identifiers in every observed response body.
  */
 describe("cross-tenant isolation (real HTTP, full guard chain)", () => {
@@ -266,7 +267,6 @@ describe("cross-tenant isolation (real HTTP, full guard chain)", () => {
       ["/auth/register", { email: "evil@isolation.test", password: "whatever123" }],
       ["/tenants/register", { name: "Evil" }],
       ["/roles", { code: "SUPERUSER" }],
-      ["/branches", { name: "Shadow Branch" }],
     ];
     for (const [url, payload] of attempts) {
       // Every self-service creation vector would be a POST — probed explicitly,
@@ -296,13 +296,38 @@ describe("cross-tenant isolation (real HTTP, full guard chain)", () => {
     }
   });
 
-  it("keeps schema-only scaffolding inert: Branch/CustomerPortalAccess have no routes", async () => {
-    for (const url of [
-      "/branches",
-      `/branches/${randomUUID()}`,
-      "/portal-access",
-      `/portal-access/${randomUUID()}`,
+  it("MB-001: branch administration is guarded by branches.manage, not by membership", async () => {
+    // DEC-094 §4: a caller without `branches.manage` reaches no branch data and
+    // creates nothing — the guard answers before any read.
+    const server = booted.app.getHttpServer();
+    const cookie = fixture.actors.a.cookie;
+    const responses = [
+      await supertest(server).get("/branches").set("Cookie", cookie),
+      await supertest(server).post("/branches").set("Cookie", cookie).send({ name: "Shadow" }),
+      await supertest(server)
+        .put(`/memberships/${fixture.actors.a.membership!.id}/branches`)
+        .set("Cookie", cookie)
+        .send({ branchIds: [randomUUID()] }),
+    ];
+    for (const response of responses) {
+      expect(response.status).toBe(403);
+      expect((response.body as ErrorEnvelopeBody).error.code).toBe("FORBIDDEN");
+    }
+    // There is still no single-branch read and no delete route.
+    for (const response of [
+      await supertest(booted.app.getHttpServer())
+        .get(`/branches/${randomUUID()}`)
+        .set("Cookie", fixture.actors.a.cookie),
+      await supertest(booted.app.getHttpServer())
+        .delete(`/branches/${randomUUID()}`)
+        .set("Cookie", fixture.actors.a.cookie),
     ]) {
+      expect(response.status).toBe(404);
+    }
+  });
+
+  it("keeps schema-only scaffolding inert: CustomerPortalAccess has no routes", async () => {
+    for (const url of ["/portal-access", `/portal-access/${randomUUID()}`]) {
       const response = await supertest(booted.app.getHttpServer())
         .get(url)
         .set("Cookie", fixture.actors.a.cookie)

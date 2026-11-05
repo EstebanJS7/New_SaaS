@@ -217,6 +217,60 @@ describe("/api/cash proxy", () => {
     expect(init.headers["content-type"]).toBe("application/json");
   });
 
+  it("MB-002: forwards a register create that names its branch, and only there", async () => {
+    fetchMock.mockResolvedValue(upstreamOk({ id: SESSION_ID }, 201));
+    const body = JSON.stringify({ name: "Caja Norte", branchId: SESSION_ID });
+    await dispatch("POST", mockNextRequest({ pathname: "/api/cash/registers", body }));
+    expect(fetchUrl()).toBe("http://localhost:3001/cash/registers");
+    expect(fetchInit().body).toBe(body);
+
+    fetchMock.mockReset();
+    const refused = await dispatch(
+      "POST",
+      mockNextRequest({
+        pathname: "/api/cash/sessions",
+        body: JSON.stringify({ registerId: SESSION_ID, openingAmount: "0.00", branchId: "x" }),
+      })
+    );
+    expect(refused.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("UX-035: forwards the caller's Idempotency-Key on the session open", async () => {
+    fetchMock.mockResolvedValue(upstreamOk({ id: SESSION_ID }, 201));
+    await dispatch(
+      "POST",
+      mockNextRequest({
+        pathname: "/api/cash/sessions",
+        body: SESSION_BODY,
+        headers: new Headers({ "Idempotency-Key": "88888888-8888-4888-8888-888888888888" }),
+      })
+    );
+    expect(fetchInit().headers["Idempotency-Key"]).toBe("88888888-8888-4888-8888-888888888888");
+  });
+
+  it("UX-035: serves the attempt lookups on GET only, for a UUID key only", async () => {
+    const key = "88888888-8888-4888-8888-888888888888";
+    fetchMock.mockResolvedValue(upstreamOk({ id: SESSION_ID }));
+    await dispatch("GET", mockNextRequest({ pathname: `/api/cash/sessions/attempts/${key}` }));
+    expect(fetchUrl()).toBe(`http://localhost:3001/cash/sessions/attempts/${key}`);
+    await dispatch("GET", mockNextRequest({ pathname: `/api/cash/movements/attempts/${key}` }));
+    expect(fetchUrl(1)).toBe(`http://localhost:3001/cash/movements/attempts/${key}`);
+
+    fetchMock.mockClear();
+    const notUuid = await dispatch(
+      "GET",
+      mockNextRequest({ pathname: "/api/cash/movements/attempts/abc" })
+    );
+    expect(notUuid.status).toBe(404);
+    const post = await dispatch(
+      "POST",
+      mockNextRequest({ pathname: `/api/cash/sessions/attempts/${key}`, body: "{}" })
+    );
+    expect(post.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("carries no Idempotency-Key on a movement read", async () => {
     fetchMock.mockResolvedValue(upstreamOk([]));
 
@@ -578,10 +632,10 @@ describe("/api/cash proxy", () => {
   });
 
   it("rejects every body key the shape's strict schema excludes", async () => {
-    // `cash.zod.ts` names each of these: `isActive` and `status` are server-owned,
-    // `branchId` and `currency` do not exist (DEC-020), and
-    // `openedByMembershipId` is resolved from the authenticated context.
-    for (const key of ["isActive", "branchId", "status", "tenantId"]) {
+    // `cash.zod.ts` names each of these: `isActive` and `status` are server-owned
+    // and `tenantId` is resolved from the authenticated context. (MB-002: a
+    // register create MAY carry `branchId`.)
+    for (const key of ["isActive", "status", "tenantId", "currency"]) {
       fetchMock.mockReset();
       const response = await dispatch(
         "POST",

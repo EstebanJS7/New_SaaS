@@ -63,6 +63,12 @@ pnpm-debug.log*
 # -----------------------------------------------------------------------------
 docker-compose.override.yml
 docker-compose.*.yml
+!infra/deploy/docker-compose.prod.yml
+# Entorno real del VPS: nunca se versiona (ver infra/deploy/env.production.example).
+infra/deploy/env.production
+infra/deploy/.verify/
+.newsaas-src.tar.gz
+.gen.tgz
 !.github/
 
 # -----------------------------------------------------------------------------

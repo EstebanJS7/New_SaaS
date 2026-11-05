@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 // Value imports (not `import type`): `PrismaService` is the DI token and
 // `Prisma` provides the exact `Decimal` arithmetic used by the BLOCK policy.
@@ -6,18 +7,29 @@ import { DomainError } from "@newsaas/shared";
 import { AuditWriter } from "../audit/audit-writer.service.js";
 import { RequestContextService } from "../context/request-context.service.js";
 import { PermissionResolver } from "../rbac/permission-resolver.service.js";
-import type { StockBalanceResponse, StockMovementResponse } from "./inventory.dto.js";
+import { resolveWorkingBranch } from "../branches/branch-scope.js";
+import type {
+  StockBalanceResponse,
+  StockBranchResponse,
+  StockMovementResponse,
+  StockTransferResponse,
+} from "./inventory.dto.js";
 import { INVENTORY_PERMISSIONS, type InventoryPermission } from "./inventory.permissions.js";
 import {
   InventoryRepository,
   type InventoryClient,
   type InventoryWriteTx,
+  type StockBalanceListFilters,
   type StockBalanceRow,
   type StockItemRow,
   type StockMovementListFilters,
   type StockMovementRow,
 } from "./inventory.repository.js";
-import { INVENTORY_DTO_SCHEMA_VERSION, type CreateStockAdjustmentInput } from "./inventory.zod.js";
+import {
+  INVENTORY_DTO_SCHEMA_VERSION,
+  type CreateStockAdjustmentInput,
+  type CreateStockTransferInput,
+} from "./inventory.zod.js";
 
 /** The one production client plus the transaction seam this boundary needs. */
 export interface InventoryPrisma extends InventoryClient {
@@ -58,6 +70,14 @@ export const STOCK_ITEM_INACTIVE_MESSAGE = "The catalog item is inactive.";
 export const INSUFFICIENT_STOCK_MESSAGE =
   "The adjustment would drive the stock balance below zero.";
 
+/** MB-003: Spanish refusals of the transfer command. */
+export const TRANSFER_INSUFFICIENT_STOCK_MESSAGE =
+  "No hay stock suficiente en la sucursal de origen para transferir esa cantidad.";
+export const TRANSFER_DESTINATION_INVALID_MESSAGE =
+  "La sucursal de destino no existe o está desactivada.";
+export const STOCK_TRANSFER_CREATED_ACTION = "stock_transfer.created";
+export const STOCK_TRANSFER_TARGET_TYPE = "stock_transfer";
+
 /**
  * Fixed scale of every decimal this boundary projects, in digits after the
  * point. Both stock columns are `DECIMAL(10,3)`, and the write contract caps a
@@ -94,6 +114,8 @@ function toStockMovementResponse(row: StockMovementRow): StockMovementResponse {
     quantity: decimalToFixedScaleString(row.quantity),
     reason: row.reason,
     reversesMovementId: row.reversesMovementId,
+    branchId: row.branchId,
+    transferId: row.transferId ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -109,7 +131,8 @@ function toStockMovementResponse(row: StockMovementRow): StockMovementResponse {
  */
 function toStockBalanceResponse(
   row: StockBalanceRow,
-  itemsById: ReadonlyMap<string, StockItemRow>
+  itemsById: ReadonlyMap<string, StockItemRow>,
+  branchNames: ReadonlyMap<string, string>
 ): StockBalanceResponse {
   const item = itemsById.get(row.catalogItemId);
   if (!item) {
@@ -120,6 +143,8 @@ function toStockBalanceResponse(
     tenantId: row.tenantId,
     catalogItemId: row.catalogItemId,
     item: { name: item.name, kind: item.kind },
+    branchId: row.branchId,
+    branchName: branchNames.get(row.branchId) ?? null,
     quantity: decimalToFixedScaleString(row.quantity),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -180,14 +205,36 @@ export class InventoryService {
    * Rows are the ledger's transactional sum, so a deactivated item keeps its
    * balance — the ledger is history, not a live catalog view.
    */
-  async listBalances(): Promise<StockBalanceResponse[]> {
-    await this.requirePermission(INVENTORY_PERMISSIONS.read);
+  /** MB-003: one row per (item, branch); `branchId` narrows to one branch. */
+  /** MB-003: the tenant's active branches, by name, for the stock screen. */
+  async listStockBranches(): Promise<StockBranchResponse[]> {
+    const tenantId = await this.requirePermission(INVENTORY_PERMISSIONS.read);
+    const rows = await this.prisma.branch.findMany({
+      where: { tenantId, isActive: true },
+      select: { id: true, name: true },
+    });
+    return rows
+      .map((row) => ({ id: row.id, name: row.name }))
+      .sort((left, right) => left.name.localeCompare(right.name, "es"));
+  }
+
+  async listBalances(filters: StockBalanceListFilters = {}): Promise<StockBalanceResponse[]> {
+    const tenantId = await this.requirePermission(INVENTORY_PERMISSIONS.read);
     const [balances, items] = await Promise.all([
-      this.inventory.listBalances(),
+      this.inventory.listBalances(filters),
       this.inventory.listItems(),
     ]);
     const itemsById = new Map(items.map((item) => [item.id, item]));
-    return balances.map((row) => toStockBalanceResponse(row, itemsById));
+    const branchIds = [...new Set(balances.map((row) => row.branchId))];
+    const branches =
+      branchIds.length === 0
+        ? []
+        : await this.prisma.branch.findMany({
+            where: { tenantId, id: { in: branchIds } },
+            select: { id: true, name: true },
+          });
+    const branchNames = new Map(branches.map((branch) => [branch.id, branch.name]));
+    return balances.map((row) => toStockBalanceResponse(row, itemsById, branchNames));
   }
 
   /**
@@ -238,6 +285,13 @@ export class InventoryService {
     const movement = await this.prisma.$transaction(async (tx) => {
       const item = await this.inventory.findItem(input.catalogItemId, tx);
       assertStockableItem(item);
+      // MB-003 (DEC-094 §10): an adjustment happens in an active branch the
+      // caller works at — the requested one, or their only one.
+      const branchId = await resolveWorkingBranch(
+        tx,
+        { tenantId, userProfileId: actorUserProfileId },
+        input.branchId
+      );
 
       // Serialize this `(tenant, item)` stock scope BEFORE the projection is
       // read: the `BLOCK` pre-check and the absolute balance write are ONE
@@ -246,9 +300,9 @@ export class InventoryService {
       // overdraw and leaves the projection different from the ledger's signed
       // sum. PostgreSQL arbitrates the order here; the loser then re-reads the
       // committed balance and is rejected by `BLOCK` before writing anything.
-      await this.inventory.lockItemStock(item.id, tx);
+      await this.inventory.lockItemStock(item.id, branchId, tx);
 
-      const balance = await this.inventory.findBalance(item.id, tx);
+      const balance = await this.inventory.findBalance(item.id, branchId, tx);
       const projected = new Prisma.Decimal(balance?.quantity ?? 0).plus(quantity);
       if (projected.isNegative()) {
         throw new DomainError("CONFLICT", INSUFFICIENT_STOCK_MESSAGE);
@@ -260,11 +314,12 @@ export class InventoryService {
           type: "ADJUSTMENT",
           quantity,
           reason: input.reason,
+          branchId,
         },
         tx
       );
 
-      await this.inventory.upsertBalance(item.id, projected, tx);
+      await this.inventory.upsertBalance(item.id, branchId, projected, tx);
 
       await this.audit.append(
         {
@@ -293,6 +348,105 @@ export class InventoryService {
    * database call when no tenant authority was resolved upstream; the resolved
    * tenant id is returned so the caller never re-derives it.
    */
+  /**
+   * MB-003 (DEC-094 §10): moves stock of one item from one branch to another.
+   * The origin must be an active branch the caller works at (they hand the
+   * goods over); the destination any active branch of the clinic. Both
+   * per-(item, branch) locks are taken in branch-id order, so two opposite
+   * transfers cannot deadlock. The pair of movements, both balances and the
+   * audit row commit together; the origin may not go below zero (`BLOCK`).
+   */
+  async transfer(input: CreateStockTransferInput): Promise<StockTransferResponse> {
+    const tenantId = await this.requirePermission(INVENTORY_PERMISSIONS.transfer);
+    const actorUserProfileId = this.requestContext.requireUserProfileId();
+    if (input.reason.trim().length === 0) {
+      throw new DomainError("VALIDATION_FAILED", "A stock transfer reason is required.");
+    }
+    const quantity = new Prisma.Decimal(input.quantity);
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const item = await this.inventory.findItem(input.catalogItemId, tx);
+      assertStockableItem(item);
+      const from = await resolveWorkingBranch(
+        tx,
+        { tenantId, userProfileId: actorUserProfileId },
+        input.fromBranchId
+      );
+      const destination = await tx.branch.findMany({
+        where: { tenantId, isActive: true, id: { in: [input.toBranchId] } },
+        select: { id: true, name: true },
+      });
+      if (destination.length !== 1) {
+        throw new DomainError("VALIDATION_FAILED", TRANSFER_DESTINATION_INVALID_MESSAGE);
+      }
+      const to = input.toBranchId;
+
+      for (const branchId of [from, to].sort()) {
+        await this.inventory.lockItemStock(item.id, branchId, tx);
+      }
+
+      const fromBalance = await this.inventory.findBalance(item.id, from, tx);
+      const fromProjected = new Prisma.Decimal(fromBalance?.quantity ?? 0).minus(quantity);
+      if (fromProjected.isNegative()) {
+        throw new DomainError("CONFLICT", TRANSFER_INSUFFICIENT_STOCK_MESSAGE);
+      }
+      const toBalance = await this.inventory.findBalance(item.id, to, tx);
+      const toProjected = new Prisma.Decimal(toBalance?.quantity ?? 0).plus(quantity);
+
+      const transferId = randomUUID();
+      const out = await this.inventory.createMovement(
+        {
+          catalogItemId: item.id,
+          type: "TRANSFER_OUT",
+          quantity: quantity.negated(),
+          reason: input.reason,
+          branchId: from,
+          transferId,
+        },
+        tx
+      );
+      await this.inventory.upsertBalance(item.id, from, fromProjected, tx);
+      const into = await this.inventory.createMovement(
+        {
+          catalogItemId: item.id,
+          type: "TRANSFER_IN",
+          quantity,
+          reason: input.reason,
+          branchId: to,
+          transferId,
+        },
+        tx
+      );
+      await this.inventory.upsertBalance(item.id, to, toProjected, tx);
+
+      await this.audit.append(
+        {
+          action: STOCK_TRANSFER_CREATED_ACTION,
+          tenantId,
+          actorUserProfileId,
+          targetType: STOCK_TRANSFER_TARGET_TYPE,
+          targetId: transferId,
+          // Ids only: the reason is free text and stays in the ledger.
+          metadata: {
+            schemaVersion: INVENTORY_DTO_SCHEMA_VERSION,
+            catalogItemId: item.id,
+            fromBranchId: from,
+            toBranchId: to,
+            movementIds: [out.id, into.id],
+          },
+        },
+        tx
+      );
+      return { transferId, out, into };
+    });
+
+    return {
+      transferId: result.transferId,
+      out: toStockMovementResponse(result.out),
+      in: toStockMovementResponse(result.into),
+    };
+  }
+
   private async requirePermission(permission: InventoryPermission): Promise<string> {
     const tenantId = this.requestContext.requireTenantId();
     const permissions = await this.permissionResolver.resolveForActiveRequest();

@@ -50,10 +50,14 @@ const cashRegisterName = z
 /**
  * Create payload for `POST /cash/registers`. `.strict()` rejects unknown keys,
  * explicitly including `tenantId` (resolved server-side from the request context
- * and never caller authority), `isActive` (server-owned, defaults to true) and
- * any `branchId` (there is deliberately no Branch dimension, DEC-020).
+ * and never caller authority) and `isActive` (server-owned, defaults to true).
+ * MB-002 (DEC-094 §9) adds an OPTIONAL `branchId`: omitted means the only
+ * active branch the caller works at; the service refuses a branch the caller
+ * does not work at.
  */
-export const createCashRegisterBody = z.object({ name: cashRegisterName }).strict();
+export const createCashRegisterBody = z
+  .object({ name: cashRegisterName, branchId: z.string().uuid().optional() })
+  .strict();
 
 export type CreateCashRegisterInput = z.infer<typeof createCashRegisterBody>;
 

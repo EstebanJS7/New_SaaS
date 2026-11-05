@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import supertest from "supertest";
+import { NOT_WORKING_AT_BRANCH_MESSAGE } from "../branches/branch-scope.js";
 import { bootTestApp, type BootedTestApp } from "../../test/support/boot-test-app.js";
 import { expectCrossTenant404 } from "../../test/support/expect-cross-tenant-404.js";
 import {
@@ -46,6 +47,9 @@ const CASH_REGISTER_RESPONSE_KEYS: readonly string[] = [
   "id",
   "name",
   "isActive",
+  // MB-002 (DEC-094 §9): the drawer's branch.
+  "branchId",
+  "branchName",
   "createdAt",
   "updatedAt",
 ];
@@ -512,6 +516,45 @@ describe("Cash HTTP boundary (EPIC-12 POS-002)", () => {
     expect(auditsForTarget(booted, session.id)).toHaveLength(0);
   });
 
+  it("MB-002: a register is created and opened only in a branch the caller works at", async () => {
+    const server = booted.app.getHttpServer();
+    const norte = booted.db.prisma.branch.create({
+      data: { tenantId: fixture.a.tenant.id, name: `Norte ${randomUUID().slice(0, 6)}` },
+    });
+    try {
+      // Default: the caller's only working branch, named in the answer.
+      const created = await supertest(server)
+        .post("/cash/registers")
+        .set("Cookie", fixture.a.actor.cookie)
+        .send(registerBody(`Caja ${randomUUID().slice(0, 6)}`))
+        .expect(201);
+      const body = created.body as CashRegisterResponse;
+      expect(body.branchId).not.toBe(norte.id);
+      expect(body.branchName).toBe("Casa central");
+
+      const refused = await supertest(server)
+        .post("/cash/registers")
+        .set("Cookie", fixture.a.actor.cookie)
+        .send(registerBody(`Caja ${randomUUID().slice(0, 6)}`, { branchId: norte.id }))
+        .expect(400);
+      expect((refused.body as ErrorDto).error.message).toBe(NOT_WORKING_AT_BRANCH_MESSAGE);
+
+      const elsewhere = booted.db.prisma.cashRegister.create({
+        data: { tenantId: fixture.a.tenant.id, name: `Norte ${randomUUID()}`, branchId: norte.id },
+      });
+      const sessionsBefore = booted.db.tables.cashSessions.size;
+      const open = await supertest(server)
+        .post("/cash/sessions")
+        .set("Cookie", fixture.a.actor.cookie)
+        .send(sessionBody(elsewhere.id))
+        .expect(400);
+      expect((open.body as ErrorDto).error.message).toBe(NOT_WORKING_AT_BRANCH_MESSAGE);
+      expect(booted.db.tables.cashSessions.size).toBe(sessionsBefore);
+    } finally {
+      norte.isActive = false;
+    }
+  });
+
   it("creates a register, co-commits one audit row and returns the allowlisted DTO", async () => {
     const auditsBefore = booted.db.tables.audits.size;
 
@@ -690,6 +733,34 @@ describe("Cash HTTP boundary (EPIC-12 POS-002)", () => {
     expect(serializedMeta).not.toContain(register.id);
     expect(serializedMeta).not.toContain("1500.00");
     expect(serializedMeta).not.toContain(body.openedByMembershipId);
+  });
+
+  it("UX-035: an open with an Idempotency-Key replays its session and is found by key", async () => {
+    const register = fixture.createRegister(fixture.a);
+    const server = booted.app.getHttpServer();
+    const key = randomUUID();
+    const open = (amount: string) =>
+      supertest(server)
+        .post("/cash/sessions")
+        .set("Cookie", fixture.a.actor.cookie)
+        .set("Idempotency-Key", key)
+        .send(sessionBody(register.id, amount));
+    const auditsBefore = booted.db.tables.audits.size;
+
+    await supertest(server)
+      .get(`/cash/sessions/attempts/${key}`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(404);
+    const first = await open("1500.00").expect(201);
+    // The lost answer's retry: same key and body replays, it does not hit "already open".
+    expect((await open("1500.00").expect(200)).body).toEqual(first.body);
+    await open("2000.00").expect(409);
+    const found = await supertest(server)
+      .get(`/cash/sessions/attempts/${key}`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(200);
+    expect(found.body).toEqual(first.body);
+    expect(booted.db.tables.audits.size).toBe(auditsBefore + 1);
   });
 
   it("allows an empty drawer: a 0.00 opening float opens the session", async () => {
@@ -1437,6 +1508,33 @@ describe("Cash HTTP boundary (EPIC-12 POS-002)", () => {
 
     expect(booted.db.tables.cashMovements.size).toBe(movementsBefore + 1);
     expect(booted.db.tables.audits.size).toBe(auditsBefore + 1);
+  });
+
+  it("UX-035: answers a movement attempt by its key, and 404 for a key that recorded nothing", async () => {
+    const session = fixture.openSession(fixture.a, fixture.createRegister(fixture.a).id);
+    const key = randomUUID();
+    const server = booted.app.getHttpServer();
+
+    await supertest(server)
+      .get(`/cash/movements/attempts/${key}`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(404);
+    const created = await supertest(server)
+      .post("/cash/movements")
+      .set("Cookie", fixture.a.actor.cookie)
+      .set("Idempotency-Key", key)
+      .send(movementBody(session.id, { type: "INCOME", amount: "250.00" }))
+      .expect(201);
+    const found = await supertest(server)
+      .get(`/cash/movements/attempts/${key}`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(200);
+    expect(found.body).toEqual(created.body);
+    // Another tenant asking with the same key derives another id: nothing there.
+    await supertest(server)
+      .get(`/cash/movements/attempts/${key}`)
+      .set("Cookie", fixture.b.actor.cookie)
+      .expect(404);
   });
 
   it("writes only the movement and its audit row: no sale, stock, payment or close state is touched", async () => {

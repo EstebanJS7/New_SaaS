@@ -72,6 +72,8 @@ export interface SalesByPeriodRowDto {
  * conversion column: no conversion exists anywhere in the system.
  */
 export interface SalesByPeriodResponse {
+  /** MB-004: present only when the report was narrowed to one branch; absent = «Todas». */
+  readonly branch?: ReportBranchDto;
   readonly report: "sales-by-period";
   readonly period: ReportPeriodDto;
   /** ISO-4217 code of the tenant's configured sale currency. */
@@ -118,6 +120,8 @@ export interface PaymentMethodRowDto {
  * for each other.
  */
 export interface PaymentMethodsResponse {
+  /** MB-004: present only when the report was narrowed to one branch; absent = «Todas». */
+  readonly branch?: ReportBranchDto;
   readonly report: "payment-methods";
   readonly period: ReportPeriodDto;
   /** ISO-4217 code of the tenant's configured sale currency. */
@@ -167,6 +171,8 @@ export interface KindTotalDto {
  * no sale in the period, or sold only in a cancelled one, does not appear.
  */
 export interface SalesByProductServiceResponse {
+  /** MB-004: present only when the report was narrowed to one branch; absent = «Todas». */
+  readonly branch?: ReportBranchDto;
   readonly report: "sales-by-product-service";
   readonly period: ReportPeriodDto;
   /** ISO-4217 code of the tenant's configured sale currency. */
@@ -235,6 +241,8 @@ export interface CashSessionsTotalsDto {
  * here would be a number with an invented label in front of it.
  */
 export interface CashSessionsResponse {
+  /** MB-004: present only when the report was narrowed to one branch; absent = «Todas». */
+  readonly branch?: ReportBranchDto;
   readonly report: "cash-sessions";
   readonly period: ReportPeriodDto;
   /** `closedAt` ascending. An empty period is `[]`, never an error. */
@@ -274,6 +282,8 @@ export interface CashMovementRowDto {
  * instant. The session it belongs to is a different fact and never dates it.
  */
 export interface CashMovementsResponse {
+  /** MB-004: present only when the report was narrowed to one branch; absent = «Todas». */
+  readonly branch?: ReportBranchDto;
   readonly report: "cash-movements";
   readonly period: ReportPeriodDto;
   /**
@@ -319,6 +329,8 @@ export interface PurchaseRowDto {
  * `receivedAt`.
  */
 export interface PurchasesResponse {
+  /** MB-004: present only when the report was narrowed to one branch; absent = «Todas». */
+  readonly branch?: ReportBranchDto;
   readonly report: "purchases";
   readonly period: ReportPeriodDto;
   /** `receivedAt` ascending. An empty period is `[]`, never an error. */
@@ -392,6 +404,8 @@ export interface StockReportRowDto {
  * carries a cost ([[DEC-010]]) — valuation is out of scope for this Story.
  */
 export interface StockReportResponse {
+  /** MB-004: present only when the report was narrowed to one branch; absent = «Todas». */
+  readonly branch?: ReportBranchDto;
   readonly report: "stock";
   readonly period: ReportPeriodDto;
   /**
@@ -439,6 +453,8 @@ export interface LowStockReportRowDto {
  * failure.
  */
 export interface LowStockReportResponse {
+  /** MB-004: present only when the report was narrowed to one branch; absent = «Todas». */
+  readonly branch?: ReportBranchDto;
   readonly report: "low-stock";
   /**
    * True when at least one tracked item the report read carries a non-NULL
@@ -707,6 +723,51 @@ export const reportPeriodQuerySchema = z
   .strict();
 
 export type ReportPeriodQuery = z.infer<typeof reportPeriodQuerySchema>;
+
+/**
+ * MB-004 (DEC-094 §11): the commercial, cash, purchase and inventory reports
+ * take an OPTIONAL branch on top of their own contract. Absent means «Todas»,
+ * the whole clinic, so nobody's numbers change unless they ask for a branch.
+ * The veterinary reports keep {@link reportPeriodQuerySchema} unchanged: clinical
+ * data belongs to the clinic, and `branchId` there is still a refusal.
+ *
+ * `uuid()` is a SHAPE check, so a malformed id is the same stable refusal as any
+ * other malformed key; whether the branch is the caller's is decided by the
+ * service ({@link REPORT_BRANCH_NOT_FOUND_MESSAGE}).
+ */
+export const reportBranchPeriodQuerySchema = z
+  .object({
+    preset: z.string().optional(),
+    from: z.string().optional(),
+    to: z.string().optional(),
+    branchId: z.string().uuid().optional(),
+  })
+  .strict();
+
+export type ReportBranchPeriodQuery = z.infer<typeof reportBranchPeriodQuerySchema>;
+
+/** MB-004: the current-state `low-stock` report accepts only a branch. */
+export const reportBranchOnlyQuerySchema = z
+  .object({ branchId: z.string().uuid().optional() })
+  .strict();
+
+export type ReportBranchOnlyQuery = z.infer<typeof reportBranchOnlyQuerySchema>;
+
+/** MB-004: an unknown or foreign branch id — one message for both, no existence oracle. */
+export const REPORT_BRANCH_NOT_FOUND_MESSAGE = "La sucursal no existe.";
+
+/** MB-004: the branch a report was narrowed to, echoed so a reader knows which one. */
+export interface ReportBranchDto {
+  readonly id: string;
+  readonly name: string;
+}
+
+/** MB-004: one row of `GET /reports/branches`, inactive branches included for history. */
+export interface ReportBranchOptionDto {
+  readonly id: string;
+  readonly name: string;
+  readonly isActive: boolean;
+}
 
 /** Stable message behind every rejection of the query SHAPE (unknown key, wrong type). */
 export const REPORT_PERIOD_QUERY_INVALID_MESSAGE = "Invalid report period query.";

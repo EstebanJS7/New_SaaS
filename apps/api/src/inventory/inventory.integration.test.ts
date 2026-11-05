@@ -58,12 +58,18 @@ const STOCK_BALANCE_RESPONSE_KEYS: readonly string[] = [
   "tenantId",
   "catalogItemId",
   "item",
+  // MB-003 (DEC-094 §10): the branch the balance is kept in.
+  "branchId",
+  "branchName",
   "quantity",
   "createdAt",
   "updatedAt",
 ];
 
 const STOCK_MOVEMENT_RESPONSE_KEYS: readonly string[] = [
+  // MB-003: the branch whose stock moved, and the transfer pair it belongs to.
+  "branchId",
+  "transferId",
   "id",
   "tenantId",
   "catalogItemId",
@@ -682,7 +688,13 @@ describe("Inventory stock HTTP boundary (EPIC-10 W2)", () => {
 
     // Exactly one lock acquisition, keyed to THIS (tenant, item)...
     expect(lockKeys).toHaveLength(1);
-    expect(lockKeys[0]).toBe(stockSerializationLockKey(fixture.a.tenant.id, item.id));
+    // MB-003: the lock is per (item, branch) — here the clinic's only branch.
+    const branch = [...booted.db.tables.branches.values()].find(
+      (candidate) => candidate.tenantId === fixture.a.tenant.id
+    );
+    expect(lockKeys[0]).toBe(
+      stockSerializationLockKey(fixture.a.tenant.id, item.id, branch?.id ?? "")
+    );
     // ...taken BEFORE the balance is read, so the `BLOCK` pre-check and the
     // balance write are one serialized read-modify-write.
     expect(lockIndex).toBeGreaterThan(-1);

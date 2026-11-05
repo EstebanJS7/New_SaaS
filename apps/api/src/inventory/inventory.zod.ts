@@ -54,6 +54,8 @@ export const createStockAdjustmentBody = z
     catalogItemId: z.string().uuid(),
     quantity: stockQuantity,
     reason: stockAdjustmentReason,
+    /** MB-003: the branch to adjust; omitted means the caller's only branch. */
+    branchId: z.string().uuid().optional(),
   })
   .strict();
 
@@ -67,7 +69,31 @@ export type CreateStockAdjustmentInput = z.infer<typeof createStockAdjustmentBod
  * a silent empty list.
  */
 export const stockMovementListQuery = z
-  .object({ catalogItemId: z.string().uuid().optional() })
+  .object({ catalogItemId: z.string().uuid().optional(), branchId: z.string().uuid().optional() })
   .strict();
+
+/** MB-003: the balance list may be narrowed to one branch. */
+export const stockBalanceListQuery = z.object({ branchId: z.string().uuid().optional() }).strict();
+
+/**
+ * MB-003 (DEC-094 §10): a transfer moves a POSITIVE quantity of one item from
+ * one branch to another, with a reason. Same quantity format as an adjustment.
+ */
+export const createStockTransferBody = z
+  .object({
+    catalogItemId: z.string().uuid(),
+    fromBranchId: z.string().uuid(),
+    toBranchId: z.string().uuid(),
+    quantity: stockQuantity.refine((value) => !value.startsWith("-"), {
+      message: "A transfer quantity must be positive.",
+    }),
+    reason: stockAdjustmentReason,
+  })
+  .strict()
+  .refine((body) => body.fromBranchId !== body.toBranchId, {
+    message: "Origin and destination must be different branches.",
+  });
+
+export type CreateStockTransferInput = z.infer<typeof createStockTransferBody>;
 
 export type StockMovementListFiltersInput = z.infer<typeof stockMovementListQuery>;

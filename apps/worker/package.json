@@ -22,6 +22,7 @@
     "@newsaas/fiscal-persistence": "workspace:*",
     "@newsaas/imports": "workspace:*",
     "@newsaas/notifications": "workspace:*",
+    "@newsaas/observability": "workspace:*",
     "@newsaas/secret-store": "workspace:*",
     "@newsaas/shared": "workspace:*",
     "@newsaas/storage": "workspace:*",

@@ -23,6 +23,7 @@ export const NAV_LINKS: readonly NavLink[] = [
   { href: "/app/catalog", label: "Catálogo", section: "Comercio", icon: "box" },
   { href: "/app/suppliers", label: "Proveedores", section: "Comercio", icon: "truck" },
   { href: "/app/purchases", label: "Compras", section: "Comercio", icon: "bag" },
+  { href: "/app/inventory", label: "Stock", section: "Comercio", icon: "box" },
   {
     href: "/app/sales",
     label: "POS",
@@ -54,6 +55,13 @@ export const NAV_LINKS: readonly NavLink[] = [
   { href: "/app/reports", label: "Informes", section: "Gestión", icon: "chart" },
   { href: "/app/notifications", label: "Notificaciones", section: "Gestión", icon: "bell" },
   { href: "/app/imports", label: "Importaciones", section: "Gestión", icon: "upload" },
+  { href: "/app/settings/team", label: "Personal", section: "Configuración", icon: "users" },
+  {
+    href: "/app/settings/branches",
+    label: "Sucursales",
+    section: "Configuración",
+    icon: "building",
+  },
   { href: "/app/settings/branding", label: "Marca", section: "Configuración", icon: "settings" },
 ];
 

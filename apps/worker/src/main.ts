@@ -3,6 +3,7 @@ import type { INestApplicationContext } from "@nestjs/common";
 import { pathToFileURL } from "url";
 import { WorkerModule } from "./worker.module.js";
 import { workerEnv } from "./config/worker-env.js";
+import { initErrorTracking } from "@newsaas/observability";
 import { RedisHealthService } from "./redis/redis-health.service.js";
 
 export interface WorkerHealthProbe {
@@ -86,6 +87,15 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<WorkerH
   if (!envResult.success) {
     throw new Error(envResult.error);
   }
+
+  // DEC-093: off unless SENTRY_DSN is set.
+  const tracking = initErrorTracking({
+    service: "worker",
+    dsn: envResult.env.SENTRY_DSN,
+    environment: envResult.env.SENTRY_ENVIRONMENT,
+    release: envResult.env.SENTRY_RELEASE,
+  });
+  console.info(`Error tracking ${tracking ? "on" : "off"}`);
 
   let app: INestApplicationContext | null = null;
   let redisHealth: WorkerHealthProbe;

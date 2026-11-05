@@ -43,6 +43,9 @@ export interface CashRegisterResponse {
   /** Operator-facing drawer name, non-empty and bounded to 1..200 characters. */
   readonly name: string;
   readonly isActive: boolean;
+  /** MB-002 (DEC-094 §9): the branch this drawer is in. */
+  readonly branchId: string;
+  readonly branchName: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }

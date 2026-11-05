@@ -9,6 +9,7 @@ import {
 } from "@newsaas/notifications";
 import type { ApplicationEvent, EventDispatcher } from "@newsaas/shared";
 import { PASSWORD_RESET_REQUESTED } from "../auth/password-recovery.service.js";
+import { STAFF_ACTIVATION_REQUESTED } from "../tenancy/staff-invitation.service.js";
 import { APPLICATION_EVENT_DISPATCHER } from "../events/application-events.module.js";
 import { NotificationIntentService } from "./notification-intent.service.js";
 
@@ -53,6 +54,9 @@ export class PasswordRecoveryScheduler implements OnModuleInit {
 
   onModuleInit(): void {
     this.events.subscribe(PASSWORD_RESET_REQUESTED, (event) => this.onRequested(event));
+    // ONB-001: an activation is the same identity-scoped message to a profile with no
+    // credential yet; the worker's builder decides which words it gets, at send time.
+    this.events.subscribe(STAFF_ACTIVATION_REQUESTED, (event) => this.onRequested(event));
   }
 
   /**

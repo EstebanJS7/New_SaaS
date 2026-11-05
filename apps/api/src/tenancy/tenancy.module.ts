@@ -5,6 +5,7 @@ import { ContextModule } from "../context/context.module.js";
 import { RbacModule } from "../rbac/rbac.module.js";
 import { MembershipsController } from "./membership.controller.js";
 import { MembershipRoleAssignmentService } from "./membership-role-assignment.service.js";
+import { StaffInvitationService } from "./staff-invitation.service.js";
 import { TenantActiveGuard } from "./tenant-active.guard.js";
 import { TenantMembershipRepository } from "./tenant-membership.repository.js";
 
@@ -29,6 +30,7 @@ import { TenantMembershipRepository } from "./tenant-membership.repository.js";
   providers: [
     TenantMembershipRepository,
     MembershipRoleAssignmentService,
+    StaffInvitationService,
     TenantActiveGuard,
     // Global for the whole app; runs after AuthGuard by module composition
     // order (see class doc and app.module.ts imports array).

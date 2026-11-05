@@ -32,6 +32,7 @@ const PURCHASE: Purchase = {
   id: PURCHASE_ID,
   tenantId: "tenant-a",
   supplierId: SUPPLIER_ID,
+  branchId: "77777777-7777-4777-8777-777777777777",
   status: "DRAFT",
   lines: [
     { id: "line-1", catalogItemId: ITEM_ID, quantity: "2.000", unitCost: "1500.00" },

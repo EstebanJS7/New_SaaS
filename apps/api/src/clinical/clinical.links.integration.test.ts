@@ -46,6 +46,7 @@ describe.skipIf(!url)("Clinical journey links — live PostgreSQL", () => {
   let encounter: string;
   let foreignEncounter: string;
   let sale: string;
+  let saleBranch: string;
   let foreignSale: string;
   function run<T>(work: () => T) {
     return context.run(randomUUID(), () => {
@@ -102,7 +103,10 @@ describe.skipIf(!url)("Clinical journey links — live PostgreSQL", () => {
     foreignPatient = fp.id;
     const role = await prisma.role.create({ data: { code: randomUUID(), name: "Synthetic vet" } });
     async function appointmentFixture(tenantId: string, patientId: string, start: string) {
-      const branch = await prisma.branch.create({ data: { tenantId, name: "Synthetic branch" } });
+      // MB-001: branch names are unique per tenant, so each fixture gets its own.
+      const branch = await prisma.branch.create({
+        data: { tenantId, name: `Synthetic branch ${start}` },
+      });
       const member = await prisma.tenantMembership.upsert({
         where: { tenantId_userProfileId: { tenantId, userProfileId: actor } },
         create: { tenantId, userProfileId: actor, roleId: role.id, status: "ACTIVE" },
@@ -133,9 +137,20 @@ describe.skipIf(!url)("Clinical journey links — live PostgreSQL", () => {
         data: { tenantId: foreignTenant, patientId: foreignPatient },
       })
     ).id;
-    sale = (await prisma.sale.create({ data: { tenantId: tenant, currency: "PYG" } })).id;
-    foreignSale = (await prisma.sale.create({ data: { tenantId: foreignTenant, currency: "PYG" } }))
+    // MB-002: every sale belongs to a branch of its tenant.
+    saleBranch = (await prisma.branch.create({ data: { tenantId: tenant, name: "Synthetic sales" } }))
       .id;
+    const foreignSaleBranch = await prisma.branch.create({
+      data: { tenantId: foreignTenant, name: "Synthetic sales" },
+    });
+    sale = (
+      await prisma.sale.create({ data: { tenantId: tenant, currency: "PYG", branchId: saleBranch } })
+    ).id;
+    foreignSale = (
+      await prisma.sale.create({
+        data: { tenantId: foreignTenant, currency: "PYG", branchId: foreignSaleBranch.id },
+      })
+    ).id;
   }, 120000);
   afterAll(async () => {
     await prisma.$disconnect();
@@ -224,7 +239,9 @@ describe.skipIf(!url)("Clinical journey links — live PostgreSQL", () => {
       data: { tenantId: tenant, patientId: patient },
     });
     await run(() => service.link(patient, another.id, { appointmentId: appointment }));
-    const second = await prisma.sale.create({ data: { tenantId: tenant, currency: "PYG" } });
+    const second = await prisma.sale.create({
+      data: { tenantId: tenant, currency: "PYG", branchId: saleBranch },
+    });
     await Promise.all([
       run(() => service.link(patient, encounter, { saleId: sale })),
       run(() => service.link(patient, encounter, { saleId: sale })),
@@ -256,7 +273,9 @@ describe.skipIf(!url)("Clinical journey links — live PostgreSQL", () => {
     const second = await prisma.clinicalEncounter.create({
       data: { tenantId: tenant, patientId: patient },
     });
-    const target = await prisma.sale.create({ data: { tenantId: tenant, currency: "PYG" } });
+    const target = await prisma.sale.create({
+      data: { tenantId: tenant, currency: "PYG", branchId: saleBranch },
+    });
     const results = await Promise.allSettled([
       run(() => service.link(patient, first.id, { saleId: target.id })),
       run(() => service.link(patient, second.id, { saleId: target.id })),

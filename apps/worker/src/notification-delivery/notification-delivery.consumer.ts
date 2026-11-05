@@ -1,3 +1,4 @@
+import { reportJobFailure, reportWorkerError } from "../observability/job-failure.js";
 import { Injectable, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import { Worker, type Job } from "bullmq";
 import { Redis } from "ioredis";
@@ -42,6 +43,7 @@ export class NotificationDeliveryConsumer implements OnModuleInit, OnModuleDestr
       { connection: this.connection, concurrency: 1 }
     );
     this.worker.on("failed", (job, error) => {
+      reportJobFailure(NOTIFICATION_DELIVERY_QUEUE, job, error);
       // No recipient, no address, no message body: ids and a sanitized reason.
       console.error("Notification delivery job failed", {
         notificationDeliveryId: job?.data.notificationDeliveryId ?? null,
@@ -49,6 +51,7 @@ export class NotificationDeliveryConsumer implements OnModuleInit, OnModuleDestr
       });
     });
     this.worker.on("error", (error) => {
+      reportWorkerError(NOTIFICATION_DELIVERY_QUEUE, error);
       console.error("Notification delivery worker error", sanitizeWorkerError(error));
     });
   }

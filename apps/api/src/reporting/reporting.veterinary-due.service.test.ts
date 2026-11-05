@@ -113,6 +113,17 @@ function harness(
   const patientQueries: Prisma.PatientFindManyArgs[] = [];
 
   const prisma: ReportingReadPrisma = {
+    // MB-004: reached only by a branch-narrowed report, which these cases never ask for.
+    branch: {
+      findMany: () => {
+        throw new Error("unexpected branch read");
+      },
+    },
+    cashRegister: {
+      findMany: () => {
+        throw new Error("unexpected cash register read");
+      },
+    },
     // Every OTHER report's reads are unreachable from here and vice versa: each
     // stub THROWS instead of answering `[]`, so a case that reached one fails
     // loudly rather than silently aggregating an empty set.

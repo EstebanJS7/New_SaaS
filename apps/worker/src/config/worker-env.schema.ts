@@ -34,6 +34,10 @@ export const workerEnvSchema = z
   .object({
     NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
     REDIS_URL: z.string().min(1),
+    /** DEC-093: error tracking; absent or empty turns it off (the default). */
+    SENTRY_DSN: z.string().optional(),
+    SENTRY_ENVIRONMENT: z.string().optional(),
+    SENTRY_RELEASE: z.string().optional(),
     // The worker now persists cleanup intents and audit rows.
     DATABASE_URL: z.string().min(1),
     /** Master kill-switch for the branding asset lifecycle (parity with API). */

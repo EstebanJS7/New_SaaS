@@ -613,7 +613,12 @@ export class BillingService {
       // out two. A tenant that has declared nothing is answered `null`, and only
       // then does the counter below number the invoice (DEC-039): one source per
       // invoice, chosen by the tenant's declaration and not by this code path.
-      await this.fiscalAllocation.allocateForConfirmation({ invoiceId: locked.id, tx });
+      // MB-002: the sale's branch may carry its own issuance point.
+      await this.fiscalAllocation.allocateForConfirmation({
+        invoiceId: locked.id,
+        saleId: locked.saleId,
+        tx,
+      });
 
       // The invoice's own number is Billing's, always, and the allocation is a
       // SEPARATE identity: the fiscal number lives in `invoice_fiscal_allocation`

@@ -9,9 +9,11 @@ export type { RequestContext } from "./context.js";
 export { TENANT_TIME_ZONE } from "./platform.js";
 
 export {
+  ACCOUNT_ACTIVATION_TOKEN_TTL_MS,
   generatePasswordResetToken,
   hashPasswordResetToken,
   PASSWORD_RESET_TOKEN_TTL_MS,
+  staffActivationUrl,
   staffRecoveryUrl,
 } from "./staff-recovery.js";
 

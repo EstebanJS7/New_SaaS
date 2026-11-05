@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildDteXml } from "./dte.builder.js";
+import { buildCamCond, buildCamFE } from "./dte.payment.js";
 import { DteValidationError } from "./dte.rules.js";
 import { SIFEN_TEST_EMITTER_NAME, type DteRequest } from "./dte.types.js";
 
@@ -62,6 +63,16 @@ function validRequest(overrides: Partial<DteRequest> = {}): DteRequest {
         dNomRec: "Cliente <Principal>",
       },
     },
+    // PAY-DET-001: a factura must carry gCamFE and gCamCond (rules 1350, 1500).
+    gDtipDE: [
+      buildCamFE(),
+      buildCamCond({
+        payments: [{ iTiPago: 1, amount: "1000" }],
+        currency: "PYG",
+        currencyDescription: "Guaraní",
+        scaleAmount: (value) => `${value}.0000`,
+      }),
+    ],
     gCamFuFD: { dCarQR: QR },
     totalOperacion: "1000",
   };
@@ -96,7 +107,7 @@ describe("buildDteXml — structure (§4, §21.1, §21.2)", () => {
       "<gOpeDE>",
       "<gTimb>",
       "<gDatGralOpe>",
-      "<gDtipDE/>",
+      "<gDtipDE>",
       "<gCamFuFD>",
     ]);
   });

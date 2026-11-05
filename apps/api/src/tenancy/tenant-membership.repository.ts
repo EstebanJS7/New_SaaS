@@ -68,6 +68,24 @@ interface MembershipRowShape {
 /** Single stable message behind every membership 404 — byte-equivalence by construction. */
 export const MEMBERSHIP_NOT_FOUND_MESSAGE = "Membership not found.";
 
+/**
+ * One row of the clinic's staff directory ([[ONB-001]]). `email` is CONFIDENTIAL and is
+ * read only behind `users.membership.manage`. `activationPending` is derived: an
+ * invited person who has not chosen a password yet.
+ */
+export interface StaffDirectoryEntry {
+  readonly membershipId: string;
+  readonly userProfileId: string;
+  readonly email: string;
+  readonly displayName: string;
+  readonly roleCode: string;
+  readonly status: TenantMembershipStatusValue;
+  readonly activationPending: boolean;
+  readonly createdAt: string;
+  /** MB-001 (DEC-094 §5): the branches this person works at, by id. */
+  readonly branchIds: readonly string[];
+}
+
 function toView(row: MembershipRowShape): TenantMembershipView {
   return {
     id: row.id,
@@ -136,6 +154,39 @@ export class TenantMembershipRepository {
    * rides along in the same WHERE clause — foreign ids fall through to the
    * shared NOT_FOUND path instead of leaking existence.
    */
+  async listDirectoryForActiveTenant(): Promise<StaffDirectoryEntry[]> {
+    const rows = await this.prisma.tenantMembership.findMany({
+      where: { tenantId: this.requestContext.requireTenantId() },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      select: {
+        id: true,
+        status: true,
+        createdAt: true,
+        userProfileId: true,
+        role: { select: { code: true } },
+        userProfile: {
+          select: {
+            email: true,
+            displayName: true,
+            credential: { select: { userProfileId: true } },
+          },
+        },
+        branches: { select: { branchId: true }, orderBy: { branchId: "asc" } },
+      },
+    });
+    return rows.map((row) => ({
+      membershipId: row.id,
+      userProfileId: row.userProfileId,
+      email: row.userProfile.email,
+      displayName: row.userProfile.displayName,
+      roleCode: row.role.code,
+      status: row.status,
+      activationPending: row.userProfile.credential === null,
+      createdAt: row.createdAt.toISOString(),
+      branchIds: row.branches.map((assignment) => assignment.branchId),
+    }));
+  }
+
   async findByIdInActiveTenant(id: string): Promise<TenantMembershipView> {
     const row = await this.prisma.tenantMembership.findFirst({
       where: { id, tenantId: this.requestContext.requireTenantId() },

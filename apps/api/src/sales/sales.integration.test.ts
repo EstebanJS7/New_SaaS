@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import supertest from "supertest";
+import { CHOOSE_BRANCH_MESSAGE, NOT_WORKING_AT_BRANCH_MESSAGE } from "../branches/branch-scope.js";
 import { bootTestApp, type BootedTestApp } from "../../test/support/boot-test-app.js";
 import { expectCrossTenant404 } from "../../test/support/expect-cross-tenant-404.js";
 import {
@@ -80,6 +81,8 @@ const SALE_RESPONSE_KEYS: readonly string[] = [
   "lines",
   "total",
   "completedAt",
+  // MB-002 (DEC-094 §9): the sale's branch.
+  "branchId",
   "createdAt",
   "updatedAt",
 ];
@@ -343,7 +346,9 @@ function payment(
   amount: unknown,
   extra: Record<string, unknown> = {}
 ): Record<string, unknown> {
-  return { method, amount, ...extra };
+  // PAY-DET-001: a card payment carries its type and brand unless a case says otherwise.
+  const detail = method === "CARD" ? { card: { type: "CREDIT", brand: "VISA" } } : {};
+  return { method, amount, ...detail, ...extra };
 }
 
 /** The strict completion body. */
@@ -557,6 +562,98 @@ describe("Sales HTTP boundary (EPIC-12 POS-001)", () => {
     }
 
     expect(tableSizes(booted.db)).toEqual(sizesBefore);
+  });
+
+  it("UX-035: a keyed create replays its draft, refuses another body and is found by key", async () => {
+    const item = fixture.createItem(fixture.a, { taxRateId: SEEDED_TAX_RATE_IDS.EXEMPT });
+    const server = booted.app.getHttpServer();
+    const key = randomUUID();
+    const create = (quantity: string) =>
+      supertest(server)
+        .post("/sales")
+        .set("Cookie", fixture.a.actor.cookie)
+        .set("Idempotency-Key", key)
+        .send(saleBody([line(item.id, quantity, { unitPrice: "500.00" })]));
+    const salesBefore = booted.db.tables.sales.size;
+    const auditsBefore = booted.db.tables.audits.size;
+
+    await supertest(server)
+      .get(`/sales/attempts/${key}`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(404);
+    const first = await create("1").expect(201);
+    // The retry of an attempt whose answer was lost: the SAME draft, no second one.
+    expect((await create("1").expect(200)).body).toEqual(first.body);
+    await create("2").expect(409);
+    const found = await supertest(server)
+      .get(`/sales/attempts/${key}`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(200);
+    expect(found.body).toEqual(first.body);
+    // Another tenant cannot reach the draft through the same key.
+    await supertest(server)
+      .get(`/sales/attempts/${key}`)
+      .set("Cookie", fixture.b.actor.cookie)
+      .expect(404);
+
+    expect(booted.db.tables.sales.size).toBe(salesBefore + 1);
+    expect(booted.db.tables.audits.size).toBe(auditsBefore + 1);
+  });
+
+  it("creates a DRAFT without a key exactly as before, one draft per request", async () => {
+    const item = fixture.createItem(fixture.a, { taxRateId: SEEDED_TAX_RATE_IDS.EXEMPT });
+    const salesBefore = booted.db.tables.sales.size;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await supertest(booted.app.getHttpServer())
+        .post("/sales")
+        .set("Cookie", fixture.a.actor.cookie)
+        .send(saleBody([line(item.id, "1", { unitPrice: "500.00" })]))
+        .expect(201);
+    }
+    expect(booted.db.tables.sales.size).toBe(salesBefore + 2);
+  });
+
+  it("MB-002: creates a sale in the chosen branch, asks which when there are several, refuses another", async () => {
+    const item = fixture.createItem(fixture.a, { taxRateId: SEEDED_TAX_RATE_IDS.EXEMPT });
+    const membershipId = fixture.a.actor.membership?.id ?? "";
+    const norte = booted.db.prisma.branch.create({
+      data: { tenantId: fixture.a.tenant.id, name: `Norte ${randomUUID().slice(0, 6)}` },
+    });
+    const lejana = booted.db.prisma.branch.create({
+      data: { tenantId: fixture.a.tenant.id, name: `Lejana ${randomUUID().slice(0, 6)}` },
+    });
+    const key = `${membershipId}:${norte.id}`;
+    booted.db.prisma.membershipBranch.create({
+      data: { tenantId: fixture.a.tenant.id, membershipId, branchId: norte.id },
+    });
+    const server = booted.app.getHttpServer();
+    try {
+      const ambiguous = await supertest(server)
+        .post("/sales")
+        .set("Cookie", fixture.a.actor.cookie)
+        .send(saleBody([line(item.id, "1", { unitPrice: "100.00" })]))
+        .expect(400);
+      expect((ambiguous.body as ErrorDto).error.message).toBe(CHOOSE_BRANCH_MESSAGE);
+
+      const chosen = await supertest(server)
+        .post("/sales")
+        .set("Cookie", fixture.a.actor.cookie)
+        .send(saleBody([line(item.id, "1", { unitPrice: "100.00" })], { branchId: norte.id }))
+        .expect(201);
+      expect((chosen.body as SaleDto & { branchId: string }).branchId).toBe(norte.id);
+
+      const refused = await supertest(server)
+        .post("/sales")
+        .set("Cookie", fixture.a.actor.cookie)
+        .send(saleBody([line(item.id, "1", { unitPrice: "100.00" })], { branchId: lejana.id }))
+        .expect(400);
+      expect((refused.body as ErrorDto).error.message).toBe(NOT_WORKING_AT_BRANCH_MESSAGE);
+    } finally {
+      // Leave tenant A with one working branch, as every other case expects.
+      booted.db.tables.membershipBranches.delete(key);
+      norte.isActive = false;
+      lejana.isActive = false;
+    }
   });
 
   it("creates a DRAFT with its lines, co-commits one audit row and returns the allowlisted DTO", async () => {
@@ -1480,6 +1577,144 @@ describe("Sales HTTP boundary (EPIC-12 POS-001)", () => {
     expect((response.body as ErrorDto).error.code).toBe("CONFLICT");
     expect((response.body as ErrorDto).error.message).toBe(CASH_SESSIONS_AMBIGUOUS_MESSAGE);
     expect(tableSizes(booted.db)).toEqual(sizesBefore);
+  });
+
+  describe("MB-002: a sale's cash goes to a drawer of its own branch", () => {
+    /** A second branch in the owner's clinic, with or without the owner working there. */
+    function secondBranch(owner: SalesTenant, options: { assigned: boolean; active?: boolean }) {
+      const branch = booted.db.prisma.branch.create({
+        data: { tenantId: owner.tenant.id, name: `Norte ${randomUUID().slice(0, 6)}` },
+      });
+      if (options.active === false) branch.isActive = false;
+      if (options.assigned && owner.actor.membership) {
+        booted.db.prisma.membershipBranch.create({
+          data: {
+            tenantId: owner.tenant.id,
+            membershipId: owner.actor.membership.id,
+            branchId: branch.id,
+          },
+        });
+      }
+      return branch;
+    }
+
+    function openSessionAt(owner: SalesTenant, branchId: string): string {
+      const register = booted.db.prisma.cashRegister.create({
+        data: { tenantId: owner.tenant.id, name: `Caja ${randomUUID().slice(0, 8)}`, branchId },
+      });
+      return booted.db.prisma.cashSession.create({
+        data: {
+          tenantId: owner.tenant.id,
+          registerId: register.id,
+          openedByMembershipId: owner.actor.membership?.id ?? randomUUID(),
+          openingAmount: "0.00",
+        },
+      }).id;
+    }
+
+    it("ignores an open session of another branch", async () => {
+      const owner = createCompletionActor(booted.db, "other-branch-session");
+      const item = fixture.createItem(owner, { referencePriceAmount: "1000.00" });
+      const norte = secondBranch(owner, { assigned: true });
+      openSessionAt(owner, norte.id);
+      const sale = fixture.seedSale(owner, {
+        lines: [completionLine(item.id, "1.000", "EXEMPT", "1000.00")],
+      });
+      expect(booted.db.tables.sales.get(sale.id)?.branchId).not.toBe(norte.id);
+
+      const response = await supertest(booted.app.getHttpServer())
+        .post(`/sales/${sale.id}/complete`)
+        .set("Cookie", owner.actor.cookie)
+        .send(completionBody([payment("CASH", "1000.00")]))
+        .expect(409);
+      expect((response.body as ErrorDto).error.message).toBe(CASH_SESSION_REQUIRED_MESSAGE);
+    });
+
+    it("charges into the one open session of the sale's branch when another branch has one too", async () => {
+      const owner = createCompletionActor(booted.db, "own-branch-session");
+      const item = fixture.createItem(owner, { referencePriceAmount: "1000.00" });
+      seedBalance(booted.db, owner.tenant.id, item.id, "5.000");
+      const norte = secondBranch(owner, { assigned: true });
+      const norteSessionId = openSessionAt(owner, norte.id);
+      const { sessionId } = openCashSession(booted.db, owner);
+      const sale = fixture.seedSale(owner, {
+        lines: [completionLine(item.id, "1.000", "EXEMPT", "1000.00")],
+      });
+
+      const response = await supertest(booted.app.getHttpServer())
+        .post(`/sales/${sale.id}/complete`)
+        .set("Cookie", owner.actor.cookie)
+        .send(completionBody([payment("CASH", "1000.00")]))
+        .expect(201);
+      expect(response.body).toMatchObject({ status: "COMPLETED" });
+      const movements = [...booted.db.tables.cashMovements.values()];
+      expect(movements.filter((movement) => movement.sessionId === sessionId)).toHaveLength(1);
+      expect(movements.filter((movement) => movement.sessionId === norteSessionId)).toHaveLength(0);
+    });
+
+    it("refuses to charge a sale of a branch the caller does not work at", async () => {
+      const owner = createCompletionActor(booted.db, "foreign-branch-sale");
+      const item = fixture.createItem(owner, { referencePriceAmount: "1000.00" });
+      const norte = secondBranch(owner, { assigned: false });
+      const sale = fixture.seedSale(owner, {
+        lines: [completionLine(item.id, "1.000", "EXEMPT", "1000.00")],
+      });
+      const stored = booted.db.tables.sales.get(sale.id);
+      if (stored) stored.branchId = norte.id;
+      const sizesBefore = tableSizes(booted.db);
+
+      const response = await supertest(booted.app.getHttpServer())
+        .post(`/sales/${sale.id}/complete`)
+        .set("Cookie", owner.actor.cookie)
+        .send(completionBody([payment("CARD", "1000.00")]))
+        .expect(400);
+      expect((response.body as ErrorDto).error.message).toBe(NOT_WORKING_AT_BRANCH_MESSAGE);
+      expect(tableSizes(booted.db)).toEqual(sizesBefore);
+    });
+
+    it("MB-003: takes the stock from the sale's branch and leaves the other branch untouched", async () => {
+      const owner = createCompletionActor(booted.db, "branch-stock");
+      const item = fixture.createItem(owner, { referencePriceAmount: "1000.00" });
+      seedBalance(booted.db, owner.tenant.id, item.id, "5.000");
+      const norte = secondBranch(owner, { assigned: true });
+      booted.db.prisma.stockBalance.upsert({
+        where: {
+          tenantId_catalogItemId_branchId: {
+            tenantId: owner.tenant.id,
+            catalogItemId: item.id,
+            branchId: norte.id,
+          },
+        },
+        create: {
+          tenantId: owner.tenant.id,
+          catalogItemId: item.id,
+          branchId: norte.id,
+          quantity: "2.000",
+        },
+        update: { quantity: "2.000" },
+      });
+      const sale = fixture.seedSale(owner, {
+        lines: [completionLine(item.id, "2.000", "EXEMPT", "1000.00")],
+      });
+      const stored = booted.db.tables.sales.get(sale.id);
+      if (stored) stored.branchId = norte.id;
+
+      await supertest(booted.app.getHttpServer())
+        .post(`/sales/${sale.id}/complete`)
+        .set("Cookie", owner.actor.cookie)
+        .send(completionBody([payment("CARD", "2000.00")]))
+        .expect(201);
+
+      const balances = [...booted.db.tables.stockBalances.values()].filter(
+        (row) => row.catalogItemId === item.id
+      );
+      expect(Number(balances.find((row) => row.branchId === norte.id)?.quantity)).toBe(0);
+      expect(Number(balances.find((row) => row.branchId !== norte.id)?.quantity)).toBe(5);
+      const movement = [...booted.db.tables.stockMovements.values()].find(
+        (row) => row.catalogItemId === item.id && row.type === "SALE"
+      );
+      expect(movement?.branchId).toBe(norte.id);
+    });
   });
 
   it("rejects an inactive line item and an inactive customer as reference-state 409s", async () => {

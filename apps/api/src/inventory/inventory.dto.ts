@@ -28,7 +28,8 @@ export type StockItemKindDto = "PRODUCT" | "SERVICE" | "MEDICATION" | "SUPPLY";
  * `SALE`, the signed negative output the CompleteSale command writes. Transfers
  * and the `*_REVERSAL` compensations are added additively later.
  */
-export type StockMovementTypeDto = "ADJUSTMENT" | "PURCHASE" | "SALE";
+export type StockMovementTypeDto =
+  "ADJUSTMENT" | "PURCHASE" | "SALE" | "SALE_REVERSAL" | "TRANSFER_OUT" | "TRANSFER_IN";
 
 /**
  * Read-only projection of the item a balance belongs to. It carries the
@@ -51,6 +52,9 @@ export interface StockBalanceResponse {
   readonly tenantId: string;
   readonly catalogItemId: string;
   readonly item: StockItemProjection;
+  /** MB-003 (DEC-094 §10): the branch this balance is kept in. */
+  readonly branchId: string;
+  readonly branchName: string | null;
   /** Exact fixed-scale (3 decimals) non-negative literal, e.g. `"12.500"`. */
   readonly quantity: string;
   readonly createdAt: string;
@@ -72,6 +76,22 @@ export interface StockMovementResponse {
   readonly quantity: string;
   readonly reason: string;
   readonly reversesMovementId: string | null;
+  /** MB-003: the branch whose stock moved, and the transfer pair it belongs to. */
+  readonly branchId: string;
+  readonly transferId: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+/** MB-003: one transfer between branches — its two movements. */
+export interface StockTransferResponse {
+  readonly transferId: string;
+  readonly out: StockMovementResponse;
+  readonly in: StockMovementResponse;
+}
+
+/** MB-003: an active branch as the stock screen sees it. */
+export interface StockBranchResponse {
+  readonly id: string;
+  readonly name: string;
 }

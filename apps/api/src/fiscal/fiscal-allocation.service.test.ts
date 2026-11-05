@@ -219,6 +219,50 @@ describe("the allocation path", () => {
     ({ client, service } = buildService());
   });
 
+  it("MB-002: numbers from the sale's branch point when the branch declares one", async () => {
+    declarePoint(client);
+    client.seedRange({ nextNumber: 7 });
+    const branchRange = client.seedRange({
+      establishmentId: "est-north",
+      expeditionPoint: "002",
+      nextNumber: 40,
+    });
+    const tx = {
+      ...client.client,
+      sale: {
+        findFirst: () =>
+          Promise.resolve({
+            branch: { fiscalEstablishmentId: "est-north", expeditionPoint: "002" },
+          }),
+      },
+    } as FiscalAllocationTx;
+
+    await service.allocateForConfirmation({ invoiceId: INVOICE, saleId: "sale-1", tx });
+
+    expect(client.allocations[0]).toMatchObject({
+      rangeId: branchRange.id,
+      establishmentId: "est-north",
+      expeditionPoint: "002",
+      documentType: 1,
+    });
+  });
+
+  it("MB-002: a branch without its own point keeps the profile's default", async () => {
+    declarePoint(client);
+    const range = client.seedRange({ nextNumber: 7 });
+    const tx = {
+      ...client.client,
+      sale: {
+        findFirst: () =>
+          Promise.resolve({ branch: { fiscalEstablishmentId: null, expeditionPoint: null } }),
+      },
+    } as FiscalAllocationTx;
+
+    await service.allocateForConfirmation({ invoiceId: INVOICE, saleId: "sale-1", tx });
+
+    expect(client.allocations[0]).toMatchObject({ rangeId: range.id, expeditionPoint: "001" });
+  });
+
   it("allocates from the declared point's ACTIVE range and answers the integer", async () => {
     declarePoint(client);
     const range = client.seedRange({ nextNumber: 7 });

@@ -17,7 +17,7 @@ import { ResetPasswordForm } from "./reset-password-form";
 export default async function ResetPasswordPage({
   searchParams,
 }: {
-  searchParams: Promise<{ token?: string | string[] }>;
+  searchParams: Promise<{ token?: string | string[]; activate?: string | string[] }>;
 }): Promise<JSX.Element> {
   const params = await searchParams;
   const raw = params.token;
@@ -28,7 +28,7 @@ export default async function ResetPasswordPage({
   return (
     <main className="flex min-h-screen items-center justify-center p-6">
       <div className="w-full max-w-md">
-        <ResetPasswordForm token={token} />
+        <ResetPasswordForm token={token} activation={params.activate !== undefined} />
       </div>
     </main>
   );

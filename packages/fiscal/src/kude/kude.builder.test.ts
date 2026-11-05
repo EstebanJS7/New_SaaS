@@ -27,7 +27,7 @@ import {
   formatKudeDateTime,
   groupKudeCdc,
 } from "./kude.format.js";
-import { KUDE_TYPE_PROFILES } from "./kude.types.js";
+import { KUDE_LABELS, KUDE_TYPE_PROFILES } from "./kude.types.js";
 
 interface LineSpec {
   readonly code: string;
@@ -466,5 +466,18 @@ describe("the KuDE's printed forms", () => {
     const cdc = "01444444017001001001452822501201715873226094";
     expect(groupKudeCdc(cdc)).toBe("0144 4444 0170 0100 1001 4528 2250 1201 7158 7322 6094");
     expect(groupKudeCdc("123")).toBe("123");
+  });
+});
+
+describe("the factura's sale condition (PAY-DET-001)", () => {
+  it("prints «Contado» from gCamCond and no longer names it absent", () => {
+    const result = buildKudeDocument(validFacturaElectronicaRequest());
+    if (result.outcome !== "BUILT") throw new Error(result.message);
+    const rows = Object.fromEntries(result.document.general.map((row) => [row.label, row.value]));
+
+    expect(rows[KUDE_LABELS.saleCondition]).toBe("Contado");
+    const absent = result.document.absences.map((absence) => absence.label);
+    expect(absent).not.toContain(KUDE_LABELS.saleCondition);
+    expect(absent).not.toContain(KUDE_LABELS.installments);
   });
 });

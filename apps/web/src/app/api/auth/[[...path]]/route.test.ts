@@ -18,13 +18,19 @@ import { POST } from "./route";
 
 interface MockNextRequest {
   nextUrl: { pathname: string; searchParams: URLSearchParams };
+  headers?: Headers;
   text: () => Promise<string>;
 }
 
-function mockNextRequest(props: { pathname: string; body?: string }): MockNextRequest {
+function mockNextRequest(props: {
+  pathname: string;
+  body?: string;
+  headers?: Headers;
+}): MockNextRequest {
   const url = new URL(`http://localhost:3000${props.pathname}`);
   return {
     nextUrl: { pathname: url.pathname, searchParams: url.searchParams },
+    ...(props.headers === undefined ? {} : { headers: props.headers }),
     text: () => Promise.resolve(props.body ?? ""),
   };
 }
@@ -37,6 +43,21 @@ beforeEach(() => {
   cookiesMock.mockResolvedValue({ get: () => undefined });
 });
 afterEach(() => vi.restoreAllMocks());
+
+describe("the auth BFF — the client address (DEC-093)", () => {
+  it("passes Caddy's X-Forwarded-For on to the API's login rate limit", async () => {
+    fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));
+    await POST(
+      mockNextRequest({
+        pathname: "/api/auth/login",
+        body: JSON.stringify({ email: "staff@clinic.test", password: "a-password" }),
+        headers: new Headers({ "x-forwarded-for": "203.0.113.10" }),
+      }) as never
+    );
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect((init.headers as Record<string, string>)["x-forwarded-for"]).toBe("203.0.113.10");
+  });
+});
 
 describe("the auth BFF — the sign-in hop", () => {
   it("RELAYS the API's Set-Cookie with its attributes intact", async () => {

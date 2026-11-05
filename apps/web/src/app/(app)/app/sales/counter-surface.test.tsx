@@ -94,6 +94,8 @@ type Responder = (init?: RequestInit) => Response;
 interface FetchOptions {
   readonly catalog?: Responder;
   readonly customers?: Responder;
+  /** MB-002: the caller's working branches (default: none offered). */
+  readonly branches?: readonly { id: string; name: string }[];
   readonly sales: (url: string, init?: RequestInit) => Response | Promise<Response>;
 }
 
@@ -105,6 +107,9 @@ function installFetch(options: FetchOptions): ReturnType<typeof vi.fn> {
     }
     if (url.startsWith("/api/customers")) {
       return Promise.resolve((options.customers ?? (() => jsonResponse([CUSTOMER])))(init));
+    }
+    if (url === "/api/memberships/me/branches") {
+      return Promise.resolve(jsonResponse({ branches: options.branches ?? [] }));
     }
     return Promise.resolve(options.sales(url, init));
   });
@@ -136,6 +141,10 @@ async function checkout(): Promise<void> {
 function salesCalls(fetchMock: ReturnType<typeof vi.fn>): [RequestInfo | URL, RequestInit?][] {
   return typedCalls(fetchMock).filter((call) => resolveUrl(call[0]).startsWith("/api/sales"));
 }
+
+afterEach(() => {
+  window.sessionStorage.clear();
+});
 
 describe("CounterSurface", () => {
   it.each(["transport", "server", "receipt"])(
@@ -173,6 +182,123 @@ describe("CounterSurface", () => {
       expect(screen.queryByRole("button", { name: "Revisar venta" })).not.toBeInTheDocument();
     }
   );
+
+  it("MB-002: asks for the branch when the person works at several, and sends it", async () => {
+    const fetchMock = installFetch({
+      branches: [
+        { id: "b-1", name: "Casa central" },
+        { id: "b-2", name: "Norte" },
+      ],
+      sales: () => jsonResponse(DRAFT_SALE, 201),
+    });
+    renderCounter();
+    await addFirstItem();
+    const select = await screen.findByLabelText("Sucursal de la venta");
+    fireEvent.click(screen.getByRole("button", { name: "Continuar al pago" }));
+    expect(await screen.findByText("Elegí la sucursal de la venta.")).toBeInTheDocument();
+    expect(salesCalls(fetchMock)).toHaveLength(0);
+
+    fireEvent.change(select, { target: { value: "b-2" } });
+    await checkout();
+    const create = salesCalls(fetchMock).find((call) => call[1]?.method === "POST");
+    expect(JSON.parse(create?.[1]?.body as string)).toMatchObject({ branchId: "b-2" });
+  });
+
+  it("MB-002: sends no branch when the person works at one", async () => {
+    const fetchMock = installFetch({
+      branches: [{ id: "b-1", name: "Casa central" }],
+      sales: () => jsonResponse(DRAFT_SALE, 201),
+    });
+    renderCounter();
+    await addFirstItem();
+    await checkout();
+    expect(screen.queryByLabelText("Sucursal de la venta")).toBeNull();
+    const create = salesCalls(fetchMock).find((call) => call[1]?.method === "POST");
+    expect(JSON.parse(create?.[1]?.body as string)).not.toHaveProperty("branchId");
+  });
+
+  it("UX-035: sends the create with a key and recovers a lost answer by asking with it", async () => {
+    let lost = true;
+    const fetchMock = installFetch({
+      sales: (url, init) => {
+        if (init?.method === "POST" && url === "/api/sales") {
+          if (lost) throw new Error("lost response");
+          return jsonResponse(DRAFT_SALE, 200);
+        }
+        if (url.startsWith("/api/sales/attempts/")) return jsonResponse(DRAFT_SALE);
+        return jsonResponse([]);
+      },
+    });
+    renderCounter();
+    await addFirstItem();
+    fireEvent.click(screen.getByRole("button", { name: "Continuar al pago" }));
+    await screen.findByTestId("create-error");
+
+    const post = salesCalls(fetchMock).find((call) => call[1]?.method === "POST");
+    const key = (post?.[1]?.headers as Record<string, string>)["idempotency-key"];
+    expect(key).toMatch(/^[0-9a-f-]{36}$/);
+    expect(window.sessionStorage.getItem("newsaas.pending-attempts.v1")).toContain(key);
+
+    fireEvent.click(screen.getByRole("button", { name: "Consultar si se creó" }));
+    // Found by key: the draft continues to payment, nothing was re-sent.
+    await screen.findByRole("button", { name: "Revisar venta" });
+    expect(
+      salesCalls(fetchMock).some((call) => resolveUrl(call[0]) === `/api/sales/attempts/${key}`)
+    ).toBe(true);
+    expect(salesCalls(fetchMock).filter((call) => call[1]?.method === "POST")).toHaveLength(1);
+    expect(window.sessionStorage.getItem("newsaas.pending-attempts.v1") ?? "").not.toContain(key);
+    lost = false;
+  });
+
+  it("UX-035: when the attempt recorded nothing, the retry re-sends the SAME key", async () => {
+    let posts = 0;
+    const fetchMock = installFetch({
+      sales: (url, init) => {
+        if (init?.method === "POST" && url === "/api/sales") {
+          posts += 1;
+          if (posts === 1) throw new Error("lost response");
+          return jsonResponse(DRAFT_SALE, 201);
+        }
+        if (url.startsWith("/api/sales/attempts/")) {
+          return errorResponse("NOT_FOUND", "No sale was created under that Idempotency-Key.", 404);
+        }
+        return jsonResponse([]);
+      },
+    });
+    renderCounter();
+    await addFirstItem();
+    fireEvent.click(screen.getByRole("button", { name: "Continuar al pago" }));
+    await screen.findByTestId("create-error");
+    fireEvent.click(screen.getByRole("button", { name: "Consultar si se creó" }));
+    expect(await screen.findByTestId("attempt-absent")).toHaveTextContent("misma clave");
+    fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
+    await screen.findByRole("button", { name: "Revisar venta" });
+
+    const keys = salesCalls(fetchMock)
+      .filter((call) => call[1]?.method === "POST")
+      .map((call) => (call[1]?.headers as Record<string, string>)["idempotency-key"]);
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toBe(keys[1]);
+  });
+
+  it("UX-035: after a reload, offers to look up a previous page's unanswered attempt", async () => {
+    const key = "44444444-4444-4444-8444-444444444444";
+    window.sessionStorage.setItem(
+      "newsaas.pending-attempts.v1",
+      JSON.stringify([{ kind: "sale.create", key, startedAt: new Date().toISOString() }])
+    );
+    installFetch({
+      sales: (url) =>
+        url === `/api/sales/attempts/${key}` ? jsonResponse(DRAFT_SALE) : jsonResponse([]),
+    });
+    renderCounter();
+    const panel = await screen.findByTestId("pending-sale-attempts");
+    fireEvent.click(within(panel).getByRole("button", { name: "Consultar" }));
+    expect(
+      await within(panel).findByRole("link", { name: "Se creó: abrir la venta" })
+    ).toHaveAttribute("href", `/app/sales/${SALE_ID}`);
+    expect(window.sessionStorage.getItem("newsaas.pending-attempts.v1")).toBeNull();
+  });
 
   it("keeps a rejected cart editable without exposing the backend payload", async () => {
     installFetch({ sales: () => errorResponse("VALIDATION_ERROR", "PRIVATE rejected", 400) });

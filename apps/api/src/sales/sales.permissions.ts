@@ -19,6 +19,8 @@ export const SALES_PERMISSIONS = Object.freeze({
   update: "sales.update",
   cancel: "sales.cancel",
   complete: "sales.complete",
+  /** SAL-REV-001 (DEC-089): reversing a COMPLETED sale. OWNER and ADMIN only. */
+  reverse: "sales.reverse",
 } as const);
 
 export type SalesPermission = (typeof SALES_PERMISSIONS)[keyof typeof SALES_PERMISSIONS];

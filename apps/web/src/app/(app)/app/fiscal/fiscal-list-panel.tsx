@@ -89,7 +89,7 @@ export function FiscalListPanel({
                 >
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium text-foreground">{`${FISCAL_STATUS_LABELS[document.status as FiscalDocumentStatus]} fiscal document #${shortId(document.id)}`}</p>
-                    <p className="text-xs text-muted-foreground">{`Invoice #${shortId(document.invoiceId)} · ${document.attemptCount} attempts · ${formatTimestamp(document.createdAt)}`}</p>
+                    <p className="text-xs text-muted-foreground">{`${document.creditNoteId ? `Nota de crédito #${shortId(document.creditNoteId)} · de la factura` : "Invoice"} #${shortId(document.invoiceId)} · ${document.attemptCount} attempts · ${formatTimestamp(document.createdAt)}`}</p>
                   </div>
                   <Button
                     type="button"

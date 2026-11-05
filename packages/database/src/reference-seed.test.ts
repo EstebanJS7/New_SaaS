@@ -874,8 +874,10 @@ describe("reference seed · idempotency (spec scenario: Seed rerun safe)", () =>
       // DAT-007: the platform tenant owns identity-scoped messages (a staff
       // password-recovery email), because the delivery aggregate's tenant_id is
       // NOT NULL and the reset belongs to an IDENTITY rather than to a customer.
+      // SAL-REV-001 adds `sales.reverse` for OWNER and ADMIN (DEC-089), 67 -> 68.
+      // MB-001 adds `branches.manage` for OWNER and ADMIN (DEC-094), 68 -> 69.
       tenants: 1,
-      permissions: 67,
+      permissions: 69,
       featureCodes: 12,
       plans: 1,
       rolePermissions: expectedPairs,

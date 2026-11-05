@@ -1,0 +1,168 @@
+name: Deploy
+
+# Construye las imágenes de la app (api, worker, web, migrate) desde
+# infra/deploy/Dockerfile y la de PostgreSQL con pgBackRest desde
+# infra/deploy/postgres.
+#
+# - pull_request: solo construye. Prueba que el Dockerfile sigue compilando.
+# - push a main: construye, publica en GHCR (etiquetas <sha> y latest) y
+#   despliega en el VPS. El job `deploy` usa el environment `production`: en
+#   Settings > Environments se configura la aprobación manual y los secretos
+#   VPS_HOST, VPS_USER, VPS_SSH_KEY y VPS_KNOWN_HOSTS.
+# - workflow_dispatch: redesplegar a mano una etiqueta ya publicada.
+#
+# Guía completa: infra/deploy/README.md
+
+on:
+  pull_request:
+    branches: [main, master]
+    paths:
+      - "infra/deploy/**"
+      - ".dockerignore"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/deploy.yml"
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Etiqueta a desplegar (sha de un commit ya publicado)"
+        required: true
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}
+
+jobs:
+  images:
+    name: Docker images
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lowercase image prefix
+        run: echo "IMAGE_PREFIX=${IMAGE_PREFIX,,}" >> "$GITHUB_ENV"
+
+      # Las cuatro comparten la etapa `build`; la caché de GitHub Actions evita
+      # recompilar el monorepo para cada target.
+      - name: Build api
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/deploy/Dockerfile
+          target: api
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/newsaas-api:${{ github.sha }}
+            ${{ env.IMAGE_PREFIX }}/newsaas-api:latest
+          cache-from: type=gha,scope=newsaas
+          cache-to: type=gha,scope=newsaas,mode=max
+
+      - name: Build worker
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/deploy/Dockerfile
+          target: worker
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/newsaas-worker:${{ github.sha }}
+            ${{ env.IMAGE_PREFIX }}/newsaas-worker:latest
+          cache-from: type=gha,scope=newsaas
+
+      - name: Build web
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/deploy/Dockerfile
+          target: web
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/newsaas-web:${{ github.sha }}
+            ${{ env.IMAGE_PREFIX }}/newsaas-web:latest
+          cache-from: type=gha,scope=newsaas
+
+      - name: Build migrate
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/deploy/Dockerfile
+          target: migrate
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/newsaas-migrate:${{ github.sha }}
+            ${{ env.IMAGE_PREFIX }}/newsaas-migrate:latest
+          cache-from: type=gha,scope=newsaas
+
+      # PostgreSQL 16 + pgBackRest (respaldos y PITR).
+      - name: Build postgres
+        uses: docker/build-push-action@v6
+        with:
+          context: infra/deploy/postgres
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/newsaas-postgres:${{ github.sha }}
+            ${{ env.IMAGE_PREFIX }}/newsaas-postgres:latest
+          cache-from: type=gha,scope=newsaas-postgres
+          cache-to: type=gha,scope=newsaas-postgres,mode=max
+
+  deploy:
+    name: Deploy to VPS
+    needs: images
+    # Corre tras un push a main, o a mano; nunca en pull requests.
+    if: >-
+      always() &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'push' && needs.images.result == 'success'))
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Upload stack files
+        env:
+          TARGET: ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}
+        run: |
+          scp -i ~/.ssh/id_deploy \
+            infra/deploy/docker-compose.prod.yml \
+            infra/deploy/Caddyfile \
+            infra/deploy/deploy.sh \
+            infra/deploy/restore.sh \
+            "$TARGET:/opt/newsaas/"
+
+      - name: Deploy
+        env:
+          TARGET: ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}
+          IMAGE_TAG: ${{ github.event.inputs.image_tag || github.sha }}
+        run: ssh -i ~/.ssh/id_deploy "$TARGET" "bash /opt/newsaas/deploy.sh '$IMAGE_TAG'"

@@ -50,6 +50,8 @@ model UserProfile {
   /// Close actor for clinical encounters (EPIC-06); the audit trail remains the
   /// authoritative record.
   clinicalEncountersClosed ClinicalEncounter[] @relation("ClinicalEncounterClosedBy")
+  saleReversals SaleReversal[]
+  creditNotesIssued CreditNote[]
 
   @@map("user_profile")
 }
@@ -176,6 +178,7 @@ model Tenant {
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branches                    Branch[]
+  membershipBranches          MembershipBranch[]
   memberships                 TenantMembership[]
   portalAccess                CustomerPortalAccess[]
   entitlements                TenantEntitlement[]
@@ -240,31 +243,81 @@ model Tenant {
   /// each global rate code carries, and the CSCs it holds per environment.
   tenantTaxClassifications    TenantTaxClassification[]
   tenantFiscalCscs            TenantFiscalCsc[]
+  /// SAL-REV-001: sale reversals and the payment refunds they record.
+  saleReversals               SaleReversal[]
+  paymentRefunds              PaymentRefund[]
+  /// NCE-001: credit notes that compensate approved invoices.
+  creditNotes                 CreditNote[]
 
   @@map("tenant")
 }
 
-/// SCHEMA-ONLY SCAFFOLD (spec: persistence / Schema inventory): Branch is inert
-/// during EPIC-01 — no endpoint or service creates, reads, updates or deletes
-/// rows. Route-enumeration proof lands with task 5.3.
+/// A physical location where the clinic attends, charges and keeps stock
+/// (DEC-094). Created by the tenant's provisioning and, from MB-001, managed by
+/// `branches.manage`. Never deleted (BEFORE DELETE trigger): removal is
+/// `isActive = false`, and the history keeps its reference. Name is unique per
+/// tenant case-insensitively (`branch_tenant_id_lower_name_key`, raw SQL).
 model Branch {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
 
-  tenantId String @map("tenant_id") @db.Uuid
+  tenantId String  @map("tenant_id") @db.Uuid
+  /// 1..120 characters, unique per tenant ignoring case.
   name     String
+  address  String? @db.VarChar(255)
+  phone    String? @db.VarChar(30)
+  isActive Boolean @default(true) @map("is_active")
+
+  /// MB-002 (DEC-094 §9): the branch's own issuance point. Both or neither
+  /// (`branch_issuance_point_complete`); without one, documents use the emitter
+  /// profile's default point. One branch per point (partial unique index).
+  fiscalEstablishmentId String? @map("fiscal_establishment_id") @db.Uuid
+  /// `C006 dPunExp`, three digits.
+  expeditionPoint       String? @map("expedition_point") @db.VarChar(3)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  fiscalEstablishment FiscalEstablishment? @relation(fields: [tenantId, fiscalEstablishmentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   appointments Appointment[]
+  /// MB-001: the staff assigned to work here.
+  memberships  MembershipBranch[]
+  /// MB-002: the drawers and the sales of this branch.
+  cashRegisters CashRegister[]
+  sales         Sale[]
+  /// MB-003: the stock kept and moved here, and the purchases received here.
+  stockMovements StockMovement[]
+  stockBalances  StockBalance[]
+  purchases      Purchase[]
 
   /// Tenant-ownership key: target of the appointment composite branch FK so an
   /// appointment can only reference a Branch of the SAME tenant (EPIC-07).
   @@unique([tenantId, id])
   @@index([tenantId])
   @@map("branch")
+}
+
+/// MB-001 (DEC-094 §5): a membership works at a branch. Composite tenant FKs on
+/// both sides, so an assignment never crosses tenants. Replaced as a set by the
+/// assignment command; never edited in place.
+model MembershipBranch {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId     String @map("tenant_id") @db.Uuid
+  membershipId String @map("membership_id") @db.Uuid
+  branchId     String @map("branch_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant     Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  membership TenantMembership @relation(fields: [tenantId, membershipId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  branch     Branch           @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  /// One assignment per (membership, branch).
+  @@unique([membershipId, branchId])
+  @@index([tenantId, branchId])
+  @@map("membership_branch")
 }
 
 /// Binds a global staff profile to one tenant with one role. Demonstrates the
@@ -296,6 +349,9 @@ model TenantMembership {
   /// `(tenantId, id)` discipline as the cash opener: the operator who uploaded
   /// a file is a membership of the job's own tenant by construction.
   createdImportJobs ImportJob[]
+
+  /// MB-001: the branches this membership works at.
+  branches MembershipBranch[]
 
   /// One membership per (tenant, profile).
   @@unique([tenantId, userProfileId])
@@ -1631,14 +1687,26 @@ model CatalogItem {
 /// adjustment shipped by EPIC-10, `PURCHASE` is the positive receiving input
 /// the EPIC-11 PUR-002 receive command writes (DEC-014), and `SALE` is the
 /// signed negative output the EPIC-12 POS-003 CompleteSale command writes — one
-/// movement per completing line. The effective set is therefore `ADJUSTMENT`,
-/// `PURCHASE` and `SALE`; `TRANSFER_*` and the `*_REVERSAL` compensations stay
-/// reserved for later slices and are added additively then. Evolve additively
-/// only: values are appended, never reordered or removed.
+/// movement per completing line. SAL-REV-001 (DEC-089) appends `SALE_REVERSAL`,
+/// the signed positive compensation a sale reversal writes. MB-003 (DEC-094)
+/// appends `TRANSFER_OUT` and `TRANSFER_IN`: a transfer between two branches is
+/// one of each, sharing a `transferId`. The effective set is therefore
+/// `ADJUSTMENT`, `PURCHASE`, `SALE`, `SALE_REVERSAL`, `TRANSFER_OUT` and
+/// `TRANSFER_IN`; the other `*_REVERSAL` compensations stay reserved for later
+/// slices and are added additively then. Evolve additively only:
+/// values are appended, never reordered or removed.
 enum StockMovementType {
   ADJUSTMENT
   PURCHASE
   SALE
+  /// SAL-REV-001: the signed POSITIVE compensation of a `SALE` movement when a
+  /// completed sale is reversed (DEC-089).
+  SALE_REVERSAL
+  /// MB-003 (DEC-094 §10): the two halves of a transfer between branches —
+  /// the NEGATIVE output at the origin and the POSITIVE input at the
+  /// destination, sharing one `transferId`.
+  TRANSFER_OUT
+  TRANSFER_IN
 
   @@map("stock_movement_type")
 }
@@ -1669,26 +1737,39 @@ model StockMovement {
   /// tenant.
   reversesMovementId String? @map("reverses_movement_id") @db.Uuid
 
+  /// SAL-REV-001: the sale a `SALE` or `SALE_REVERSAL` movement belongs to. Null for
+  /// every other kind and for movements written before DEC-089.
+  saleId String? @map("sale_id") @db.Uuid
+
+  /// MB-003 (DEC-094 §10): the branch whose stock this movement changed.
+  branchId   String  @map("branch_id") @db.Uuid
+  /// MB-003: the transfer a TRANSFER_OUT / TRANSFER_IN pair belongs to, set
+  /// exactly for those two kinds (`stock_movement_transfer_pairing`).
+  transferId String? @map("transfer_id") @db.Uuid
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  branch Branch @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   /// Composite tenant-ownership FK: the CatalogItem must be in the SAME tenant.
   catalogItem CatalogItem @relation(fields: [tenantId, catalogItemId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   /// Composite tenant-ownership self-FK for the compensating link (reserved).
   reversesMovement StockMovement?  @relation("StockMovementReversal", fields: [tenantId, reversesMovementId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   reversals        StockMovement[] @relation("StockMovementReversal")
+  sale             Sale?           @relation(fields: [tenantId, saleId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   /// Tenant-ownership key: target of the composite item FK and of the
   /// compensating self-FK.
   @@unique([tenantId, id])
   @@index([tenantId, catalogItemId])
   @@index([tenantId, reversesMovementId])
+  @@index([tenantId, saleId])
   @@map("stock_movement")
 }
 
 /// Transactional stock projection (PRD §16): exactly one row per (tenant,
-/// item), updated in the SAME transaction as the movements that change it.
+/// item, branch) since MB-003 (DEC-094 §10), updated in the SAME transaction as the movements that change it.
 /// `quantity` is non-negative by database CHECK — under the fixed BLOCK policy
 /// the projection never goes below zero. It is a projection, never the source
 /// of truth: the ledger owns the history.
@@ -1698,16 +1779,19 @@ model StockBalance {
   tenantId      String  @map("tenant_id") @db.Uuid
   catalogItemId String  @map("catalog_item_id") @db.Uuid
   quantity      Decimal @db.Decimal(10, 3)
+  /// MB-003: the branch this balance is kept in.
+  branchId      String  @map("branch_id") @db.Uuid
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  branch Branch @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   /// Composite tenant-ownership FK: the CatalogItem must be in the SAME tenant.
   catalogItem CatalogItem @relation(fields: [tenantId, catalogItemId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
-  /// Exactly one balance row per (tenant, item).
-  @@unique([tenantId, catalogItemId])
+  /// Exactly one balance row per (tenant, item, branch).
+  @@unique([tenantId, catalogItemId, branchId])
   @@map("stock_balance")
 }
 
@@ -1849,11 +1933,14 @@ model Purchase {
   /// NULL while `DRAFT` and for `CANCELLED`, which is never received: a report
   /// dates a receipt by this column and never by `createdAt`/`updatedAt`.
   receivedAt DateTime?      @map("received_at") @db.Timestamptz(3)
+  /// MB-003 (DEC-094 §10): the branch the goods are received into.
+  branchId   String         @map("branch_id") @db.Uuid
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  branch Branch @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   /// Composite tenant-ownership FK: the Supplier must be in the SAME tenant.
   supplier Supplier @relation(fields: [tenantId, supplierId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
@@ -2002,6 +2089,9 @@ model Sale {
   /// counted as revenue retroactively. Reports date a sale by this column,
   /// never by `createdAt`.
   completedAt DateTime?  @map("completed_at") @db.Timestamptz(3)
+  /// MB-002 (DEC-094 §9): where the sale happens. A CASH payment is taken by
+  /// the single open session of a register in THIS branch.
+  branchId    String     @map("branch_id") @db.Uuid
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -2010,6 +2100,7 @@ model Sale {
   /// OPTIONAL composite tenant-ownership FK: when a customer is present it must
   /// be in the SAME tenant (DEC-028).
   customer Customer? @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  branch   Branch    @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   lines              SaleLine[]
   /// Payments written by the POS-003 completion transaction (PRD §19,
@@ -2027,9 +2118,13 @@ model Sale {
   /// than one invoice row per sale is a legitimate state.
   invoices           Invoice[]
   clinicalLinks      ClinicalSaleLink[]
+  stockMovements     StockMovement[]
+  cashMovements      CashMovement[]
+  reversal           SaleReversal?
 
   /// Tenant-ownership key: target of the composite sale FK from `SaleLine`.
   @@unique([tenantId, id])
+  @@index([tenantId, branchId])
   /// Tenant list lookup: `(tenant_id, status)` serves the status-filtered sale
   /// list without a second scan (there is no numbering column to sort on).
   @@index([tenantId, status])
@@ -2153,6 +2248,37 @@ enum PaymentMethod {
   @@map("payment_method")
 }
 
+/// PAY-DET-001 / DEC-091: `iTiPago` 3 (crédito) or 4 (débito) for a CARD payment.
+enum PaymentCardType {
+  CREDIT
+  DEBIT
+
+  @@map("payment_card_type")
+}
+
+/// PAY-DET-001 / DEC-091: `iDenTarj` (Manual E621): 1 Visa, 2 Mastercard,
+/// 3 American Express, 4 Maestro, 5 Panal, 6 Cabal, 99 Otro.
+enum PaymentCardBrand {
+  VISA
+  MASTERCARD
+  AMERICAN_EXPRESS
+  MAESTRO
+  PANAL
+  CABAL
+  OTHER
+
+  @@map("payment_card_brand")
+}
+
+/// PAY-DET-001 / DEC-091: a QR payment is an electronic wallet (`iTiPago` 7) or a
+/// bank app's electronic payment (`iTiPago` 21).
+enum PaymentQrKind {
+  WALLET
+  BANK_APP
+
+  @@map("payment_qr_kind")
+}
+
 /// Tenant-scoped payment attached to exactly one sale (PRD §19, DEC-029). A
 /// payment exists only on the CompleteSale command: a DRAFT sale carries none,
 /// so the completion transaction is the single write path.
@@ -2178,6 +2304,22 @@ model Payment {
   /// Exact money on the reference scale; the migration rejects `amount <= 0`.
   amount   Decimal       @map("amount") @db.Decimal(14, 2)
 
+  /// PAY-DET-001 / DEC-091: the detail SIFEN's `gPaConEIni` needs (TD-074).
+  /// Nullable because payments written before the migration lack it; the
+  /// migration's INSERT guard requires it, per method, for every new payment,
+  /// and its CHECKs forbid detail that does not belong to the method.
+  cardType         PaymentCardType?  @map("card_type")
+  cardBrand        PaymentCardBrand? @map("card_brand")
+  /// `dDesDenTarj` when the brand is OTHER: 4 to 20 characters.
+  cardBrandName    String?           @map("card_brand_name") @db.VarChar(20)
+  qrKind           PaymentQrKind?    @map("qr_kind")
+  /// `dNumCheq`: exactly eight digits.
+  checkNumber      String?           @map("check_number") @db.VarChar(8)
+  /// `dBcoEmi`: 4 to 20 characters.
+  checkBank        String?           @map("check_bank") @db.VarChar(20)
+  /// `dDesTiPag` for an OTHER payment: 4 to 30 characters.
+  otherDescription String?           @map("other_description") @db.VarChar(30)
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -2185,10 +2327,71 @@ model Payment {
   /// Composite tenant-ownership FK: the Sale must be in the SAME tenant.
   sale   Sale   @relation(fields: [tenantId, saleId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
+  refund PaymentRefund?
+
   /// Tenant-ownership key: target of the composite sale FK.
   @@unique([tenantId, id])
   @@map("payment")
 }
+/// SAL-REV-001 / DEC-089: the reversal of a COMPLETED sale (PRD §40). One per sale,
+/// append-only. The sale's own lines, payments and movements are never edited; this
+/// record and its compensations point back at them.
+model SaleReversal {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId String @map("tenant_id") @db.Uuid
+  saleId   String @map("sale_id") @db.Uuid
+
+  /// INTERNAL free text, mandatory.
+  reason String @db.VarChar(500)
+
+  reversedByUserProfileId String @map("reversed_by_user_profile_id") @db.Uuid
+
+  /// The OPEN session a CASH refund was paid out of; null when nothing was cash.
+  cashSessionId String? @map("cash_session_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  sale        Sale         @relation(fields: [tenantId, saleId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  reversedBy  UserProfile  @relation(fields: [reversedByUserProfileId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  cashSession CashSession? @relation(fields: [tenantId, cashSessionId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  refunds PaymentRefund[]
+  /// NCE-001: the credit note issued when the reversed sale was invoiced.
+  creditNote CreditNote?
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, saleId])
+  @@map("sale_reversal")
+}
+
+/// SAL-REV-001: the refund of one original payment, written by a sale reversal.
+/// The payment itself is never changed. A CASH refund carries its REFUND movement.
+model PaymentRefund {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId       String        @map("tenant_id") @db.Uuid
+  paymentId      String        @map("payment_id") @db.Uuid
+  saleReversalId String        @map("sale_reversal_id") @db.Uuid
+  method         PaymentMethod
+  amount         Decimal       @map("amount") @db.Decimal(14, 2)
+  cashMovementId String?       @map("cash_movement_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  payment      Payment       @relation(fields: [tenantId, paymentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  saleReversal SaleReversal  @relation(fields: [tenantId, saleReversalId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  cashMovement CashMovement? @relation(fields: [tenantId, cashMovementId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, paymentId])
+  @@unique([tenantId, cashMovementId])
+  @@index([tenantId, saleReversalId])
+  @@map("payment_refund")
+}
+
 
 /// Tenant-scoped idempotency record for sensitive commands (DEC-024). One row
 /// per accepted command execution, unique per `(tenant, operation, key)`: the
@@ -2266,8 +2469,9 @@ model IdempotencyRecord {
 // the opener belongs to the session's tenant rather than relying on a global
 // `user_profile` reference (the 2026-09-29 DEC-020 subsequent-scope note).
 //
-// There is deliberately no `branchId` anywhere (DEC-020): cash stays
-// tenant-wide, consistent with the tenant-wide stock decision.
+// MB-002 (DEC-094 §9): the register carries the branch; sessions and
+// movements reach it through their register (DEC-020's tenant-wide cash is
+// superseded on this point).
 //
 // Immutability: the migration adds an unconditional `BEFORE DELETE` trigger on
 // `cash_session` and on `cash_movement` — there is no draft state in cash, so
@@ -2336,7 +2540,9 @@ enum CashSessionStatus {
 /// `catalog_item`) carry a list index instead because their names are not
 /// operator-facing identities the way a drawer is.
 ///
-/// There is no `branchId` (DEC-020): the register is tenant-wide. Nothing in
+/// MB-002 (DEC-094 §9) superseded DEC-020's tenant-wide register: the drawer
+/// belongs to a branch (`branchId`); sessions and movements follow their
+/// register and carry no branch of their own. Nothing in
 /// EPIC-12 hard-deletes a register; removal is deactivation through
 /// `isActive`, so historical sessions and movements keep their reference. Data
 /// classification: the name is INTERNAL (PRD §41); logs and audit carry ids and
@@ -2348,11 +2554,14 @@ model CashRegister {
   /// Operator-facing drawer name: required, non-empty and bounded to 1..200.
   name     String  @db.VarChar(200)
   isActive Boolean @default(true) @map("is_active")
+  /// MB-002 (DEC-094 §9, supersedes DEC-020 here): the branch this drawer is in.
+  branchId String  @map("branch_id") @db.Uuid
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  branch Branch @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   /// Sessions opened against this drawer.
   sessions  CashSession[]
@@ -2364,6 +2573,7 @@ model CashRegister {
   @@unique([tenantId, id])
   /// One register name per tenant: an ambiguous drawer is not a valid state.
   @@unique([tenantId, name])
+  @@index([tenantId, branchId])
   @@map("cash_register")
 }
 
@@ -2431,6 +2641,7 @@ model CashSession {
 
   /// Movements recorded inside this session (written by POS-003, not here).
   movements CashMovement[]
+  saleReversals SaleReversal[]
 
   /// Tenant-ownership key: target of the composite session FK from
   /// `CashMovement`.
@@ -2491,6 +2702,9 @@ model CashMovement {
   /// OPTIONAL free-text explanation, bounded; the `SALE` kind needs none.
   reason     String?          @db.VarChar(500)
 
+  /// SAL-REV-001: the sale a `SALE` or sale-reversal `REFUND` movement belongs to.
+  saleId String? @map("sale_id") @db.Uuid
+
   /// Append-only rows are written once — no `updatedAt` by design.
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
@@ -2499,9 +2713,13 @@ model CashMovement {
   register CashRegister @relation(fields: [tenantId, registerId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   /// Composite tenant-ownership FK: the session must be in the SAME tenant.
   session  CashSession  @relation(fields: [tenantId, sessionId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  sale     Sale?        @relation(fields: [tenantId, saleId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  paymentRefund PaymentRefund?
 
   /// Tenant-ownership key, mirroring every other tenant-scoped aggregate.
   @@unique([tenantId, id])
+  @@index([tenantId, saleId])
   @@map("cash_movement")
 }
 
@@ -2659,6 +2877,9 @@ model Invoice {
   /// OPTIONAL: a tenant that has declared no issuance point numbers its
   /// invoices with `invoice_number_sequence` and has no row here.
   fiscalAllocation InvoiceFiscalAllocation?
+
+  /// NCE-001: the credit note that compensates this invoice (total credit, one).
+  creditNote CreditNote?
 
   /// Tenant-ownership key: target of the composite invoice FK from
   /// `InvoiceLine`.
@@ -2881,11 +3102,19 @@ model FiscalDocument {
   /// records the instant.
   cancelPendingSince DateTime? @map("cancel_pending_since") @db.Timestamptz(3)
 
+  /// NCE-001 / DEC-090: the credit note this document carries. NULL for the
+  /// invoice's own factura electrónica. A note's document keeps `invoiceId` =
+  /// the CREDITED invoice; the migration's guard enforces the pairing and makes
+  /// both columns immutable, and the "one live document per invoice" partial
+  /// index counts only rows where this is NULL.
+  creditNoteId       String?   @map("credit_note_id") @db.Uuid
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   invoice Invoice @relation(fields: [tenantId, invoiceId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  creditNote CreditNote? @relation(fields: [tenantId, creditNoteId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([tenantId, id])
   @@index([tenantId, status])
@@ -3296,6 +3525,9 @@ model FiscalEstablishment {
   /// back-reference and not a requirement.
   defaultForEmitterProfiles FiscalEmitterProfile[]
 
+  /// MB-002: the branches that issue from this establishment.
+  branches Branch[]
+
   @@unique([tenantId, id])
   @@unique([tenantId, code])
   @@map("fiscal_establishment")
@@ -3358,6 +3590,8 @@ model FiscalTimbradoRange {
 
   /// EPIC-16 FISC-015 WU-B: the invoice numbers this authorisation handed out.
   fiscalAllocations InvoiceFiscalAllocation[]
+  /// NCE-001: the credit-note numbers this authorisation handed out.
+  creditNotes       CreditNote[]
 
   /// The Manual's whole sequence: the timbrado number is part of the identity, so a
   /// second authorisation for the same key is a different range rather than a
@@ -3538,6 +3772,58 @@ model InvoiceFiscalAllocation {
   /// migration's guard proves the range belongs to the same tenant.
   @@unique([tenantId, invoiceId])
   @@map("invoice_fiscal_allocation")
+}
+
+/// NCE-001 / DEC-090: a Nota de Crédito Electrónica (`C002 = 5`) that credits a
+/// CONFIRMED invoice whose factura electrónica SIFEN APPROVED, written by the
+/// reversal of its sale (DEC-089 §3). TOTAL credit: the items are the invoice's
+/// own frozen lines, so there is no line table. Header and fiscal number live in
+/// one append-only row (the migration rejects UPDATE and DELETE), because a note
+/// exists only on the fiscal path and is numbered in the transaction that writes
+/// it. The allocation columns mirror `InvoiceFiscalAllocation` and the same kind
+/// of guard proves they match the range.
+/// Data classification: the reason is INTERNAL free text and never sent to
+/// SIFEN; the CDC and fiscal identity are INTERNAL.
+model CreditNote {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId       String @map("tenant_id") @db.Uuid
+  invoiceId      String @map("invoice_id") @db.Uuid
+  saleReversalId String @map("sale_reversal_id") @db.Uuid
+
+  /// `E401 iMotEmi`, 1..8.
+  motive        Int    @db.SmallInt
+  reason        String @db.VarChar(500)
+  /// `H004 dCdCDERef`: the approved factura's CDC (must start `01`).
+  associatedCdc String @map("associated_cdc") @db.VarChar(44)
+
+  rangeId         String  @map("range_id") @db.Uuid
+  timbradoNumber  String  @map("timbrado_number") @db.VarChar(8)
+  establishmentId String  @map("establishment_id") @db.Uuid
+  expeditionPoint String  @map("expedition_point") @db.VarChar(3)
+  /// Always 5.
+  documentType    Int     @map("document_type") @db.SmallInt
+  series          String? @db.VarChar(2)
+  documentNumber  String  @map("document_number") @db.VarChar(7)
+
+  issuedByUserProfileId String   @map("issued_by_user_profile_id") @db.Uuid
+  /// `D002 dFeEmiDE`'s source.
+  issuedAt              DateTime @map("issued_at") @db.Timestamptz(3)
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant       Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  invoice      Invoice             @relation(fields: [tenantId, invoiceId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  saleReversal SaleReversal        @relation(fields: [tenantId, saleReversalId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  range        FiscalTimbradoRange @relation(fields: [rangeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  issuedBy     UserProfile         @relation(fields: [issuedByUserProfileId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  fiscalDocuments FiscalDocument[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, invoiceId])
+  @@unique([tenantId, saleReversalId])
+  @@unique([tenantId, rangeId, documentNumber])
+  @@map("credit_note")
 }
 
 // ---------------------------------------------------------------------------

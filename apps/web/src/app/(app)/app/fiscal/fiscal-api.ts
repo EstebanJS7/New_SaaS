@@ -36,6 +36,8 @@ export const FISCAL_CANCEL_REASON_MAX_LENGTH = 500;
 export interface FiscalDocument {
   readonly id: string;
   readonly invoiceId: string;
+  /** NCE-001: set when this document is a credit note crediting `invoiceId`. */
+  readonly creditNoteId?: string | null;
   readonly provider: string;
   readonly status: string;
   readonly attemptCount: number;

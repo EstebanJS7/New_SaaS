@@ -355,7 +355,27 @@ export type {
   MappedDteTotals,
 } from "./dte/dte.mapper.js";
 export { AFEC_IVA_DESCRIPTIONS, AFEC_IVA_VALUES } from "./dte/dte.types.js";
-export { DteValidationError, assertValidDteRequest } from "./dte/dte.rules.js";
+export {
+  CREDIT_NOTE_MOTIVE_DESCRIPTIONS,
+  DteValidationError,
+  assertValidDteRequest,
+} from "./dte/dte.rules.js";
+// PAY-DET-001 (DEC-091): the factura's gCamFE / gCamCond vocabulary.
+export {
+  COND_OPE_DESCRIPTIONS,
+  DEN_TARJ_DESCRIPTIONS,
+  DEN_TARJ_OTRO,
+  IND_PRES_DESCRIPTIONS,
+  TIPO_PAGO_DESCRIPTIONS,
+  TIPO_PAGO_OTRO,
+} from "./dte/dte.payment.js";
+export type { DtePaymentSnapshot } from "./dte/dte.payment.js";
+// NCE-001 (DEC-090): the total credit note -> DteRequest mapper.
+export {
+  ASSOCIATED_DOCUMENT_ELECTRONIC,
+  buildDteRequestFromCreditNote,
+} from "./dte/dte.credit-note.js";
+export type { CreditNoteMappingInput } from "./dte/dte.credit-note.js";
 export type { DteValidationFailure } from "./dte/dte.rules.js";
 export {
   DTE_NAMESPACE,

@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Param, Post } from "@nestjs/common";
 import { z } from "zod";
-import type { TenantMembershipView } from "./tenant-membership.repository.js";
+import type { StaffDirectoryEntry, TenantMembershipView } from "./tenant-membership.repository.js";
 import { TenantMembershipRepository } from "./tenant-membership.repository.js";
 import {
   MembershipRoleAssignmentService,
@@ -8,12 +8,32 @@ import {
 } from "./membership-role-assignment.service.js";
 import { RequirePermissions } from "../rbac/require-permissions.decorator.js";
 import { PermissionResolver } from "../rbac/permission-resolver.service.js";
+import {
+  StaffInvitationService,
+  type MembershipStatusResult,
+  type StaffInvitationResult,
+} from "./staff-invitation.service.js";
 
 /** Route-param contract: only a well-formed UUID names a membership resource. */
 const membershipIdParam = z.string().uuid();
 
 /** Body contract: roleCode MUST be one of the six seeded codes. */
 const assignRoleBody = z.object({ roleCode: z.enum(ROLE_CODE_SCHEMA_ENUM) });
+
+/** ONB-001: an invitation names a person, an address and the role they start with. */
+const inviteBody = z.object({
+  email: z.string().trim().toLowerCase().email().max(254),
+  displayName: z.string().trim().min(1).max(120),
+  roleCode: z.enum(ROLE_CODE_SCHEMA_ENUM),
+  /** MB-001: optional; omitted means every active branch (DEC-094 §6). */
+  branchIds: z.array(z.string().uuid()).max(100).optional(),
+});
+
+function parseMembershipId(id: string): string {
+  const parsed = membershipIdParam.safeParse(id);
+  if (!parsed.success) throw parsed.error; // Global filter => VALIDATION_FAILED envelope.
+  return parsed.data;
+}
 
 /**
  * Membership aggregate surface (design D5 + EPIC-02 design D1/D4).
@@ -33,7 +53,8 @@ export class MembershipsController {
   constructor(
     private readonly memberships: TenantMembershipRepository,
     private readonly permissionResolver: PermissionResolver,
-    private readonly roleAssignment: MembershipRoleAssignmentService
+    private readonly roleAssignment: MembershipRoleAssignmentService,
+    private readonly invitations: StaffInvitationService
   ) {}
 
   /** Lists the caller's active-tenant memberships — implicit scope only. */
@@ -51,6 +72,39 @@ export class MembershipsController {
    * guard skips key resolution for it, so this handler performs THE one
    * resolution of the request.
    */
+  /** ONB-001: the clinic's staff with name, address, role and activation state. */
+  @Get("directory")
+  @RequirePermissions("users.membership.manage")
+  async directory(): Promise<{ members: StaffDirectoryEntry[] }> {
+    return { members: await this.memberships.listDirectoryForActiveTenant() };
+  }
+
+  @Post("invitations")
+  @RequirePermissions("users.membership.manage")
+  async invite(@Body() body: unknown): Promise<{ invitation: StaffInvitationResult }> {
+    const parsed = inviteBody.safeParse(body);
+    if (!parsed.success) throw parsed.error; // Global filter => VALIDATION_FAILED envelope.
+    return { invitation: await this.invitations.invite(parsed.data) };
+  }
+
+  @Post(":id/activation")
+  @RequirePermissions("users.membership.manage")
+  async resendActivation(@Param("id") id: string): Promise<{ invitation: StaffInvitationResult }> {
+    return { invitation: await this.invitations.resendActivation(parseMembershipId(id)) };
+  }
+
+  @Post(":id/suspend")
+  @RequirePermissions("users.membership.manage")
+  async suspend(@Param("id") id: string): Promise<{ membership: MembershipStatusResult }> {
+    return { membership: await this.invitations.suspend(parseMembershipId(id)) };
+  }
+
+  @Post(":id/reactivate")
+  @RequirePermissions("users.membership.manage")
+  async reactivate(@Param("id") id: string): Promise<{ membership: MembershipStatusResult }> {
+    return { membership: await this.invitations.reactivate(parseMembershipId(id)) };
+  }
+
   @Get("me/permissions")
   @RequirePermissions()
   async myPermissions(): Promise<{ permissions: string[] }> {

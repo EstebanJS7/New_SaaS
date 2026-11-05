@@ -687,11 +687,22 @@ describe("schema · sale completion (EPIC-12 POS-003)", () => {
   });
 
   it("appends SALE to StockMovementType and documents the effective set", () => {
-    expect(enumLiterals("StockMovementType")).toEqual(["ADJUSTMENT", "PURCHASE", "SALE"]);
+    // SAL-REV-001 (DEC-089) appends SALE_REVERSAL, in last position.
+    expect(enumLiterals("StockMovementType")).toEqual([
+      "ADJUSTMENT",
+      "PURCHASE",
+      "SALE",
+      "SALE_REVERSAL",
+      // MB-003 (DEC-094 §10): the transfer pair, appended last.
+      "TRANSFER_OUT",
+      "TRANSFER_IN",
+    ]);
 
     const doc = docCommentAbove("enum StockMovementType ");
     expect(doc).toMatch(/`SALE` is the\s+signed negative output/);
-    expect(doc).toMatch(/`TRANSFER_\*` and the `\*_REVERSAL` compensations stay\s+reserved/);
+    expect(doc).toMatch(/appends `SALE_REVERSAL`/);
+    expect(doc).toMatch(/appends `TRANSFER_OUT` and `TRANSFER_IN`/);
+    expect(doc).toMatch(/the other `\*_REVERSAL` compensations stay reserved/);
     expect(doc).toMatch(/values are appended, never reordered or removed/);
   });
 

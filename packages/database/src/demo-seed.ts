@@ -557,6 +557,16 @@ export interface DemoSchedulingSeedTxClient {
       }[];
       skipDuplicates?: boolean;
     }) => Promise<{ count: number }>;
+    findMany: (args: {
+      where: { tenantId: string };
+      select: { id: true };
+    }) => Promise<{ id: string }[]>;
+  };
+  membershipBranch: {
+    createMany: (args: {
+      data: { tenantId: string; membershipId: string; branchId: string }[];
+      skipDuplicates?: boolean;
+    }) => Promise<{ count: number }>;
   };
   appointment: {
     createMany: (args: {
@@ -678,6 +688,20 @@ export async function seedDemoScheduling(
           status: "ACTIVE",
         },
       ],
+      skipDuplicates: true,
+    });
+    // DEC-094 §8: everyone in the demo clinic works at its one branch, so the
+    // professional can be booked there and the staff screen shows it.
+    const staff = await tx.tenantMembership.findMany({
+      where: { tenantId },
+      select: { id: true },
+    });
+    await tx.membershipBranch.createMany({
+      data: staff.map((member) => ({
+        tenantId,
+        membershipId: member.id,
+        branchId: DEMO_SCHEDULING_BRANCH_ID,
+      })),
       skipDuplicates: true,
     });
     const appointments = await tx.appointment.createMany({

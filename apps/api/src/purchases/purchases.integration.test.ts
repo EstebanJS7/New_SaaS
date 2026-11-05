@@ -22,6 +22,7 @@ import {
   STOCK_ITEM_INACTIVE_MESSAGE,
   STOCK_ITEM_NOT_TRACKED_MESSAGE,
 } from "../inventory/inventory.service.js";
+import { CHOOSE_BRANCH_MESSAGE, NOT_WORKING_AT_BRANCH_MESSAGE } from "../branches/branch-scope.js";
 import { PURCHASES_PERMISSIONS } from "./purchases.permissions.js";
 import {
   PURCHASE_CATALOG_ITEM_NOT_FOUND_MESSAGE,
@@ -65,6 +66,8 @@ const PURCHASE_RESPONSE_KEYS: readonly string[] = [
   "status",
   "lines",
   "receivedAt",
+  // MB-003 (DEC-094 §10): the branch the goods are received into.
+  "branchId",
   "createdAt",
   "updatedAt",
 ];
@@ -1354,5 +1357,94 @@ describe("Purchases HTTP boundary (EPIC-11 PUR-001)", () => {
       expect((response.body as ErrorDto).error.code).toBe("NOT_FOUND");
       expect((response.body as ErrorDto).error.message).toBe(PURCHASE_NOT_FOUND_MESSAGE);
     }
+  });
+});
+
+/**
+ * MB-003 (DEC-094 §10): a purchase is received into a branch. Its own app, so
+ * the second branch does not make the other tests ambiguous.
+ */
+describe("Purchases per branch (MB-003)", () => {
+  let booted: BootedTestApp;
+  let fixture: PurchasesHttpFixture;
+  let centralId: string;
+  let norteId: string;
+  let lejanaId: string;
+
+  beforeAll(async () => {
+    booted = await bootTestApp();
+    fixture = seedPurchasesHttp(booted.db);
+    const tenantId = fixture.a.tenant.id;
+    const central = [...booted.db.tables.branches.values()].find(
+      (row) => row.tenantId === tenantId
+    );
+    if (!central || !fixture.a.actor.membership) throw new Error("fixture: incomplete tenant");
+    centralId = central.id;
+    norteId = booted.db.prisma.branch.create({ data: { tenantId, name: "Norte" } }).id;
+    lejanaId = booted.db.prisma.branch.create({ data: { tenantId, name: "Lejana" } }).id;
+    booted.db.prisma.membershipBranch.create({
+      data: { tenantId, membershipId: fixture.a.actor.membership.id, branchId: norteId },
+    });
+  });
+
+  afterAll(async () => {
+    await booted.close();
+  });
+
+  it("asks for the branch when the buyer works at several, and receives into that branch only", async () => {
+    const supplier = fixture.createSupplier(fixture.a);
+    const item = fixture.createItem(fixture.a);
+    const body = purchaseBody(supplier.id, [line(item.id, "3")]);
+    const server = booted.app.getHttpServer();
+
+    const ambiguous = await supertest(server)
+      .post("/purchases")
+      .set("Cookie", fixture.a.actor.cookie)
+      .send(body)
+      .expect(400);
+    expect((ambiguous.body as ErrorDto).error.message).toBe(CHOOSE_BRANCH_MESSAGE);
+
+    const created = await supertest(server)
+      .post("/purchases")
+      .set("Cookie", fixture.a.actor.cookie)
+      .send({ ...body, branchId: norteId })
+      .expect(201);
+    const purchase = created.body as PurchaseDto & { branchId: string };
+    expect(purchase.branchId).toBe(norteId);
+
+    await supertest(server)
+      .post(`/purchases/${purchase.id}/receive`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(201);
+    const movements = [...booted.db.tables.stockMovements.values()].filter(
+      (row) => row.catalogItemId === item.id
+    );
+    expect(movements.map((row) => row.branchId)).toEqual([norteId]);
+    const balances = [...booted.db.tables.stockBalances.values()].filter(
+      (row) => row.catalogItemId === item.id
+    );
+    expect(balances.map((row) => [row.branchId, Number(row.quantity)])).toEqual([[norteId, 3]]);
+    expect(balances.some((row) => row.branchId === centralId)).toBe(false);
+  });
+
+  it("refuses to receive into a branch the caller does not work at, and writes nothing", async () => {
+    const item = fixture.createItem(fixture.a);
+    const purchase = booted.db.prisma.purchase.create({
+      data: {
+        tenantId: fixture.a.tenant.id,
+        supplierId: fixture.createSupplier(fixture.a).id,
+        branchId: lejanaId,
+        status: "DRAFT",
+        lines: { create: [{ catalogItemId: item.id, quantity: "1.000", unitCost: null }] },
+      },
+    });
+    const movementsBefore = booted.db.tables.stockMovements.size;
+    const response = await supertest(booted.app.getHttpServer())
+      .post(`/purchases/${purchase.id}/receive`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .expect(400);
+    expect((response.body as ErrorDto).error.message).toBe(NOT_WORKING_AT_BRANCH_MESSAGE);
+    expect(booted.db.tables.stockMovements.size).toBe(movementsBefore);
+    expect(booted.db.tables.purchases.get(purchase.id)?.status).toBe("DRAFT");
   });
 });

@@ -100,9 +100,31 @@ export function reportQueryShapeOf(code: ReportCode): ReportQueryShape {
   return REPORT_QUERY_SHAPE_BY_CODE[code];
 }
 
-/** The query keys one report accepts — empty for a current-state report. */
+/**
+ * MB-004 (DEC-094 §11): the commercial, cash, purchase and inventory reports
+ * also accept an optional `branchId` («Todas» when absent). The veterinary
+ * reports do not: clinical data belongs to the clinic.
+ */
+const BRANCH_FILTERED_REPORTS: ReadonlySet<ReportCode> = new Set<ReportCode>([
+  "sales-by-period",
+  "payment-methods",
+  "sales-by-product-service",
+  "cash-sessions",
+  "cash-movements",
+  "purchases",
+  "stock",
+  "low-stock",
+]);
+
+/** MB-004: true when the report can be narrowed to one branch. */
+export function reportAcceptsBranch(code: ReportCode): boolean {
+  return BRANCH_FILTERED_REPORTS.has(code);
+}
+
+/** The query keys one report accepts — only `branchId`, or none, for a current-state report. */
 export function reportQueryKeysOf(code: ReportCode): readonly string[] {
-  return REPORT_QUERY_KEYS[reportQueryShapeOf(code)];
+  const keys = REPORT_QUERY_KEYS[reportQueryShapeOf(code)];
+  return reportAcceptsBranch(code) ? [...keys, "branchId"] : keys;
 }
 
 /** True when a report accepts this query key. */

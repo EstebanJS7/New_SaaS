@@ -86,6 +86,8 @@ export type {
 // has not classified, a unit it has not declared, and an `E737` NT 013's formula
 // cannot express exactly.
 export { createInvoiceSnapshotReader, InvoiceSnapshotReadError } from "./invoice-snapshot.read.js";
+export { paymentSnapshot, PaymentSnapshotError } from "./payment-snapshot.js";
+export type { PaymentSnapshotRow } from "./payment-snapshot.js";
 export type {
   DecimalColumn,
   InvoiceItemRow,

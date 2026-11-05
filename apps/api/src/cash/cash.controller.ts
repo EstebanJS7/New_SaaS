@@ -86,9 +86,30 @@ export class CashController {
    */
   @Post("sessions")
   @RequirePermissions(CASH_PERMISSIONS.openSession)
-  async openSession(@Body() body: unknown): Promise<CashSessionResponse> {
+  async openSession(
+    @Body() body: unknown,
+    @Headers() headers: unknown,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<CashSessionResponse> {
     const input = parseInput(openCashSessionBody, body, "Invalid cash session open body.");
-    return this.cash.openSession(input);
+    // UX-035: the key is OPTIONAL here; with it, a lost answer is replayed (200).
+    const result = await this.cash.openSessionAttempt(input, readIdempotencyKey(headers));
+    reply.status(result.replay ? 200 : 201);
+    return result.session;
+  }
+
+  /** UX-035 / TD-073: the session an open attempt recorded, by its key; `404` if none. */
+  @Get("sessions/attempts/:key")
+  @RequirePermissions(CASH_PERMISSIONS.read)
+  async findSessionAttempt(@Param("key") key: unknown): Promise<CashSessionResponse> {
+    return this.cash.findSessionAttempt(key);
+  }
+
+  /** UX-035 / TD-073: the movement an attempt recorded, by its key; `404` if none. */
+  @Get("movements/attempts/:key")
+  @RequirePermissions(CASH_PERMISSIONS.read)
+  async findMovementAttempt(@Param("key") key: unknown): Promise<CashMovementResponse> {
+    return this.cash.findMovementAttempt(key);
   }
 
   /**

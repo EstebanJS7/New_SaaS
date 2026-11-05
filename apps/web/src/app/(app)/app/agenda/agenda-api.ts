@@ -92,11 +92,42 @@ export interface Appointment {
 
 /** Agenda filter options: tenant branches plus assignable VETERINARIAN memberships. */
 export interface AppointmentOptions {
-  readonly branches: readonly { readonly id: string; readonly name: string }[];
+  readonly branches: readonly {
+    readonly id: string;
+    readonly name: string;
+    /** MB-001: a deactivated branch stays in the filters but takes no new turno. */
+    readonly isActive?: boolean;
+  }[];
   readonly professionals: readonly {
     readonly membershipId: string;
     readonly displayName?: string | null;
+    /** MB-001: where this professional can be booked (DEC-094 §5). */
+    readonly branchIds?: readonly string[];
   }[];
+}
+
+type AgendaBranch = AppointmentOptions["branches"][number];
+type AgendaProfessional = AppointmentOptions["professionals"][number];
+
+/** MB-001: branches a new turno may go to. */
+export function bookableBranches(branches: readonly AgendaBranch[]): AgendaBranch[] {
+  return branches.filter((branch) => branch.isActive !== false);
+}
+
+/**
+ * MB-001: the professionals who work at `branchId`. Before a branch is chosen
+ * every professional is listed; an API answer without assignments (older
+ * server) lists everyone, and the API decides on submit either way.
+ */
+export function professionalsAtBranch(
+  professionals: readonly AgendaProfessional[],
+  branchId: string
+): AgendaProfessional[] {
+  if (branchId === "") return [...professionals];
+  return professionals.filter(
+    (professional) =>
+      professional.branchIds === undefined || professional.branchIds.includes(branchId)
+  );
 }
 
 /**

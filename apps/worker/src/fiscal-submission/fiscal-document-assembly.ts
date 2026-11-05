@@ -80,6 +80,7 @@
 import { randomInt } from "node:crypto";
 import {
   assembleEmitterProfile,
+  buildDteRequestFromCreditNote,
   buildDteRequestFromInvoice,
   buildDteXml,
   buildQrContent,
@@ -166,7 +167,27 @@ export const FISCAL_ASSEMBLY_REASON_CODES = Object.freeze({
    * does not own.
    */
   CURRENCY_NOT_SUPPORTED: "CURRENCY_NOT_SUPPORTED",
+  /** NCE-001: the credit note the document carries is not readable in this tenant. */
+  CREDIT_NOTE_UNAVAILABLE: "CREDIT_NOTE_UNAVAILABLE",
 } as const);
+
+/**
+ * NCE-001: the credit note row a note's document carries. Its fiscal number was
+ * allocated in the reversal's transaction and lives on the row itself, so it
+ * stands in for the invoice's allocation.
+ */
+export interface FiscalDocumentAssemblyCreditNoteRow {
+  readonly motive: number;
+  readonly associatedCdc: string;
+  readonly issuedAt: Date;
+  readonly rangeId: string;
+  readonly timbradoNumber: string;
+  readonly establishmentId: string;
+  readonly expeditionPoint: string;
+  readonly documentType: number;
+  readonly series: string | null;
+  readonly documentNumber: string;
+}
 
 /** One reason code this module answers with, from its own frozen set. */
 export type FiscalAssemblyReasonCode =
@@ -213,6 +234,8 @@ export interface FiscalDocumentAssemblyInvoiceRow {
   readonly confirmedAt: Date | null;
   /** `Invoice.customerId`; `null` for a walk-in invoice, which is refused. */
   readonly customerId: string | null;
+  /** PAY-DET-001: the sale whose payments the snapshot read maps to gCamCond. */
+  readonly saleId: string;
 }
 
 /**
@@ -231,7 +254,13 @@ export type FiscalDocumentAssemblyClient = FiscalProfileReadClient &
     readonly fiscalDocument: {
       findFirst(args: {
         where: { tenantId: string; id: string };
-      }): Promise<{ invoiceId: string } | null>;
+      }): Promise<{ invoiceId: string; creditNoteId?: string | null } | null>;
+    };
+    /** NCE-001: the note a credit-note document carries. */
+    readonly creditNote: {
+      findFirst(args: {
+        where: { tenantId: string; id: string };
+      }): Promise<FiscalDocumentAssemblyCreditNoteRow | null>;
     };
     /** The invoice, for the one column the receptor read needs. */
     readonly invoice: {
@@ -377,6 +406,21 @@ export function createFiscalDocumentAssembly(
         );
       }
       const invoiceId = document.invoiceId;
+      // NCE-001: a credit note's document keeps the CREDITED invoice; the note
+      // supplies its own number, date, motive and the factura's CDC.
+      const creditNoteId = document.creditNoteId ?? null;
+      let creditNote: FiscalDocumentAssemblyCreditNoteRow | null = null;
+      if (creditNoteId !== null) {
+        creditNote = await args.client.creditNote.findFirst({
+          where: { tenantId, id: creditNoteId },
+        });
+        if (creditNote === null) {
+          return unavailable(
+            FISCAL_ASSEMBLY_REASON_CODES.CREDIT_NOTE_UNAVAILABLE,
+            "The credit note the fiscal document carries is not readable in this tenant."
+          );
+        }
+      }
 
       // ---- the credential, read once, serving the signature here and the ---
       // ---- mutual-TLS call later (baseline §6) -----------------------------
@@ -423,7 +467,7 @@ export function createFiscalDocumentAssembly(
       }
 
       // ---- the authorisation the number was drawn from ---------------------
-      const allocation = await allocations.read(tenantId, invoiceId);
+      const allocation = creditNote ?? (await allocations.read(tenantId, invoiceId));
       if (allocation === null) {
         return unavailable(
           FISCAL_ASSEMBLY_REASON_CODES.FISCAL_NUMBER_NOT_ALLOCATED,
@@ -547,6 +591,11 @@ export function createFiscalDocumentAssembly(
           "The invoice behind the fiscal document is not readable in this tenant."
         );
       }
+      // A note is issued when the sale is reversed, not when the invoice was
+      // confirmed: D002 is the note's own instant, in the snapshot's format.
+      if (creditNote !== null) {
+        invoiceSnapshot = { ...invoiceSnapshot, issuedAt: fecHhmmss(creditNote.issuedAt) };
+      }
 
       // ---- the currency: PYG only, and that is a refusal rather than a ------
       // ---- conversion ------------------------------------------------------
@@ -583,7 +632,7 @@ export function createFiscalDocumentAssembly(
 
         // `dFecFirma` is the signature's own instant, and the same `at` the
         // credential's validity was decided against.
-        const mapped = buildDteRequestFromInvoice({
+        const mappingInput = {
           invoice: invoiceSnapshot,
           profile,
           identity: {
@@ -597,7 +646,15 @@ export function createFiscalDocumentAssembly(
           // after signing: `dCarQR` is required by the schema, and its content
           // depends on the signature (§24.5).
           qrContent: QR_PLACEHOLDER,
-        });
+        };
+        const mapped =
+          creditNote === null
+            ? buildDteRequestFromInvoice(mappingInput)
+            : buildDteRequestFromCreditNote({
+                ...mappingInput,
+                motive: creditNote.motive,
+                associatedCdc: creditNote.associatedCdc,
+              });
 
         const signed = signDteXml({
           xml: buildDteXml(mapped.request),

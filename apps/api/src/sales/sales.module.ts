@@ -4,6 +4,7 @@ import { CashModule } from "../cash/cash.module.js";
 import { CatalogRepository } from "../catalog/catalog.repository.js";
 import { ContextModule } from "../context/context.module.js";
 import { EntitlementsModule } from "../entitlements/entitlements.module.js";
+import { FiscalModule } from "../fiscal/fiscal.module.js";
 import { InventoryRepository } from "../inventory/inventory.repository.js";
 import { RbacModule } from "../rbac/rbac.module.js";
 import { SettingsModule } from "../settings/settings.module.js";
@@ -12,6 +13,7 @@ import { SaleRepository } from "./sales.repository.js";
 import { SalesService } from "./sales.service.js";
 import { SaleSearchController } from "./sale-search.controller.js";
 import { SaleSearchService } from "./sale-search.service.js";
+import { SaleReversalService } from "./sale-reversal.service.js";
 
 /**
  * Sales module (EPIC-12 POS-001). A leaf consumer of the platform: it imports
@@ -43,7 +45,15 @@ import { SaleSearchService } from "./sale-search.service.js";
  * route including reads.
  */
 @Module({
-  imports: [ContextModule, RbacModule, AuditModule, SettingsModule, EntitlementsModule, CashModule],
+  imports: [
+    ContextModule,
+    RbacModule,
+    AuditModule,
+    SettingsModule,
+    EntitlementsModule,
+    CashModule,
+    FiscalModule,
+  ],
   controllers: [SalesController, SaleSearchController],
   providers: [
     SaleRepository,
@@ -51,6 +61,7 @@ import { SaleSearchService } from "./sale-search.service.js";
     InventoryRepository,
     SalesService,
     SaleSearchService,
+    SaleReversalService,
   ],
 })
 export class SalesModule {}

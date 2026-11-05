@@ -138,6 +138,29 @@ export const apiEnvSchema = z
      */
     SECRET_STORE_MASTER_KEYS: z.string().optional(),
     /**
+     * DEC-093: error tracking. Absent or empty turns it off (the default). The
+     * DSN is a write-only ingest address, not a credential to the data.
+     */
+    SENTRY_DSN: z.string().optional(),
+    SENTRY_ENVIRONMENT: z.string().optional(),
+    SENTRY_RELEASE: z.string().optional(),
+    /**
+     * DEC-093: the reverse proxies allowed to state the client address through
+     * `X-Forwarded-For`, as a comma-separated list of IPs or CIDRs (Fastify's
+     * `trustProxy`). Empty (the default) trusts none, so `request.ip` is the TCP
+     * peer. Production sets the internal Docker network, where Caddy and the
+     * web BFF live; the login rate limiter keys on that address.
+     */
+    API_TRUSTED_PROXIES: z
+      .string()
+      .optional()
+      .transform((value) =>
+        (value ?? "")
+          .split(",")
+          .map((entry) => entry.trim())
+          .filter((entry) => entry.length > 0)
+      ),
+    /**
      * Master-key version new writes use. Optional: the highest declared version
      * is current, so adding a key to the list is a complete rotation.
      */

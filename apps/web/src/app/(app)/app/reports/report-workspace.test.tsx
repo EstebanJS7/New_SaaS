@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReportWorkspace } from "./report-workspace";
 import type { ReportResponse } from "./reports-api";
@@ -97,8 +97,11 @@ function installFetch(
   return fetchMock;
 }
 
+/** The report reads; the MB-004 branch-list read is asserted on its own. */
 function requestedUrls(fetchMock: ReturnType<typeof vi.fn>): readonly string[] {
-  return fetchMock.mock.calls.map((call) => resolveUrl(call[0] as RequestInfo | URL));
+  return fetchMock.mock.calls
+    .map((call) => resolveUrl(call[0] as RequestInfo | URL))
+    .filter((url) => url !== "/api/reports/branches");
 }
 
 function installPendingFetch(): void {
@@ -384,5 +387,53 @@ describe("ReportWorkspace · the empty states that have a fix", () => {
     expect(empty).toHaveTextContent("2026-05-13");
     expect(empty).toHaveTextContent("2026-06-11");
     expect(screen.queryByTestId("report-table")).not.toBeInTheDocument();
+  });
+});
+
+describe("ReportWorkspace · the branch filter (MB-004)", () => {
+  const BRANCHES = [
+    { id: "11111111-1111-4111-8111-111111111111", name: "Casa central", isActive: true },
+    { id: "22222222-2222-4222-8222-222222222222", name: "Norte", isActive: true },
+    { id: "33333333-3333-4333-8333-333333333333", name: "Vieja", isActive: false },
+  ];
+
+  it("starts on all branches, then sends the chosen branch to the read and the export", async () => {
+    const fetchMock = installFetch((url) =>
+      url === "/api/reports/branches" ? jsonResponse(BRANCHES) : jsonResponse(SALES_BY_PERIOD)
+    );
+    renderWorkspace("sales-by-period");
+
+    const select = await screen.findByLabelText("Branch");
+    expect(screen.getByRole("option", { name: "Vieja (inactive)" })).toBeInTheDocument();
+    expect(requestedUrls(fetchMock)).toEqual(["/api/reports/sales-by-period?preset=last30Days"]);
+
+    fireEvent.change(select, { target: { value: BRANCHES[1]?.id } });
+    await waitFor(() =>
+      expect(requestedUrls(fetchMock)).toContain(
+        `/api/reports/sales-by-period?preset=last30Days&branchId=${BRANCHES[1]?.id}`
+      )
+    );
+    expect(screen.getByTestId("report-export").getAttribute("href")).toBe(
+      `/api/reports/sales-by-period/export?preset=last30Days&branchId=${BRANCHES[1]?.id}`
+    );
+  });
+
+  it("offers no branch filter with a single branch", async () => {
+    installFetch((url) =>
+      url === "/api/reports/branches"
+        ? jsonResponse(BRANCHES.slice(0, 1))
+        : jsonResponse(SALES_BY_PERIOD)
+    );
+    renderWorkspace("sales-by-period");
+    await screen.findByRole("columnheader", { name: "Gross" });
+    expect(screen.queryByLabelText("Branch")).not.toBeInTheDocument();
+  });
+
+  it("never asks for branches on a veterinary report", async () => {
+    const fetchMock = installFetch(() => jsonResponse(SALES_BY_PERIOD));
+    renderWorkspace("consultations");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const urls = fetchMock.mock.calls.map((call) => resolveUrl(call[0] as RequestInfo | URL));
+    expect(urls).not.toContain("/api/reports/branches");
   });
 });

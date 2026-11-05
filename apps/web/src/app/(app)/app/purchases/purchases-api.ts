@@ -48,6 +48,8 @@ export interface Purchase {
   readonly id: string;
   readonly tenantId: string;
   readonly supplierId: string;
+  /** MB-003: the branch the goods are received into. */
+  readonly branchId: string;
   readonly status: PurchaseStatus;
   readonly lines: PurchaseLine[];
   readonly createdAt: string;

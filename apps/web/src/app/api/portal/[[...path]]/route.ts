@@ -1,3 +1,4 @@
+import { forwardedForHeader } from "@/lib/forwarded-for";
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { PORTAL_SESSION_COOKIE } from "@/lib/session-cookie";
@@ -333,6 +334,11 @@ async function proxyPortalRequest(
   const hasBody = method === "POST" || method === "PUT";
   if (hasBody) {
     headers["content-type"] = "application/json";
+  }
+  // DEC-093: the client address, ONLY on the sign-in and recovery hops — the
+  // API's rate limits key on it there, and no other shape has a use for it.
+  if (shape === "login" || shape === "forgot-password" || shape === "password-reset") {
+    Object.assign(headers, forwardedForHeader(request.headers));
   }
   const bodyText = hasBody ? await request.text() : undefined;
 

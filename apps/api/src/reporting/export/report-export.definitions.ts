@@ -3,6 +3,8 @@ import {
   REPORT_DUE_QUERY_INVALID_MESSAGE,
   REPORT_PERIOD_QUERY_INVALID_MESSAGE,
   REPORT_QUERY_NOT_ALLOWED_MESSAGE,
+  reportBranchOnlyQuerySchema,
+  reportBranchPeriodQuerySchema,
   reportDueQuerySchema,
   reportNoQuerySchema,
   reportPeriodQuerySchema,
@@ -14,6 +16,8 @@ import {
   type NewPatientDayRowDto,
   type PaymentMethodRowDto,
   type PurchaseRowDto,
+  type ReportBranchOnlyQuery,
+  type ReportBranchPeriodQuery,
   type ReportDueQuery,
   type ReportPeriodDto,
   type ReportPeriodQuery,
@@ -146,6 +150,27 @@ export function parseReportExportPeriodQuery(query: unknown): ReportPeriodQuery 
   return parsed.data;
 }
 
+/**
+ * MB-004: the period shape PLUS an optional `branchId`, for the reports that
+ * take a branch — the same schema and message as their report routes.
+ */
+export function parseReportExportBranchPeriodQuery(query: unknown): ReportBranchPeriodQuery {
+  const parsed = reportBranchPeriodQuerySchema.safeParse(query);
+  if (!parsed.success) {
+    throw new DomainError("VALIDATION_FAILED", REPORT_PERIOD_QUERY_INVALID_MESSAGE);
+  }
+  return parsed.data;
+}
+
+/** MB-004: `low-stock` accepts a branch and nothing else, exactly as its route does. */
+export function parseReportExportBranchOnlyQuery(query: unknown): ReportBranchOnlyQuery {
+  const parsed = reportBranchOnlyQuerySchema.safeParse(query);
+  if (!parsed.success) {
+    throw new DomainError("VALIDATION_FAILED", REPORT_QUERY_NOT_ALLOWED_MESSAGE);
+  }
+  return parsed.data;
+}
+
 /** The same for the due reports' horizon shape: one schema, one stable message. */
 export function parseReportExportDueQuery(query: unknown): ReportDueQuery {
   const parsed = reportDueQuerySchema.safeParse(query);
@@ -201,6 +226,8 @@ export interface LoadedReportExport {
 export interface ReportExportDefinition {
   readonly code: ReportExportCode;
   readonly queryContract: ReportExportQueryContract;
+  /** MB-004: whether the contract also accepts an optional `branchId`. */
+  readonly acceptsBranch: boolean;
   /** The documented column order, which is also the emitted header row. */
   readonly headers: readonly string[];
   /** Calls the report's service method once and projects its rows to CSV. */
@@ -238,12 +265,41 @@ function periodReportExport<Row>(
     query: ReportPeriodQuery
   ) => Promise<{ readonly period: ReportPeriodDto; readonly rows: readonly Row[] }>
 ): ReportExportDefinition {
+  return periodExportWith(code, columns, false, parseReportExportPeriodQuery, load);
+}
+
+/**
+ * MB-004: a period report that also takes a branch. The filename stays
+ * `<code>-<from>-<to>`: a branch id is caller input and never names a file.
+ */
+function branchPeriodReportExport<Row>(
+  code: ReportExportCode,
+  columns: readonly CsvColumn<Row>[],
+  load: (
+    reports: ReportingService,
+    query: ReportBranchPeriodQuery
+  ) => Promise<{ readonly period: ReportPeriodDto; readonly rows: readonly Row[] }>
+): ReportExportDefinition {
+  return periodExportWith(code, columns, true, parseReportExportBranchPeriodQuery, load);
+}
+
+function periodExportWith<Row, Query>(
+  code: ReportExportCode,
+  columns: readonly CsvColumn<Row>[],
+  acceptsBranch: boolean,
+  parse: (query: unknown) => Query,
+  load: (
+    reports: ReportingService,
+    query: Query
+  ) => Promise<{ readonly period: ReportPeriodDto; readonly rows: readonly Row[] }>
+): ReportExportDefinition {
   return {
     code,
     queryContract: "period",
+    acceptsBranch,
     headers: columns.map((column) => column.header),
     load: async ({ reports, query }) => {
-      const response = await load(reports, parseReportExportPeriodQuery(query));
+      const response = await load(reports, parse(query));
       return {
         filename: `${code}-${response.period.fromDate}-${response.period.toDate}.csv`,
         rowCount: response.rows.length,
@@ -272,6 +328,7 @@ function dueReportExport<Row>(
   return {
     code,
     queryContract: "due",
+    acceptsBranch: false,
     headers: columns.map((column) => column.header),
     load: async ({ reports, query }) => {
       const response = await load(reports, parseReportExportDueQuery(query));
@@ -297,15 +354,19 @@ function dueReportExport<Row>(
 function currentStateReportExport<Row>(
   code: ReportExportCode,
   columns: readonly CsvColumn<Row>[],
-  load: (reports: ReportingService) => Promise<{ readonly rows: readonly Row[] }>
+  load: (
+    reports: ReportingService,
+    query: ReportBranchOnlyQuery
+  ) => Promise<{ readonly rows: readonly Row[] }>
 ): ReportExportDefinition {
   return {
     code,
     queryContract: "none",
+    // MB-004: no period and no horizon, but a branch is accepted.
+    acceptsBranch: true,
     headers: columns.map((column) => column.header),
     load: async ({ reports, query, now }) => {
-      assertNoReportExportQuery(query);
-      const response = await load(reports);
+      const response = await load(reports, parseReportExportBranchOnlyQuery(query));
       return {
         filename: `${code}-${tenantCalendarDate(now, TENANT_TIME_ZONE)}.csv`,
         rowCount: response.rows.length,
@@ -441,37 +502,41 @@ const DEWORMING_DUE_COLUMNS = columnsOf<DewormingDueRowDto>([
  */
 export const REPORT_EXPORT_DEFINITIONS: Readonly<Record<ReportExportCode, ReportExportDefinition>> =
   {
-    "sales-by-period": periodReportExport(
+    "sales-by-period": branchPeriodReportExport(
       "sales-by-period",
       SALES_BY_PERIOD_COLUMNS,
       (reports, query) => reports.salesByPeriod(query)
     ),
-    "payment-methods": periodReportExport(
+    "payment-methods": branchPeriodReportExport(
       "payment-methods",
       PAYMENT_METHOD_COLUMNS,
       (reports, query) => reports.paymentMethods(query)
     ),
-    "sales-by-product-service": periodReportExport(
+    "sales-by-product-service": branchPeriodReportExport(
       "sales-by-product-service",
       SALES_BY_PRODUCT_SERVICE_COLUMNS,
       (reports, query) => reports.salesByProductService(query)
     ),
-    "cash-sessions": periodReportExport("cash-sessions", CASH_SESSION_COLUMNS, (reports, query) =>
-      reports.cashSessions(query)
+    "cash-sessions": branchPeriodReportExport(
+      "cash-sessions",
+      CASH_SESSION_COLUMNS,
+      (reports, query) => reports.cashSessions(query)
     ),
-    "cash-movements": periodReportExport(
+    "cash-movements": branchPeriodReportExport(
       "cash-movements",
       CASH_MOVEMENT_COLUMNS,
       (reports, query) => reports.cashMovements(query)
     ),
-    purchases: periodReportExport("purchases", PURCHASE_COLUMNS, (reports, query) =>
+    purchases: branchPeriodReportExport("purchases", PURCHASE_COLUMNS, (reports, query) =>
       reports.purchases(query)
     ),
-    stock: periodReportExport("stock", STOCK_COLUMNS, (reports, query) => reports.stock(query)),
+    stock: branchPeriodReportExport("stock", STOCK_COLUMNS, (reports, query) =>
+      reports.stock(query)
+    ),
     // `low-stock` is the ONE report with no period and no horizon: a snapshot of
     // the projection, named after the tenant's own as-of date.
-    "low-stock": currentStateReportExport("low-stock", LOW_STOCK_COLUMNS, (reports) =>
-      reports.lowStock()
+    "low-stock": currentStateReportExport("low-stock", LOW_STOCK_COLUMNS, (reports, query) =>
+      reports.lowStock(query)
     ),
     consultations: periodReportExport("consultations", CONSULTATION_COLUMNS, (reports, query) =>
       reports.consultations(query)

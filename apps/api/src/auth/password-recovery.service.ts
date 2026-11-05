@@ -70,9 +70,11 @@ export const TOO_MANY_RECOVERY_REQUESTS_MESSAGE = "Too many recovery requests. T
  */
 export interface PasswordRecoveryPrisma {
   userProfile: {
-    findUnique(
-      args: Prisma.UserProfileFindUniqueArgs
-    ): Promise<{ id: string; credential: { userProfileId: string } | null } | null>;
+    findUnique(args: Prisma.UserProfileFindUniqueArgs): Promise<{
+      id: string;
+      credential: { userProfileId: string } | null;
+      memberships?: { id: string }[];
+    } | null>;
   };
 }
 
@@ -105,10 +107,21 @@ export class PasswordRecoveryService {
 
     const profile = await this.prisma.userProfile.findUnique({
       where: { email },
-      select: { id: true, credential: { select: { userProfileId: true } } },
+      select: {
+        id: true,
+        credential: { select: { userProfileId: true } },
+        // ONB-001: an INVITED profile (no credential yet) whose activation link expired
+        // asks here too. It is answered with a fresh activation link — the worker picks
+        // the words — but only while it still actively belongs to an active clinic.
+        memberships: {
+          where: { status: "ACTIVE", tenant: { status: "ACTIVE" } },
+          select: { id: true },
+          take: 1,
+        },
+      },
     });
-    // A profile without a credential cannot log in at all, so there is no password
-    // for a reset to change. Silenced rather than refused, because "this account has
+    // A profile without a credential and without a pending invitation cannot log in
+    // at all, so there is no password for a reset to change. Silenced rather than refused, because "this account has
     // no password" is exactly the fact an enumeration attack wants.
     //
     // The check is FALSY rather than `=== null`, and that is deliberate: the type
@@ -120,7 +133,9 @@ export class PasswordRecoveryService {
     // login checks the credential and the password and ignores `status` entirely. A
     // recovery that refused a suspended profile while login admitted it would be a
     // second, contradictory rule about who may enter.
-    if (!profile?.credential) return;
+    if (!profile) return;
+    const invited = !profile.credential && (profile.memberships?.length ?? 0) > 0;
+    if (!profile.credential && !invited) return;
 
     // Published AFTER the account is known to exist, so no event is emitted for a
     // probe, and the payload carries the profile id and nothing else — no email, no

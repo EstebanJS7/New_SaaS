@@ -30,7 +30,7 @@ export interface FiscalNoticePrisma {
   fiscalDocument: {
     findFirst(
       args: Prisma.FiscalDocumentFindFirstArgs
-    ): Promise<{ status: string; invoiceId: string } | null>;
+    ): Promise<{ status: string; invoiceId: string; creditNoteId?: string | null } | null>;
   };
   invoice: {
     findFirst(args: Prisma.InvoiceFindFirstArgs): Promise<{ customerId: string | null } | null>;
@@ -67,9 +67,12 @@ export class NotificationFiscalNoticeScheduler implements OnModuleInit {
     // invoice has no customer to address.
     const document = await this.prisma.fiscalDocument.findFirst({
       where: { id: event.aggregateId, tenantId },
-      select: { status: true, invoiceId: true },
+      select: { status: true, invoiceId: true, creditNoteId: true },
     });
     if (document?.status !== "APPROVED") return;
+    // NCE-001: the notice's content speaks of the invoice; a credit note's
+    // approval sends nothing until the content has its own wording (DEC-090).
+    if (document.creditNoteId !== null && document.creditNoteId !== undefined) return;
 
     const invoice = await this.prisma.invoice.findFirst({
       where: { id: document.invoiceId, tenantId },
