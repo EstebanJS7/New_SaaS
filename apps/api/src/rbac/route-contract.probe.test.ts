@@ -283,6 +283,8 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   // numbers without issuing anything.
   "PUT /fiscal/emitter-profile",
   "GET /fiscal/emitter-profile",
+  // EPIC-16 FISC-017 — the issuance-point declaration (DEC-095 delivery 1).
+  "PUT /fiscal/emitter-profile/issuance-point",
   "GET /fiscal/establishments",
   "POST /fiscal/establishments",
   "PUT /fiscal/establishments/:id",
@@ -631,6 +633,7 @@ const FISCAL_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   // radius — a range's counter cannot be lowered once used.
   "PUT /fiscal/emitter-profile": FISCAL_PERMISSIONS.profileManage,
   "GET /fiscal/emitter-profile": FISCAL_PERMISSIONS.profileManage,
+  "PUT /fiscal/emitter-profile/issuance-point": FISCAL_PERMISSIONS.profileManage,
   "GET /fiscal/establishments": FISCAL_PERMISSIONS.profileManage,
   "POST /fiscal/establishments": FISCAL_PERMISSIONS.profileManage,
   "PUT /fiscal/establishments/:id": FISCAL_PERMISSIONS.profileManage,

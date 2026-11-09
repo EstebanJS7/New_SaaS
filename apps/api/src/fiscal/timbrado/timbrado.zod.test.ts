@@ -8,7 +8,11 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { createRangeBodySchema, saveProfileBodySchema } from "./timbrado.zod.js";
+import {
+  createRangeBodySchema,
+  declareIssuancePointBodySchema,
+  saveProfileBodySchema,
+} from "./timbrado.zod.js";
 
 const RANGE = {
   establishmentId: "22222222-2222-4222-8222-222222222222",
@@ -117,5 +121,58 @@ describe("the emitter profile body", () => {
   it("refuses a RUC that does not match tRuc", () => {
     expect(saveProfileBodySchema.safeParse({ ...PROFILE, ruc: "012345" }).success).toBe(false);
     expect(saveProfileBodySchema.safeParse({ ...PROFILE, ruc: "80012345678" }).success).toBe(false);
+  });
+});
+
+describe("the issuance-point body (FISC-017)", () => {
+  const POINT = {
+    establishmentId: "22222222-2222-4222-8222-222222222222",
+    expeditionPoint: "001",
+    documentType: 1,
+  } as const;
+
+  it("accepts a well-formed declaration", () => {
+    expect(declareIssuancePointBodySchema.safeParse(POINT).success).toBe(true);
+  });
+
+  it("refuses an extra field, so a tenantId or a status can never ride along", () => {
+    expect(
+      declareIssuancePointBodySchema.safeParse({
+        ...POINT,
+        tenantId: "11111111-1111-4111-8111-111111111111",
+      }).success
+    ).toBe(false);
+  });
+
+  it("refuses an establishment id that is not a UUID", () => {
+    expect(
+      declareIssuancePointBodySchema.safeParse({ ...POINT, establishmentId: "001" }).success
+    ).toBe(false);
+  });
+
+  it("refuses a point of expedition that is not three digits", () => {
+    for (const expeditionPoint of ["1", "01", "0001", "A01", 1]) {
+      expect(declareIssuancePointBodySchema.safeParse({ ...POINT, expeditionPoint }).success).toBe(
+        false
+      );
+    }
+  });
+
+  it("admits exactly the document types tiTiDE declares", () => {
+    for (const documentType of [0, 2, 3, 8, 11, "1"]) {
+      expect(declareIssuancePointBodySchema.safeParse({ ...POINT, documentType }).success).toBe(
+        false
+      );
+    }
+    for (const documentType of [1, 4, 5, 6, 7, 9, 10]) {
+      expect(declareIssuancePointBodySchema.safeParse({ ...POINT, documentType }).success).toBe(
+        true
+      );
+    }
+  });
+
+  it("refuses a missing field", () => {
+    const { documentType: _omitted, ...withoutType } = POINT;
+    expect(declareIssuancePointBodySchema.safeParse(withoutType).success).toBe(false);
   });
 });

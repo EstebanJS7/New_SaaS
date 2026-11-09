@@ -1,6 +1,8 @@
 import type {
   EmitterProfileView,
   EstablishmentView,
+  IssuancePointDeclarationView,
+  IssuancePointView,
   FiscalRangeVoidView,
   TimbradoRangeView,
 } from "./timbrado.service.js";
@@ -16,8 +18,23 @@ export interface EmitterProfileResponse {
   readonly taxType: number;
   readonly emissionType: number;
   readonly activities: { code: string; description: string }[];
+  /** FISC-017: additive; `null` while the tenant has declared no point. */
+  readonly issuancePoint: IssuancePointResponse | null;
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+export interface IssuancePointResponse {
+  readonly establishmentId: string;
+  readonly establishmentCode: string;
+  readonly expeditionPoint: string;
+  readonly documentType: number;
+}
+
+/** FISC-017: what `PUT /fiscal/emitter-profile/issuance-point` answers. */
+export interface IssuancePointDeclarationResponse {
+  readonly issuancePoint: IssuancePointResponse;
+  readonly creditNoteRangeActive: boolean;
 }
 
 export interface EstablishmentResponse {
@@ -88,8 +105,27 @@ export function toEmitterProfileResponse(view: EmitterProfileView): EmitterProfi
     taxType: view.taxType,
     emissionType: view.emissionType,
     activities: view.activities.map(({ code, description }) => ({ code, description })),
+    issuancePoint: view.issuancePoint === null ? null : toIssuancePointResponse(view.issuancePoint),
     createdAt: view.createdAt.toISOString(),
     updatedAt: view.updatedAt.toISOString(),
+  };
+}
+
+export function toIssuancePointResponse(view: IssuancePointView): IssuancePointResponse {
+  return {
+    establishmentId: view.establishmentId,
+    establishmentCode: view.establishmentCode,
+    expeditionPoint: view.expeditionPoint,
+    documentType: view.documentType,
+  };
+}
+
+export function toIssuancePointDeclarationResponse(
+  view: IssuancePointDeclarationView
+): IssuancePointDeclarationResponse {
+  return {
+    issuancePoint: toIssuancePointResponse(view.issuancePoint),
+    creditNoteRangeActive: view.creditNoteRangeActive,
   };
 }
 

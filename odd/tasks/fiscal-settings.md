@@ -21,11 +21,11 @@ Playwright lane.
 
 ## Tasks
 
-| ID  | Specs | Route                        | Status  | Evidence |
-| --- | ----- | ---------------------------- | ------- | -------- |
-| T1  | S2    | delegated (context backstop) | pending |          |
-| T2  | S3    | tbd                          | pending |          |
-| T3  | S4    | tbd                          | pending |          |
+| ID  | Specs | Route                        | Status  | Evidence                                                                         |
+| --- | ----- | ---------------------------- | ------- | -------------------------------------------------------------------------------- |
+| T1  | S2    | delegated (context backstop) | done    | 9/9 criteria; RED 19 → GREEN; api 2091 pass; live-pg 281/281; FISC-017 block 5/5 |
+| T2  | S3    | tbd                          | pending |                                                                                  |
+| T3  | S4    | tbd                          | pending |                                                                                  |
 
 ## Log
 

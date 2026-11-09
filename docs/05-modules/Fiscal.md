@@ -2,7 +2,7 @@
 type: module
 status: implemented
 epic: EPIC-15 + EPIC-16
-updated: 2026-10-09
+updated: 2026-11-09
 ---
 
 # Fiscal
@@ -93,6 +93,37 @@ identity comes from authenticated server context, not caller input.
 | `GET /fiscal/signing-material`             | `fiscal.signing_material.manage` | List the tenant's materials, newest first. Metadata only: the `credentialRef`, the certificate PEM and the private key are never returned.                                                                                                                                                                                                                             |
 | `POST /fiscal/signing-material/:id/retire` | `fiscal.signing_material.manage` | Retire (`200`) with a required reason of at most 500 characters. The stored private key is destroyed in the same transaction and the row survives as the record. A repeat is `409`; an unknown or foreign id is a byte-equivalent `404`.                                                                                                                               |
 | `POST /fiscal/timbrado-ranges/:id/void`    | `fiscal.range.void`              | Void the range's **remaining numbers** at the provider (`200`). The body carries a reason only — the interval is read from the range — and the answer is the `fiscal_range_void` record. A retired range, an empty tail, a document type the event cannot express and an invalid reason are each a named refusal; an unknown or foreign id is a byte-equivalent `404`. |
+
+### Declaring the issuance point
+
+`PUT /fiscal/emitter-profile/issuance-point` (`fiscal.profile.manage`,
+[[FISC-017]], [[DEC-095]] delivery 1) declares the establishment, point of
+expedition and document type the tenant issues from ([[DEC-057]] Q4). It is the
+only route that writes `default_establishment_id`, `default_expedition_point`
+and `default_document_type`; `PUT /fiscal/emitter-profile` never touches them.
+
+- **Body** (strict, any extra field is `400 VALIDATION_FAILED`):
+  `{ establishmentId: uuid, expeditionPoint: "^[0-9]{3}$", documentType: 1 | 4 | 5 | 6 | 7 | 9 | 10 }`.
+- **Order:** the `fiscal` entitlement (`403 FEATURE_NOT_ENTITLED`), the
+  permission (`403 FORBIDDEN`), then one transaction: no profile is `404`; an
+  unknown establishment and another tenant's establishment are the same `404`.
+- **Exactly one ACTIVE range:** `(tenant, establishment, point, type)` must
+  match exactly one `ACTIVE` timbrado range — the allocation's own count, run at
+  declaration time. None is `409` ("No hay un timbrado activo para el
+  establecimiento 001, punto de expedición 001 y tipo de documento 1: …") and
+  more than one is `409` ("Hay más de un timbrado activo para …"); nothing is
+  written in either case. Like the allocation's count it is a validation, not a
+  lock: a range retired later is caught again when a number is allocated.
+- **Write:** the three columns together, plus one audit row in the same
+  transaction. Declaring again replaces the point.
+- **Answer (`200`):**
+  `{ issuancePoint: { establishmentId, establishmentCode, expeditionPoint, documentType }, creditNoteRangeActive }`,
+  where `creditNoteRangeActive` says whether an `ACTIVE` type-5 range exists at
+  the same establishment and point. It is reported, not required: a credit note
+  refuses on its own when none exists ([[DEC-090]] §4).
+
+`GET /fiscal/emitter-profile` (and the `PUT` profile answer) carry the same
+`issuancePoint` object, or `null` while nothing is declared — an additive field.
 
 There is no update, delete, retry, status patch or reopen route. Cancellation
 reuses `fiscal.invoice.issue` because no separate cancel key was accepted
@@ -554,11 +585,14 @@ Accepted mutations write one co-committed audit row:
 The signing-material commands write `fiscal.signing_material.uploaded` and
 `fiscal.signing_material.retired`, and the range void writes
 `fiscal.timbrado_range.voided` or `fiscal.timbrado_range.void_failed` (FISC-016
-WU-D). Audit metadata carries a schema version, the outcome and field names only
-— never the cancellation reason text, never the void's reason either (it lives
-in the `fiscal_range_void` row the metadata points at), never a provider
-payload, never a certificate PEM, a private key or a `credentialRef`. Reads are
-not audited.
+WU-D). The issuance-point declaration writes `fiscal.issuance_point.declared`
+(target `fiscal_emitter_profile`) with
+`{ schemaVersion: 1, establishmentCode, expeditionPoint, documentType, creditNoteRangeActive }`
+and no RUC (FISC-017). Audit metadata carries a schema version, the outcome and
+field names only — never the cancellation reason text, never the void's reason
+either (it lives in the `fiscal_range_void` row the metadata points at), never a
+provider payload, never a certificate PEM, a private key or a `credentialRef`.
+Reads are not audited.
 
 Provider references (`external_id`, `cdc`, storage keys) and the
 request/response snapshots are CONFIDENTIAL; status, attempt counters,
@@ -640,6 +674,20 @@ because they are deployment concerns rather than tenant behavior.
   and it could not be executed for this unit (no PostgreSQL server accepted
   connections on the configured port), so the total is arithmetic rather than an
   observed run.
+- FISC-017 — `timbrado.service.test.ts` drives the declaration through the real
+  repository over a stateful fake (gates, both `404`s, both `409`s with nothing
+  written, the exact columns and audit metadata, the credit-note flag,
+  re-declaration, the `GET` field and a profile save that keeps the point);
+  `timbrado.zod.test.ts` pins the strict body; the route probe pins the route
+  with `fiscal.profile.manage`. The live-pg block "EPIC-16 FISC-017
+  issuance-point declaration" (**5 cases**) proves `401`,
+  `FEATURE_NOT_ENTITLED`, `FORBIDDEN`, the strict body, the cross-tenant `404`,
+  the `409` with nothing written, and the end-to-end path: profile,
+  establishment, ranges and point declared over HTTP, an invoice confirmed from
+  that point, and a sale reversal that issues the credit note from the type-5
+  range. The FISC-015 identity and WU-B allocation blocks keep their raw SQL
+  declaration on purpose: they probe the CHECKs and the "no range"/"ambiguous"
+  states the route refuses to create.
 - The FISC-007 integration suite runs against the in-memory database double,
   which now models `tenant_secret` and `tenant_fiscal_signing_material`. The
   partial unique index and the CHECK constraints are enforced by PostgreSQL
@@ -653,7 +701,10 @@ because they are deployment concerns rather than tenant behavior.
   largest limitation and the one that keeps `done` from meaning ready.
 - **The worker's assembly needs the tenant's declared fiscal identity**: a
   tenant that has not declared its timbrado, its activity and its default
-  issuance point cannot issue ([[DEC-057]]).
+  issuance point cannot issue ([[DEC-057]]). The point is declared through
+  `PUT /fiscal/emitter-profile/issuance-point` ([[FISC-017]]); the web proxy
+  does not forward it yet — the «Configuración fiscal» screen is [[DEC-095]]
+  delivery 2.
 - **The AFE and the NRE render their header, their items and their CDC, and name
   the rest**: their own blocks are `gDtipDE` members the assembly does not emit,
   so §13.2's content rule forbids printing them.

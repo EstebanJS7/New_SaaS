@@ -97,20 +97,24 @@ function isCalendarDate(value: string): boolean {
   );
 }
 
+/** `tdPunExp`: three digits, zero-padded. */
+const expeditionPointSchema = z.string().regex(/^[0-9]{3}$/);
+/** `tiTiDE` admits 1, 4, 5, 6, 7, 9 and 10, and skips 2, 3 and 8. */
+const documentTypeSchema = z.union([
+  z.literal(1),
+  z.literal(4),
+  z.literal(5),
+  z.literal(6),
+  z.literal(7),
+  z.literal(9),
+  z.literal(10),
+]);
+
 export const createRangeBodySchema = z
   .object({
     establishmentId: z.string().uuid(),
-    expeditionPoint: z.string().regex(/^[0-9]{3}$/),
-    // `tiTiDE` admits 1, 4, 5, 6, 7, 9 and 10, and skips 2, 3 and 8.
-    documentType: z.union([
-      z.literal(1),
-      z.literal(4),
-      z.literal(5),
-      z.literal(6),
-      z.literal(7),
-      z.literal(9),
-      z.literal(10),
-    ]),
+    expeditionPoint: expeditionPointSchema,
+    documentType: documentTypeSchema,
     // NULL is the seriesless initial range, which is a state and not a gap.
     series: z
       .string()
@@ -153,6 +157,19 @@ export const voidRangeBodySchema = z
     // event's own rule, and this is the boundary that turns a bad body into a
     // 400 before a transaction or a provider call is opened.
     reason: z.string().trim().min(1).max(500),
+  })
+  .strict();
+
+/**
+ * FISC-017 — the issuance-point declaration: the three columns the migration
+ * makes all-or-nothing, so all three are required. `strict()` makes an unknown
+ * key (a `tenantId`, a status) a 400 rather than a silently ignored field.
+ */
+export const declareIssuancePointBodySchema = z
+  .object({
+    establishmentId: z.string().uuid(),
+    expeditionPoint: expeditionPointSchema,
+    documentType: documentTypeSchema,
   })
   .strict();
 

@@ -35,7 +35,9 @@ import {
   type EstablishmentRow,
   type FiscalProfileClient,
   FiscalProfileRepository,
+  type FiscalProfileTx,
   type FiscalRangeVoidWriteRow,
+  type IssuancePointKey,
   type TimbradoRangeRow,
 } from "./timbrado.repository.js";
 
@@ -52,6 +54,32 @@ export const FISCAL_RANGE_RETIRED_ACTION = "fiscal.timbrado_range.retired";
 /** FISC-016 WU-D: the void's two outcomes, one audit row each. */
 export const FISCAL_RANGE_VOIDED_ACTION = "fiscal.timbrado_range.voided";
 export const FISCAL_RANGE_VOID_FAILED_ACTION = "fiscal.timbrado_range.void_failed";
+/** FISC-017: the issuance-point declaration, one audit row per declaration. */
+export const FISCAL_ISSUANCE_POINT_DECLARED_ACTION = "fiscal.issuance_point.declared";
+
+/** `iTiDE` of the nota de crédito electrónica, whose range the declaration reports. */
+const CREDIT_NOTE_DOCUMENT_TYPE = 5;
+
+/** What a declaration refusal names: the point the caller asked for. */
+interface IssuancePointLabel {
+  readonly establishmentCode: string;
+  readonly expeditionPoint: string;
+  readonly documentType: number;
+}
+
+const describeIssuancePoint = (point: IssuancePointLabel): string =>
+  `el establecimiento ${point.establishmentCode}, punto de expedición ` +
+  `${point.expeditionPoint} y tipo de documento ${String(point.documentType)}`;
+
+/** FISC-017: the declared point resolves to no ACTIVE range (staff-facing, Spanish). */
+export const issuancePointNoRangeMessage = (point: IssuancePointLabel): string =>
+  `No hay un timbrado activo para ${describeIssuancePoint(point)}: ` +
+  "cargá el timbrado antes de declarar el punto de expedición.";
+
+/** FISC-017: the declared point resolves to more than one ACTIVE range. */
+export const issuancePointAmbiguousRangeMessage = (point: IssuancePointLabel): string =>
+  `Hay más de un timbrado activo para ${describeIssuancePoint(point)}: ` +
+  "retirá los que sobran antes de declarar el punto de expedición.";
 
 /**
  * `rEve/@Id` for a lot of one: its ordinal, the strategy FISC-016 pinned (§25.7).
@@ -114,9 +142,27 @@ export interface EmitterProfileView {
   readonly taxType: number;
   readonly emissionType: number;
   readonly activities: readonly { code: string; description: string }[];
+  /** FISC-017: the declared issuance point, or `null` while none is declared. */
+  readonly issuancePoint: IssuancePointView | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
+
+/** A declared issuance point, with its establishment's code for display. */
+export interface IssuancePointView {
+  readonly establishmentId: string;
+  readonly establishmentCode: string;
+  readonly expeditionPoint: string;
+  readonly documentType: number;
+}
+
+/** What the declaration answers: the point, and whether a credit note can follow. */
+export interface IssuancePointDeclarationView {
+  readonly issuancePoint: IssuancePointView;
+  readonly creditNoteRangeActive: boolean;
+}
+
+export type DeclareIssuancePointInput = IssuancePointKey;
 
 export interface EstablishmentView {
   readonly id: string;
@@ -267,7 +313,7 @@ export class FiscalProfileService {
     if (row === null) {
       throw new DomainError("NOT_FOUND", FISCAL_PROFILE_NOT_FOUND_MESSAGE);
     }
-    return toProfileView(row, row.activities);
+    return toProfileView(row, row.activities, await this.readIssuancePoint(row));
   }
 
   async listEstablishments(): Promise<EstablishmentView[]> {
@@ -315,11 +361,84 @@ export class FiscalProfileService {
         },
         tx
       );
-      return saved;
+      // The upsert never touches the declaration, so the saved row still
+      // carries it; it is read back in the same snapshot.
+      return { saved, issuancePoint: await this.readIssuancePoint(saved, tx) };
     });
     // The rows the upsert just wrote, not a reconstructed shape: the stored
     // activities are what the DE would carry, in their stored order.
-    return toProfileView(row, activities);
+    return toProfileView(row.saved, activities, row.issuancePoint);
+  }
+
+  /**
+   * FISC-017 — declares the establishment, point of expedition and document
+   * type the tenant issues from (DEC-057 Q4, DEC-095 delivery 1).
+   *
+   * One transaction: the profile and the establishment are read tenant-scoped
+   * (another tenant's establishment is the same `404` as an unknown one), the
+   * point must resolve to EXACTLY ONE ACTIVE range — the allocation's own count,
+   * moved to declaration time — and the three columns are written together with
+   * their audit row. Declaring again replaces the point. The answer also says
+   * whether a credit-note range (type 5) is ACTIVE at the same point, without
+   * requiring one (DEC-090 §4).
+   *
+   * Like the allocation's count, this is a validation and not a lock: a range
+   * retired after the commit is caught again when a number is allocated.
+   */
+  async declareIssuancePoint(
+    input: DeclareIssuancePointInput
+  ): Promise<IssuancePointDeclarationView> {
+    await this.assertFiscalEnabled();
+    await this.requirePermission();
+    const actorUserProfileId = this.context.requireUserProfileId();
+    const tenantId = this.context.requireTenantId();
+    const key: IssuancePointKey = {
+      establishmentId: input.establishmentId,
+      expeditionPoint: input.expeditionPoint,
+      documentType: input.documentType,
+    };
+
+    return this.prisma.$transaction(async (tx) => {
+      const profile = await this.repository.findProfile(tx);
+      if (profile === null) {
+        throw new DomainError("NOT_FOUND", FISCAL_PROFILE_NOT_FOUND_MESSAGE);
+      }
+      const establishment = await this.repository.findEstablishment(
+        { id: key.establishmentId },
+        tx
+      );
+      if (establishment === null) {
+        throw new DomainError("NOT_FOUND", FISCAL_ESTABLISHMENT_NOT_FOUND_MESSAGE);
+      }
+      const label = { ...key, establishmentCode: establishment.code };
+      assertExactlyOneActiveRange(await this.repository.countActiveRanges(key, tx), label);
+      const creditNoteRangeActive =
+        (await this.repository.countActiveRanges(
+          { ...key, documentType: CREDIT_NOTE_DOCUMENT_TYPE },
+          tx
+        )) > 0;
+
+      await this.repository.writeIssuancePoint(key, tx);
+      await this.audit.append(
+        {
+          action: FISCAL_ISSUANCE_POINT_DECLARED_ACTION,
+          tenantId,
+          actorUserProfileId,
+          targetType: "fiscal_emitter_profile",
+          targetId: profile.id,
+          // The point and the code that names it; never the RUC or an address.
+          metadata: {
+            schemaVersion: 1,
+            establishmentCode: establishment.code,
+            expeditionPoint: key.expeditionPoint,
+            documentType: key.documentType,
+            creditNoteRangeActive,
+          },
+        },
+        tx
+      );
+      return { issuancePoint: label, creditNoteRangeActive };
+    });
   }
 
   async createEstablishment(input: SaveEstablishmentInput): Promise<EstablishmentView> {
@@ -760,6 +879,38 @@ export class FiscalProfileService {
     return toRangeView(row);
   }
 
+  /**
+   * The profile's declared point with its establishment's code, or `null`.
+   * The composite FK keeps the establishment in the tenant, so the scoped read
+   * finds it whenever the columns are set.
+   */
+  private async readIssuancePoint(
+    row: EmitterProfileRow,
+    tx?: FiscalProfileTx
+  ): Promise<IssuancePointView | null> {
+    const { defaultEstablishmentId, defaultExpeditionPoint, defaultDocumentType } = row;
+    if (
+      defaultEstablishmentId === null ||
+      defaultExpeditionPoint === null ||
+      defaultDocumentType === null
+    ) {
+      return null;
+    }
+    const establishment = await this.repository.findEstablishment(
+      { id: defaultEstablishmentId },
+      tx
+    );
+    if (establishment === null) {
+      return null;
+    }
+    return {
+      establishmentId: defaultEstablishmentId,
+      establishmentCode: establishment.code,
+      expeditionPoint: defaultExpeditionPoint,
+      documentType: defaultDocumentType,
+    };
+  }
+
   private async assertFiscalEnabled(): Promise<void> {
     const tenantId = this.context.requireTenantId();
     if (!(await this.entitlements.has(tenantId, "fiscal"))) {
@@ -786,6 +937,16 @@ export class FiscalProfileService {
     if (!permissions.has(FISCAL_PERMISSIONS.rangeVoid)) {
       throw new DomainError("FORBIDDEN", "The required fiscal permission is missing.");
     }
+  }
+}
+
+/** FISC-017: a declaration must name exactly one ACTIVE range, or nothing is written. */
+function assertExactlyOneActiveRange(active: number, point: IssuancePointLabel): void {
+  if (active === 0) {
+    throw new DomainError("CONFLICT", issuancePointNoRangeMessage(point));
+  }
+  if (active > 1) {
+    throw new DomainError("CONFLICT", issuancePointAmbiguousRangeMessage(point));
   }
 }
 
@@ -960,7 +1121,8 @@ function toRangeVoidView(
 
 function toProfileView(
   row: EmitterProfileRow,
-  activities: readonly { code: string; description: string }[]
+  activities: readonly { code: string; description: string }[],
+  issuancePoint: IssuancePointView | null
 ): EmitterProfileView {
   return {
     ruc: row.ruc,
@@ -973,6 +1135,7 @@ function toProfileView(
     taxType: row.taxType,
     emissionType: row.emissionType,
     activities: activities.map(({ code, description }) => ({ code, description })),
+    issuancePoint,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
