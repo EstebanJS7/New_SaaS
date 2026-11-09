@@ -10,7 +10,7 @@ prd_sections: ["§16", "§18", "§19", "§20", "§40"]
 permissions: [sales.reverse, sales.read]
 branch:
 created: 2026-11-03
-updated: 2026-11-03
+updated: 2026-11-09
 ---
 
 # SAL-REV-001 — Anulación de una venta cobrada
@@ -55,7 +55,7 @@ efectivo de la caja, sin editar nada de lo que ya se registró. Resuelve
       `409`.
 - [x] El efectivo exige una caja abierta y única.
 - [x] Auditoría `sale.reversed` sin el texto del motivo.
-- [ ] Prueba contra PostgreSQL real del recorrido completo (suite live-pg).
+- [x] Prueba contra PostgreSQL real del recorrido completo (suite live-pg).
 - [ ] Prueba en navegador.
 
 ## API
@@ -100,6 +100,17 @@ POST /sales/:id/complete    los movimientos de stock y caja que escribe llevan s
   database: 568 OK (1 falla PREEXISTENTE: ClinicalCreationReceipt sin @id)
 No se pudo correr: suites que necesitan el motor de consultas de Prisma
   (bloqueado en el sandbox). Pendiente: pnpm test completo con PostgreSQL.
+
+2026-11-09 (PostgreSQL 16 real, suite live-pg, bloque SAL-REV-001/UX-035):
+  anulación de una venta cobrada en efectivo: SALE_REVERSAL +2.000 enlazado al
+    movimiento SALE, saldo = libro (10.000), un REFUND en la caja abierta, un
+    payment_refund enlazado, venta CANCELLED, una auditoría sale.reversed sin el
+    motivo, un idempotency_record sale.reverse
+  replay misma clave y motivo: 200, mismo id, sin filas nuevas; otra razón con la
+    misma clave: 409; nueva anulación: 409 "La venta ya fue anulada."
+  venta de otro tenant: 404 en anular y en leer la anulación, sin escrituras
+  pnpm test:live-pg completo: 276/276
+Pendiente: prueba en navegador y concurrencia real (dos anulaciones simultáneas).
 ```
 
 ## Tests agregados
@@ -115,7 +126,8 @@ No se pudo correr: suites que necesitan el motor de consultas de Prisma
 - Una venta anulada sale de los informes de ventas del período en que se cobró.
 - El detalle de una venta completada no muestra sus pagos (limitación previa de
   la lectura); la anulación sí muestra las devoluciones.
-- Aún no hay prueba de concurrencia contra PostgreSQL real.
+- Aún no hay prueba de concurrencia contra PostgreSQL real (el recorrido
+  secuencial sí está cubierto por la suite live-pg).
 
 ## Observaciones fuera de alcance
 

@@ -19446,4 +19446,410 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       expect(new Set(committed.map((row) => row.invoiceId)).size).toBe(2);
     }, 30_000);
   });
+
+  describe("SAL-REV-001 completed-sale reversal and UX-035 recoverable attempts against real PostgreSQL", () => {
+    const REVERSAL_REASON = "Cliente devolvió el producto";
+
+    /** One dedicated tenant: OWNER membership, first branch and the sales/cash grants. */
+    const provisionCommerceTenant = async (
+      slug: string
+    ): Promise<{ tenantId: string; cookie: string }> => {
+      const tenant = await prisma.tenant.create({ data: { slug, name: `Tenant ${slug}` } });
+      const ownerRole = await prisma.role.findUnique({ where: { code: "OWNER" } });
+      if (!ownerRole) {
+        throw new Error("Reference seed did not create OWNER role");
+      }
+      const owner = await prisma.userProfile.create({
+        data: { email: `owner-${slug}@live.test`, displayName: `Owner ${slug}`, status: "active" },
+      });
+      const membership = await prisma.tenantMembership.create({
+        data: {
+          tenantId: tenant.id,
+          userProfileId: owner.id,
+          roleId: ownerRole.id,
+          status: "ACTIVE",
+        },
+      });
+      // MB-002 (DEC-094): sales and cash sessions belong to the branch the member works at.
+      await provisionFirstBranch(tenant.id, membership.id);
+      for (const code of ["sales", "cash"]) {
+        const feature = await prisma.featureCode.upsert({
+          where: { code },
+          create: { code },
+          update: {},
+        });
+        await prisma.tenantEntitlement.upsert({
+          where: { tenantId_featureCodeId: { tenantId: tenant.id, featureCodeId: feature.id } },
+          create: { tenantId: tenant.id, featureCodeId: feature.id },
+          update: {},
+        });
+      }
+      const session = await app.get(SessionService).issue(owner.id);
+      return { tenantId: tenant.id, cookie: `${STAFF_SESSION_COOKIE}=${session.token}` };
+    };
+
+    const createTrackedItem = async (cookie: string, name: string): Promise<string> => {
+      const exempt = await prisma.taxRate.findFirst({ where: { code: "EXEMPT" } });
+      if (!exempt) {
+        throw new Error("Reference seed did not create the global EXEMPT tax rate");
+      }
+      const created = await supertest(serverUrl)
+        .post("/catalog")
+        .set("Cookie", cookie)
+        .send({
+          kind: "SUPPLY",
+          name,
+          taxRateId: exempt.id,
+          referencePriceAmount: "1000.00",
+          referencePriceCurrency: "PYG",
+        })
+        .expect(201);
+      return (created.body as { id: string }).id;
+    };
+
+    const createRegister = async (cookie: string, name: string): Promise<string> => {
+      const created = await supertest(serverUrl)
+        .post("/cash/registers")
+        .set("Cookie", cookie)
+        .send({ name })
+        .expect(201);
+      return (created.body as CashRegisterDto).id;
+    };
+
+    const openSession = (
+      cookie: string,
+      registerId: string,
+      openingAmount: string,
+      key?: string
+    ) => {
+      const request = supertest(serverUrl).post("/cash/sessions").set("Cookie", cookie);
+      return (key === undefined ? request : request.set("Idempotency-Key", key)).send({
+        registerId,
+        openingAmount,
+      });
+    };
+
+    const postSale = (cookie: string, body: Record<string, unknown>, key?: string) => {
+      const request = supertest(serverUrl).post("/sales").set("Cookie", cookie);
+      return (key === undefined ? request : request.set("Idempotency-Key", key)).send(body);
+    };
+
+    const reverse = (cookie: string, saleId: string, reason: string, key?: string) => {
+      const request = supertest(serverUrl).post(`/sales/${saleId}/reverse`).set("Cookie", cookie);
+      return (key === undefined ? request : request.set("Idempotency-Key", key)).send({ reason });
+    };
+
+    /** Every row a reversal can write, per tenant, so a refusal can prove it wrote nothing. */
+    const reversalResidue = async (tenantId: string) => ({
+      reversals: await prisma.saleReversal.count({ where: { tenantId } }),
+      refunds: await prisma.paymentRefund.count({ where: { tenantId } }),
+      stockMovements: await prisma.stockMovement.count({ where: { tenantId } }),
+      cashMovements: await prisma.cashMovement.count({ where: { tenantId } }),
+      audits: await prisma.auditLog.count({ where: { tenantId, action: "sale.reversed" } }),
+      cancelled: await prisma.sale.count({ where: { tenantId, status: "CANCELLED" } }),
+    });
+
+    let reversalTenant: { tenantId: string; cookie: string };
+    let attemptsTenant: { tenantId: string; cookie: string };
+    let foreignTenant: { tenantId: string; cookie: string };
+    let reversalItemId: string;
+    let attemptsItemId: string;
+    let reversalSessionId: string;
+    let completedSaleId: string;
+    let cashPaymentId: string;
+
+    beforeAll(async () => {
+      reversalTenant = await provisionCommerceTenant("live-reversal");
+      attemptsTenant = await provisionCommerceTenant("live-attempts");
+      foreignTenant = await provisionCommerceTenant("live-reversal-foreign");
+      reversalItemId = await createTrackedItem(reversalTenant.cookie, "Live Reversal Item");
+      attemptsItemId = await createTrackedItem(attemptsTenant.cookie, "Live Attempts Item");
+
+      await supertest(serverUrl)
+        .post("/inventory/stock/adjustments")
+        .set("Cookie", reversalTenant.cookie)
+        .send({
+          catalogItemId: reversalItemId,
+          quantity: "10.000",
+          reason: "Live reversal funding",
+        })
+        .expect(201);
+
+      // Exactly ONE open session at the branch: a CASH refund needs a single drawer.
+      const registerId = await createRegister(reversalTenant.cookie, "Live Reversal Drawer");
+      const opened = await openSession(reversalTenant.cookie, registerId, "0.00").expect(201);
+      reversalSessionId = (opened.body as CashSessionDto).id;
+
+      const draft = await postSale(reversalTenant.cookie, {
+        lines: [{ catalogItemId: reversalItemId, quantity: "2.000" }],
+      }).expect(201);
+      completedSaleId = (draft.body as SaleDto).id;
+      expect((draft.body as SaleDto).total).toBe("2000.00");
+      await supertest(serverUrl)
+        .post(`/sales/${completedSaleId}/complete`)
+        .set("Cookie", reversalTenant.cookie)
+        .send({ payments: [{ method: "CASH", amount: "2000.00" }] })
+        .expect(201);
+      const payment = await prisma.payment.findFirstOrThrow({ where: { saleId: completedSaleId } });
+      cashPaymentId = payment.id;
+    }, 60_000);
+
+    it("masks a foreign sale as 404 on reverse and on its reversal read, writing nothing", async () => {
+      const before = await reversalResidue(reversalTenant.tenantId);
+
+      const refused = await reverse(foreignTenant.cookie, completedSaleId, REVERSAL_REASON).expect(
+        404
+      );
+      expect((refused.body as ErrorEnvelope).error.code).toBe("NOT_FOUND");
+      await supertest(serverUrl)
+        .get(`/sales/${completedSaleId}/reversal`)
+        .set("Cookie", foreignTenant.cookie)
+        .expect(404);
+
+      expect(await reversalResidue(reversalTenant.tenantId)).toEqual(before);
+      expect(await reversalResidue(foreignTenant.tenantId)).toEqual({
+        reversals: 0,
+        refunds: 0,
+        stockMovements: 0,
+        cashMovements: 0,
+        audits: 0,
+        cancelled: 0,
+      });
+    });
+
+    it("reverses a completed cash sale atomically: compensating stock, one REFUND, one refund link, CANCELLED and one audit row", async () => {
+      const key = randomUUID();
+      const saleMovement = await prisma.stockMovement.findFirstOrThrow({
+        where: { saleId: completedSaleId, type: "SALE" },
+      });
+
+      const response = await reverse(
+        reversalTenant.cookie,
+        completedSaleId,
+        REVERSAL_REASON,
+        key
+      ).expect(201);
+      const reversal = response.body as {
+        id: string;
+        saleId: string;
+        reason: string;
+        cashSessionId: string | null;
+        refunds: { paymentId: string; method: string; amount: string }[];
+        creditNote: unknown;
+      };
+      expect(reversal.saleId).toBe(completedSaleId);
+      expect(reversal.reason).toBe(REVERSAL_REASON);
+      expect(reversal.cashSessionId).toBe(reversalSessionId);
+      expect(reversal.refunds).toEqual([
+        { paymentId: cashPaymentId, method: "CASH", amount: "2000.00" },
+      ]);
+      expect(reversal.creditNote).toBeNull();
+
+      const sale = await prisma.sale.findUniqueOrThrow({ where: { id: completedSaleId } });
+      expect(sale.status).toBe("CANCELLED");
+
+      const compensations = await prisma.$queryRaw<
+        { quantity: string; reverses_movement_id: string | null }[]
+      >`
+        SELECT "quantity"::text AS quantity, "reverses_movement_id"::text AS reverses_movement_id
+        FROM "stock_movement"
+        WHERE "sale_id" = ${completedSaleId}::uuid AND "type" = 'SALE_REVERSAL'::stock_movement_type
+      `;
+      expect(compensations).toEqual([{ quantity: "2.000", reverses_movement_id: saleMovement.id }]);
+      const balance = await prisma.$queryRaw<{ quantity: string; ledger: string }[]>`
+        SELECT b."quantity"::text AS quantity,
+          (SELECT COALESCE(sum(m."quantity"), 0)::numeric(10,3)::text FROM "stock_movement" m
+            WHERE m."tenant_id" = b."tenant_id" AND m."catalog_item_id" = b."catalog_item_id") AS ledger
+        FROM "stock_balance" b
+        WHERE b."tenant_id" = ${reversalTenant.tenantId}::uuid
+          AND b."catalog_item_id" = ${reversalItemId}::uuid
+      `;
+      expect(balance).toEqual([{ quantity: "10.000", ledger: "10.000" }]);
+
+      const refundMovements = await prisma.$queryRaw<
+        { id: string; session_id: string; amount: string; sale_id: string }[]
+      >`
+        SELECT "id"::text AS id, "session_id"::text AS session_id, "amount"::text AS amount,
+          "sale_id"::text AS sale_id
+        FROM "cash_movement"
+        WHERE "tenant_id" = ${reversalTenant.tenantId}::uuid AND "type" = 'REFUND'::cash_movement_type
+      `;
+      expect(refundMovements).toHaveLength(1);
+      expect(refundMovements[0]).toMatchObject({
+        session_id: reversalSessionId,
+        amount: "2000.00",
+        sale_id: completedSaleId,
+      });
+      const refundLinks = await prisma.paymentRefund.findMany({
+        where: { tenantId: reversalTenant.tenantId },
+      });
+      expect(refundLinks).toHaveLength(1);
+      expect(refundLinks[0]).toMatchObject({
+        paymentId: cashPaymentId,
+        method: "CASH",
+        cashMovementId: refundMovements[0].id,
+        saleReversalId: reversal.id,
+      });
+      expect(refundLinks[0].amount.toFixed(2)).toBe("2000.00");
+
+      const audits = await prisma.auditLog.findMany({
+        where: { tenantId: reversalTenant.tenantId, action: "sale.reversed" },
+      });
+      expect(audits).toHaveLength(1);
+      expect(audits[0].targetId).toBe(completedSaleId);
+      // The reason is free text a clerk typed: the audit metadata never carries it.
+      expect(JSON.stringify(audits[0].metadata)).not.toContain(REVERSAL_REASON);
+      expect(
+        await prisma.idempotencyRecord.count({
+          where: { tenantId: reversalTenant.tenantId, operation: "sale.reverse", key },
+        })
+      ).toBe(1);
+
+      // The same key and reason replay the stored reversal (200) and write nothing more.
+      const before = await reversalResidue(reversalTenant.tenantId);
+      const replay = await reverse(
+        reversalTenant.cookie,
+        completedSaleId,
+        REVERSAL_REASON,
+        key
+      ).expect(200);
+      expect((replay.body as { id: string }).id).toBe(reversal.id);
+      expect(await reversalResidue(reversalTenant.tenantId)).toEqual(before);
+
+      // The same key with another reason is a conflict, not a second reversal.
+      const conflict = await reverse(
+        reversalTenant.cookie,
+        completedSaleId,
+        "Otro motivo distinto",
+        key
+      ).expect(409);
+      expect((conflict.body as ErrorEnvelope).error.code).toBe("CONFLICT");
+
+      // A fresh attempt on a reversed sale is refused with the stable message.
+      const again = await reverse(reversalTenant.cookie, completedSaleId, REVERSAL_REASON).expect(
+        409
+      );
+      expect((again.body as { error: { message: string } }).error.message).toBe(
+        "La venta ya fue anulada."
+      );
+      expect(await reversalResidue(reversalTenant.tenantId)).toEqual(before);
+
+      const read = await supertest(serverUrl)
+        .get(`/sales/${completedSaleId}/reversal`)
+        .set("Cookie", reversalTenant.cookie)
+        .expect(200);
+      expect((read.body as { id: string }).id).toBe(reversal.id);
+    });
+
+    it("recovers a sale create whose answer was lost: one draft per key, 409 for another body, lookup by key, never across tenants", async () => {
+      const key = randomUUID();
+      const body = { lines: [{ catalogItemId: attemptsItemId, quantity: "1.000" }] };
+
+      const created = await postSale(attemptsTenant.cookie, body, key).expect(201);
+      const saleId = (created.body as SaleDto).id;
+      // The answer is "lost": the page only kept the key, so it asks and then retries.
+      const found = await supertest(serverUrl)
+        .get(`/sales/attempts/${key}`)
+        .set("Cookie", attemptsTenant.cookie)
+        .expect(200);
+      expect((found.body as SaleDto).id).toBe(saleId);
+      const replay = await postSale(attemptsTenant.cookie, body, key).expect(200);
+      expect((replay.body as SaleDto).id).toBe(saleId);
+
+      const conflict = await postSale(
+        attemptsTenant.cookie,
+        { lines: [{ catalogItemId: attemptsItemId, quantity: "3.000" }] },
+        key
+      ).expect(409);
+      expect((conflict.body as ErrorEnvelope).error.code).toBe("CONFLICT");
+
+      expect(await prisma.sale.count({ where: { tenantId: attemptsTenant.tenantId } })).toBe(1);
+      expect(
+        await prisma.auditLog.count({
+          where: { tenantId: attemptsTenant.tenantId, action: "sale.created" },
+        })
+      ).toBe(1);
+      expect(
+        await prisma.idempotencyRecord.count({
+          where: { tenantId: attemptsTenant.tenantId, operation: "sale.create" },
+        })
+      ).toBe(1);
+
+      await supertest(serverUrl)
+        .get(`/sales/attempts/${key}`)
+        .set("Cookie", foreignTenant.cookie)
+        .expect(404);
+      await supertest(serverUrl)
+        .get(`/sales/attempts/${randomUUID()}`)
+        .set("Cookie", attemptsTenant.cookie)
+        .expect(404);
+    });
+
+    it("recovers a cash session open and a movement whose answers were lost, by key and only in their tenant", async () => {
+      const registerId = await createRegister(attemptsTenant.cookie, "Live Attempts Drawer");
+      const openKey = randomUUID();
+
+      const opened = await openSession(
+        attemptsTenant.cookie,
+        registerId,
+        "150000.00",
+        openKey
+      ).expect(201);
+      const sessionId = (opened.body as CashSessionDto).id;
+      const foundSession = await supertest(serverUrl)
+        .get(`/cash/sessions/attempts/${openKey}`)
+        .set("Cookie", attemptsTenant.cookie)
+        .expect(200);
+      expect((foundSession.body as CashSessionDto).id).toBe(sessionId);
+      const replay = await openSession(
+        attemptsTenant.cookie,
+        registerId,
+        "150000.00",
+        openKey
+      ).expect(200);
+      expect((replay.body as CashSessionDto).id).toBe(sessionId);
+      const conflict = await openSession(attemptsTenant.cookie, registerId, "1.00", openKey).expect(
+        409
+      );
+      expect((conflict.body as ErrorEnvelope).error.code).toBe("CONFLICT");
+
+      expect(await prisma.cashSession.count({ where: { tenantId: attemptsTenant.tenantId } })).toBe(
+        1
+      );
+      expect(
+        await prisma.auditLog.count({
+          where: { tenantId: attemptsTenant.tenantId, action: "cash.session.opened" },
+        })
+      ).toBe(1);
+
+      const movementKey = randomUUID();
+      const movement = await supertest(serverUrl)
+        .post("/cash/movements")
+        .set("Cookie", attemptsTenant.cookie)
+        .set("Idempotency-Key", movementKey)
+        .send({ sessionId, type: "INCOME", amount: "25000.00" })
+        .expect(201);
+      const foundMovement = await supertest(serverUrl)
+        .get(`/cash/movements/attempts/${movementKey}`)
+        .set("Cookie", attemptsTenant.cookie)
+        .expect(200);
+      expect((foundMovement.body as CashMovementDto).id).toBe(
+        (movement.body as CashMovementDto).id
+      );
+      expect((foundMovement.body as CashMovementDto).amount).toBe("25000.00");
+
+      for (const path of [
+        `/cash/sessions/attempts/${openKey}`,
+        `/cash/movements/attempts/${movementKey}`,
+      ]) {
+        await supertest(serverUrl).get(path).set("Cookie", foreignTenant.cookie).expect(404);
+      }
+      for (const path of [
+        `/cash/sessions/attempts/${randomUUID()}`,
+        `/cash/movements/attempts/${randomUUID()}`,
+      ]) {
+        await supertest(serverUrl).get(path).set("Cookie", attemptsTenant.cookie).expect(404);
+      }
+    });
+  });
 });
