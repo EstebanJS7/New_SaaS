@@ -2,7 +2,7 @@
 id: DEC-095
 type: decision
 title: How a clinic declares its fiscal issuance point
-status: proposed
+status: accepted
 date: 2026-11-09
 related_epics: [EPIC-16]
 related_stories: [FISC-011, FISC-015, NCE-001, MB-002]
@@ -68,35 +68,40 @@ certificado.
 
 ## Recomendación
 
-**Opción B ahora, Opción A como Story posterior.**
+**Opción A, en tres entregas de menor a mayor riesgo.** La API ya concede a
+Propietario y Administración `fiscal.profile.manage` y
+`fiscal.signing_material.manage`: el diseño espera que la clínica configure su
+parte fiscal, y solo falta la superficie. La Opción B dejaría un comando de
+operador descartable en cuanto exista la pantalla.
 
-1. `PUT /fiscal/emitter-profile/issuance-point` con
-   `{ establishmentId, expeditionPoint, documentType }`, permiso
-   `fiscal.profile.manage` (OWNER/ADMIN), tenant del contexto, auditoría
-   `fiscal.issuance_point.declared` en la misma transacción.
-2. Validación al declarar (la de DEC-057 opción B, adelantada): el
-   establecimiento es del tenant y `(establecimiento, punto, tipo)` resuelve a
-   exactamente un rango `ACTIVE`; si no, `409` con un mensaje que nombra lo que
-   falta. La respuesta informa si existe también un rango de nota de crédito
-   (tipo 5) para ese punto, sin exigirlo.
-3. Comando de operador `provision-fiscal` que usa esos servicios para la primera
-   clínica, documentado en `infra/deploy/README.md` junto al alta de clínica.
-4. El mensaje `CREDIT_NOTE_NO_RANGE_MESSAGE` deja de remitir a una pantalla
-   inexistente.
-5. Con esto, la prueba en navegador de NCE-001 se arma por la API soportada, sin
-   SQL.
+1. **Punto de expedición (API).** `PUT /fiscal/emitter-profile/issuance-point`
+   con `{ establishmentId, expeditionPoint, documentType }`, permiso
+   `fiscal.profile.manage`, tenant del contexto, auditoría
+   `fiscal.issuance_point.declared` en la misma transacción. Validación al
+   declarar (la de DEC-057 opción B, adelantada): el establecimiento es del
+   tenant y `(establecimiento, punto, tipo)` resuelve a exactamente un rango
+   `ACTIVE`; si no, `409` con un mensaje que nombra lo que falta. La respuesta
+   informa si existe también un rango de nota de crédito (tipo 5) para ese
+   punto, sin exigirlo. Desbloquea la prueba en navegador de NCE-001 sin SQL.
+2. **Pantalla «Configuración fiscal», primera parte.** Perfil, establecimientos,
+   rangos de timbrado (alta y retiro) y punto de expedición, sobre las rutas
+   existentes; el proxy web agrega solo esas rutas. El mensaje
+   `CREDIT_NOTE_NO_RANGE_MESSAGE` pasa a remitir a una pantalla real.
+3. **Certificado de firma.** Subida y retiro del material de firma en su propia
+   entrega y revisión: maneja secretos (riesgo alto, ítem 2).
 
 ## Impacto
 
 ### Producto
 
 Ninguno sobre el alcance aprobado: completa la capacidad que DEC-057 ya decidió.
-El alta fiscal sigue siendo una tarea de incorporación, ahora sin tocar la base.
+La clínica (Propietario/Administración) carga su configuración fiscal desde la
+aplicación, sin tocar la base.
 
 ### Arquitectura
 
-Sin cambios: una ruta y un comando sobre servicios existentes. No es un servicio
-desplegable ni una abstracción nueva.
+Sin cambios: una ruta nueva y una pantalla sobre servicios existentes. No es un
+servicio desplegable ni una abstracción nueva.
 
 ### Base de datos/API
 
@@ -105,9 +110,10 @@ contrato existente cambia.
 
 ### Seguridad
 
-La ruta exige `fiscal.profile.manage` y resuelve el tenant del contexto; el
-comando de operador corre en el servidor, como `provision-tenant.ts`.
+Las rutas exigen sus permisos actuales y resuelven el tenant del contexto; la
+web solo es UX. El certificado nunca se guarda ni se muestra en el navegador más
+allá del envío; su entrega lleva revisión propia.
 
 ## Decisión
 
-_Pendiente._
+Aceptada por el usuario el 2026-11-09: Opción A en las tres entregas descritas.
