@@ -154,7 +154,9 @@ async function open(c: Config, correction = false) {
       })
     );
     fireEvent.click(await screen.findByRole("button", { name: "Corregir " + c.name }));
-    fireEvent.change(screen.getByLabelText("Motivo de la corrección"), { target: { value: "Motivo sintético" } });
+    fireEvent.change(screen.getByLabelText("Motivo de la corrección"), {
+      target: { value: "Motivo sintético" },
+    });
   } else fireEvent.click(screen.getByRole("button", { name: "Registrar " + c.name }));
   fireEvent.change(screen.getByLabelText(c.label), { target: { value: c.changed } });
   if (!correction)
@@ -532,7 +534,8 @@ describe("Recovery lifecycle boundaries", () => {
     await reviewAndSave(c, true);
     await waitFor(() => expect(t.writes).toHaveLength(1));
     expect(t.writes[0]?.body).toEqual({
-      expectedVersion: 1, correctionReason: "Motivo sintético",
+      expectedVersion: 1,
+      correctionReason: "Motivo sintético",
       studyType: "Línea uno\nLínea dos",
       result: "",
     });
@@ -545,7 +548,9 @@ describe("Recovery lifecycle boundaries", () => {
     await screen.findByText("12,345");
     fireEvent.click(screen.getByRole("button", { name: /Ver registro de peso/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Corregir peso" }));
-    fireEvent.change(screen.getByLabelText("Motivo de la corrección"), { target: { value: "Motivo sintético" } });
+    fireEvent.change(screen.getByLabelText("Motivo de la corrección"), {
+      target: { value: "Motivo sintético" },
+    });
     fireEvent.change(screen.getByLabelText("Valor registrado (unidad no especificada)"), {
       target: { value: "0,125" },
     });
@@ -558,7 +563,12 @@ describe("Recovery lifecycle boundaries", () => {
     expect(screen.getByLabelText("Valor registrado (unidad no especificada)")).toHaveValue("0,125");
     await reviewAndSave(c, true);
     await waitFor(() => expect(t.writes).toHaveLength(1));
-    expect(t.writes[0]?.body).toEqual({ expectedVersion: 1, correctionReason: "Motivo sintético", quantity: "0.125", unit: "KG" });
+    expect(t.writes[0]?.body).toEqual({
+      expectedVersion: 1,
+      correctionReason: "Motivo sintético",
+      quantity: "0.125",
+      unit: "KG",
+    });
   });
   it.each([200, 403, 500])(
     "does not erase a newer draft when an abandoned command settles %i",

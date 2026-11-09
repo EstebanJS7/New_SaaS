@@ -92,8 +92,8 @@ state.
   payment fields. Editable API values now preserve digits/scale with comma
   decimals; strict local parsing treats dots as grouping and rejects malformed
   or non-local decimals. `buildSaleLines` rejects invalid carts before producing
-  a payload. The earlier verification pause and subsequent targeted results
-  are recorded in the 2026-10-28 QA follow-up.
+  a payload. The earlier verification pause and subsequent targeted results are
+  recorded in the 2026-10-28 QA follow-up.
 - Keyboard review verified forward/backward focus cycling and Escape/trigger
   restoration in a confirmation. Clinical closure was opened then cancelled;
   sale completion and clinical mutation E2E verification are not claimed.
@@ -104,19 +104,20 @@ state.
 - Updated existing clinical/cart/payment cases to Spanish, local decimal entry
   and explicit confirmation without dropping save-conflict, exact-sum,
   permission or immutable-close assertions.
-- Added regressions for exact decimal round trips above JavaScript's safe-integer
-  range, grouped prices, fractional quantities, invalid input, cancelled/failed
-  payment confirmation, cancelled clinical closure, save-before-close, failed
-  saves and edits arriving during that save.
+- Added regressions for exact decimal round trips above JavaScript's
+  safe-integer range, grouped prices, fractional quantities, invalid input,
+  cancelled/failed payment confirmation, cancelled clinical closure,
+  save-before-close, failed saves and edits arriving during that save.
 - Save-before-close reproduced a stale-version bug: the chained close read the
   old encounter ref before React rendered the save response. Applying the
   authoritative response now updates that ref synchronously. Close uses the
   returned version; a failed save or newer local edit still prevents closing.
 - Suppressed the duplicate background error while the clinical close modal
   displays its authoritative error. Cancelling restores the editor's error.
-- Seven targeted web suites passed: 131/131 cases (17 locale, 14 cart, 15 payment,
-  31 clinical, 42 agenda, 4 selector and 8 patient proxy). HTTP responses are
-  synthetic; no real clinical or financial operation was submitted.
+- Seven targeted web suites passed: 131/131 cases (17 locale, 14 cart, 15
+  payment, 31 clinical, 42 agenda, 4 selector and 8 patient proxy). HTTP
+  responses are synthetic; no real clinical or financial operation was
+  submitted.
 - Web typecheck, targeted ESLint, production build and build-output verification
   passed. The sandbox's initial `.next` EPERM was resolved by an unsandboxed
   build; this is an environment limitation, not a hidden failing build.
@@ -138,12 +139,11 @@ and REST contracts are unchanged. Real FullCalendar tests and browser comparison
 verify that the grid and list agree. The POS review quantity also now consumes
 the existing exact local formatter.
 
-
 ## Access and professional identity follow-up — 2026-10-28
 
 The maintainer requested the remaining Spanish access, professional names and
-accessibility review. [[DEC-082]] records the additive displayName projection
-on existing agenda options, with unchanged scheduling permission, tenant and
+accessibility review. [[DEC-082]] records the additive displayName projection on
+existing agenda options, with unchanged scheduling permission, tenant and
 VETERINARIAN filtering. Only membershipId/displayName leave the boundary; email,
 profile IDs and credentials are excluded. No new endpoint or migration.
 
@@ -156,16 +156,14 @@ regions, real headings and field-linked validation descriptions were added.
 Reset completion/missing-token states offer a path back to login.
 
 Professional names appear in create/approval/filter controls and appointment
-list rows while commands still submit membership IDs. Missing or blank names
-use an explicit shortened-ID fallback. The new displayName is CONFIDENTIAL
-staff identity, staff-only and without new logging/retention behavior.
-
+list rows while commands still submit membership IDs. Missing or blank names use
+an explicit shortened-ID fallback. The new displayName is CONFIDENTIAL staff
+identity, staff-only and without new logging/retention behavior.
 
 Targeted access/name checks: 64 web, 45 service and 18 HTTP cases passed; both
 builds, typechecks and targeted ESLint passed. New browser verification remains
 pending because local Browser Use is disabled in Work settings. Keep status
 in-progress rather than infer visual or spoken-output verification from tests.
-
 
 ## Current review state — 2026-10-28
 
@@ -178,10 +176,9 @@ were verified without mutating the pending request. See the QA evidence and
 screenshots. No application code changed in this final visual pass and previous
 checks were not re-run unnecessarily.
 
-Status is review: implementation and scoped verification are ready for review.
-A comprehensive screen-reader/spoken-output audit remains outside the evidence
+Status is review: implementation and scoped verification are ready for review. A
+comprehensive screen-reader/spoken-output audit remains outside the evidence
 claimed here; native date picker appearance still follows the browser locale.
-
 
 ## Clinical form follow-up — 2026-10-28
 
@@ -193,31 +190,32 @@ immutable closed record. Verify focused tests, lint, typecheck, build and a
 synthetic demo create/save/close journey where browser access permits.
 
 Appointment/professional linkage is explicitly outside VET-004 and absent from
-the clinical DTO. The compatible implementation retains patient-based navigation;
-no appointment/professional association or clinical-to-sale command is invented.
-No new persisted field, endpoint, dependency, clinical requirement or Portal
-projection. Existing confidential content stays in memory and staff reads only.
-
+the clinical DTO. The compatible implementation retains patient-based
+navigation; no appointment/professional association or clinical-to-sale command
+is invented. No new persisted field, endpoint, dependency, clinical requirement
+or Portal projection. Existing confidential content stays in memory and staff
+reads only.
 
 ### Follow-up implementation and verification
 
-Preserved working-copy spaces, linked field length errors/counters, blocked invalid
-writes, manual save/retry, stopped unchanged automatic error retries, restored
-StrictMode autosave lifecycle, protected encounter switching, and added clicked-link
-exit confirmation/native unload protection. Closure reviews current staff content;
-closed records now render persisted content read-only beside explicit amendments.
+Preserved working-copy spaces, linked field length errors/counters, blocked
+invalid writes, manual save/retry, stopped unchanged automatic error retries,
+restored StrictMode autosave lifecycle, protected encounter switching, and added
+clicked-link exit confirmation/native unload protection. Closure reviews current
+staff content; closed records now render persisted content read-only beside
+explicit amendments.
 
 53 scoped tests passed; targeted ESLint and web typecheck passed. Real browser
-synthetic create/autosave/review/cancel/close/read-only and Agenda-to-patient access
-passed. Final production build and output verifier passed, including the keyboard-focusable
-summary. See [[UX-VALIDATION-2026-10-27]]. No new
-API/migration/dependency/field or backend authorization changes. Backend isolation
-and immutable transitions are retained rather than reimplemented in the UI.
+synthetic create/autosave/review/cancel/close/read-only and Agenda-to-patient
+access passed. Final production build and output verifier passed, including the
+keyboard-focusable summary. See [[UX-VALIDATION-2026-10-27]]. No new
+API/migration/dependency/field or backend authorization changes. Backend
+isolation and immutable transitions are retained rather than reimplemented in
+the UI.
 
-[[TD-065]] records browser history/programmatic navigation protection limits.
-A full screen-reader audit is not claimed; clinical-to-sale and persisted
+[[TD-065]] records browser history/programmatic navigation protection limits. A
+full screen-reader audit is not claimed; clinical-to-sale and persisted
 appointment/professional associations remain outside this implementation.
-
 
 ## TD-065 recovery follow-up — 2026-10-28
 
@@ -225,23 +223,23 @@ Same-document route unmounts retain the pending clinical working copy in the
 existing QueryClient memory for ten minutes. Fresh access reads gate recovery;
 manual save, version conflict handling and closed-record immutability remain
 explicit. No browser storage/history patches or new API. 44 clinical and 16
-related UI tests passed; targeted lint/types passed; browser Back/Forward recovered
-an oversized unsaved synthetic field. See [[TD-065-clinical-history-navigation-guard]]
-for limits and final build evidence. Earlier history-loss notes above are historical.
+related UI tests passed; targeted lint/types passed; browser Back/Forward
+recovered an oversized unsaved synthetic field. See
+[[TD-065-clinical-history-navigation-guard]] for limits and final build
+evidence. Earlier history-loss notes above are historical.
 
 Final TD-065 production build/output verification passed. TD-065 is resolved
 within its documented same-document recovery boundary.
 
-
 ## POS recovery follow-up — 2026-10-28
 
-Continue approved recovery UX over existing sales reads/commands. Remove conflicting
-claims after a lost/unknown completion response; require authoritative state review
-before another completion. Counter links to the existing sale detail; detail can
-explicitly refresh state before a retry. Keep entered payments on the detail page,
-block confirmation as well as submit, and never infer replay/recorded payments
-from a sale status read. No new endpoint, financial effect, schema or dependency.
-
+Continue approved recovery UX over existing sales reads/commands. Remove
+conflicting claims after a lost/unknown completion response; require
+authoritative state review before another completion. Counter links to the
+existing sale detail; detail can explicitly refresh state before a retry. Keep
+entered payments on the detail page, block confirmation as well as submit, and
+never infer replay/recorded payments from a sale status read. No new endpoint,
+financial effect, schema or dependency.
 
 ### POS recovery implementation and verification
 
@@ -249,9 +247,10 @@ Corrected contradictory counter copy for transport/unrecognized completion
 responses. Counter requires the existing authoritative detail read before retry;
 detail exposes explicit state refresh and retains entered payments while DRAFT.
 A completed/cancelled read removes the payment form, without inventing replay
-semantics or payment history. Disabled state applies inside an open confirmation.
-55 targeted tests, TypeScript, ESLint, production build and output verifier passed.
-No new browser mutation, backend endpoint, dependency or financial invariant.
-No full web regression claim; old English assertions in unrelated POS suites were
-not treated as current verification. Updated outcome assertions retain the full
-failure matrix in Spanish. See [[Sales]] for the contract boundary.
+semantics or payment history. Disabled state applies inside an open
+confirmation. 55 targeted tests, TypeScript, ESLint, production build and output
+verifier passed. No new browser mutation, backend endpoint, dependency or
+financial invariant. No full web regression claim; old English assertions in
+unrelated POS suites were not treated as current verification. Updated outcome
+assertions retain the full failure matrix in Spanish. See [[Sales]] for the
+contract boundary.

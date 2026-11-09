@@ -37,8 +37,9 @@ cita. No se amplía el PRD ni se cambian asociaciones o transiciones de negocio.
       finalización de turno, cierre clínico o cobro automáticamente.
 - [x] Conserva las operaciones de vincular existentes, sus confirmaciones,
       idempotencia, permisos y auditoría, sin nuevos comandos o cambios backend.
-- [x] Pruebas de contexto/retorno/errores y regresiones clínicas/POS pertinentes,
-      lint, tipos, build aislado y verificador aprobados con binarios instalados.
+- [x] Pruebas de contexto/retorno/errores y regresiones clínicas/POS
+      pertinentes, lint, tipos, build aislado y verificador aprobados con
+      binarios instalados.
 - [x] Navegador con API/BFF/PostgreSQL exclusivamente desechable recorre agenda,
       atención y POS/retorno; navegación con cero efectos, vínculo explícito,
       denegaciones/aislamiento y contexto incompatible. Revisión escritorio
@@ -64,32 +65,31 @@ Implementar controles/retorno locales, comprobar escenarios dirigidos y después
 lane aislada real. El alcance no certifica íntegramente Agenda/POS ni introduce
 idempotencia nueva a crear ventas; riesgos fuera del cambio se registran aparte.
 
-
 ## Implementación y cierre — 2026-11-01
 
 AppointmentJourney valida el paciente esperado también en POS; estado de error
 permite GET explícito. ClinicalAssociations agrega retorno exacto tras lectura
 autorizada y bloquea acciones durante revalidación. CounterSurface conserva
 contratos financieros y exige SERVICE activo actual al sugerir. No endpoints,
-migraciones, permisos, dependencias o cambios PRD nuevos. Datos CONFIDENTIAL
-sin persistencia browser ni contenido en URL; asociaciones no cambian por navegar.
+migraciones, permisos, dependencias o cambios PRD nuevos. Datos CONFIDENTIAL sin
+persistencia browser ni contenido en URL; asociaciones no cambian por navegar.
 
 406 pruebas distintas aprobadas: 306 clínicas/POS y 100 Agenda. Agenda se
 verificó con Node24.22.1/tz2026e ya instalado; Node22.14.0 del PATH/tz2024b
 discrepa en cinco casos de hora/rango, documentado en TD-072 abierta. Tres
 expectativas legadas de títulos se alinearon a la UI española existente, sin
-cambiar UTC, aislamiento del servicio o controles de conflicto. TD-070 amplía
-su evidencia a ese test. No se afirma compatibilidad horaria entre runtimes.
+cambiar UTC, aislamiento del servicio o controles de conflicto. TD-070 amplía su
+evidencia a ese test. No se afirma compatibilidad horaria entre runtimes.
 
 Lint web completo, E2E/runner y test de calendario, tipos web/E2E, formato y
 diff-check aprobados. Builds aislados referencia/database, API y Next con
-verificador aprobados. PostgreSQL desechable + navegador/API/BFF: 8/8,49,0s,
-sin retries, salida0, servidores/contenedores cerrados automáticamente. Capturas
+verificador aprobados. PostgreSQL desechable + navegador/API/BFF: 8/8,49,0s, sin
+retries, salida0, servidores/contenedores cerrados automáticamente. Capturas
 escritorio claro/móvil oscuro revisadas, foco/Escape del modal; no auditoría
 universal de accesibilidad. Historial/recuperación sin cambio de producto.
 
 Fallos iniciales y límites íntegros en [[UX-030-VALIDATION-2026-11-01]]. TD-071
 carrito/creación incierta, TD-072 runtime y TD-069 teardown Windows permanecen
 abiertas. Cobro completo y cierre clínico desde UI fuera de esta verificación.
-Sin commit/push, despliegue o CI remota asumida. UX-005 mantiene su estado review;
-no se cierran otras Stories o toda UI V1 por esta evidencia acotada.
+Sin commit/push, despliegue o CI remota asumida. UX-005 mantiene su estado
+review; no se cierran otras Stories o toda UI V1 por esta evidencia acotada.

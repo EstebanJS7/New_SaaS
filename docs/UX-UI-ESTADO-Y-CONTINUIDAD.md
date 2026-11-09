@@ -1151,7 +1151,6 @@ móvil/oscuro, no auditoría universal. Fallos iniciales y correcciones
 conservados en QA; sin CI remota o despliegue. Siguiente etapa: Story propia de
 Pacientes a partir del inventario, seguida por Catálogo.
 
-
 ## Identidad de Pacientes — UX-028, 2026-11-01
 
 Continuación autorizada después de UX-027. Story in-progress para alta/edición
@@ -1165,23 +1164,21 @@ Navegador PostgreSQL desechable, builds y revisión visual en curso; no cerrar
 Story hasta completar evidencia en [[UX-028-VALIDATION-2026-11-01]]. Cambios
 locales anteriores preservados, sin commit/push.
 
-
 Pendiente transversal de localización para reconciliar con UX-002: la raíz HTML
 compartida sigue lang=en y los nombres de taxonomía global vienen de los datos
 del catálogo (por ejemplo Bird/Mixed Breed). UX-028 identifica el formulario
-como es-PY y acompaña la fecha nativa con lectura es-PY, sin cambiar toda la raíz,
-Portal, catálogos persistidos o el formato nativo impuesto por navegador/SO. No
-considerar esos puntos cerrados por la traducción de etiquetas de identidad.
-
+como es-PY y acompaña la fecha nativa con lectura es-PY, sin cambiar toda la
+raíz, Portal, catálogos persistidos o el formato nativo impuesto por
+navegador/SO. No considerar esos puntos cerrados por la traducción de etiquetas
+de identidad.
 
 Cierre UX-028: done. 292 pruebas distintas aprobadas, lint/tipos, builds
 referencia/API/Next y verificador aprobados; lane final NJvR8X6/6 sin retries.
 Revisión final escritorio claro/móvil oscuro aprobada. Cierre de servidores
 Playwright asistido tras seis casos ok, salida0 y contenedores retirados;
-[[TD-069]] registra ese límite de automatización. Evidencia y fallos en QA.
-Sin cambios de contrato/PRD nuevos, commit/push o CI remota. Siguiente etapa:
+[[TD-069]] registra ese límite de automatización. Evidencia y fallos en QA. Sin
+cambios de contrato/PRD nuevos, commit/push o CI remota. Siguiente etapa:
 Catálogo a partir del inventario UX-027, con Story propia; no está implementado.
-
 
 ## Catálogo staff — UX-029, 2026-11-01
 
@@ -1189,57 +1186,56 @@ Continuación autorizada después de Pacientes. Story in-progress para alta,
 edición/detalle en español, estados de impuestos, errores seguros, salida
 protegida y comandos inciertos/denegados bloqueados. Precio y umbral aplican
 DEC-080 por texto, conservan precisión/moneda/null y no cambian stock, impuestos
-calculados, ventas o clínica. Sin nuevo alcance PRD. Pruebas/build/lane desechable
-en curso; evidencia separada en [[UX-029-VALIDATION-2026-11-01]]. No se declara
-UI V1 global completa ni TD-007/TD-014/TD-069 resueltas por esta etapa.
-
+calculados, ventas o clínica. Sin nuevo alcance PRD. Pruebas/build/lane
+desechable en curso; evidencia separada en [[UX-029-VALIDATION-2026-11-01]]. No
+se declara UI V1 global completa ni TD-007/TD-014/TD-069 resueltas por esta
+etapa.
 
 Cierre UX-029: done. 314 pruebas distintas (277 web,37 API/repo), lint/tipos,
 builds aislados y verificador aprobados. Lane final duNb7k6/6,38,6s,sin retries,
 cierre automático y contenedores retirados. Capturas escritorio claro/móvil
-oscuro revisadas. Precio/umbral mantienen exactitud, null y permisos; guardar sin
-cambios ya no devuelve un falso404 y conserva auditoría. No lógica comercial o
-agenda nueva: solo sus pruebas antiguas actualizadas en TD-070,resuelta.
+oscuro revisadas. Precio/umbral mantienen exactitud, null y permisos; guardar
+sin cambios ya no devuelve un falso404 y conserva auditoría. No lógica comercial
+o agenda nueva: solo sus pruebas antiguas actualizadas en TD-070,resuelta.
 
 Fallos e interrupción iniciales preservados en QA. TD-014/TD-069 y TD-007 global
 no se cierran por inferencia. Sin commit/push, PRD nuevo o CI remota asumida.
 Clientes/Pacientes/Catálogo quedan cerrados dentro de sus Stories acotadas; el
-roadmap UI V1 completo aún requiere recorridos transversales y módulos pendientes.
-
+roadmap UI V1 completo aún requiere recorridos transversales y módulos
+pendientes.
 
 ## Recorrido Agenda → atención → POS — UX-030, 2026-11-01
 
 Contexto verificable por paciente en POS, retorno exacto a la consulta con/sin
-cita y recuperación GET explícita de cita/vínculos. Revalidación bloquea acciones
-y sugerencia exige SERVICE activo actual. Navegación sin comandos; asociaciones
-existentes siguen explícitas, confirmadas y auditadas. No cambia PRD/contratos
-financieros o clínicos ni certifica todo el recorrido de cobro.
+cita y recuperación GET explícita de cita/vínculos. Revalidación bloquea
+acciones y sugerencia exige SERVICE activo actual. Navegación sin comandos;
+asociaciones existentes siguen explícitas, confirmadas y auditadas. No cambia
+PRD/contratos financieros o clínicos ni certifica todo el recorrido de cobro.
 
 406 pruebas distintas (306 clínicas/POS y100 Agenda), lint/tipos/builds
 aislados/verificador aprobados. Agenda100/100 con Node24.22.1/tz2026e ya
 instalado; Node22 del PATH/tz2024b no pasa cinco casos de hora/rango y queda
-registrado en [[TD-072-runtime-time-zone-data-drift]], abierta. Lane
-real PostgreSQL/BFF/API/navegador: 8/8,49,0s,retries0,salida0, cierre automático.
-Visual escritorio claro/móvil oscuro y foco/Escape del modal revisados. Evidencia
-y fallos iniciales: [[UX-030-VALIDATION-2026-11-01]]. UX-030 done en su alcance.
+registrado en [[TD-072-runtime-time-zone-data-drift]], abierta. Lane real
+PostgreSQL/BFF/API/navegador: 8/8,49,0s,retries0,salida0, cierre automático.
+Visual escritorio claro/móvil oscuro y foco/Escape del modal revisados.
+Evidencia y fallos iniciales: [[UX-030-VALIDATION-2026-11-01]]. UX-030 done en
+su alcance.
 
 Próxima etapa recomendada: protección UI del carrito y resultado incierto al
 crear venta sin ID ([[TD-071-pos-create-uncertainty-and-cart-exit]]). No implica
 contrato nuevo de idempotencia aprobado ni recuperación durable comercial.
-TD-069 y matriz global TD-007 siguen pendientes; tampoco se cierran UX-001/002
-o toda UI V1 por inferencia. Sin commit/push, despliegue o CI remota asumida.
-
+TD-069 y matriz global TD-007 siguen pendientes; tampoco se cierran UX-001/002 o
+toda UI V1 por inferencia. Sin commit/push, despliegue o CI remota asumida.
 
 ## Carrito y respuesta incierta — UX-031, 2026-11-01
 
-Continuación autorizada de TD-071, in-progress. Protección UI del intento sin
-ID confirmado, copia local y salida por enlaces. Sin idempotencia nueva de
+Continuación autorizada de TD-071, in-progress. Protección UI del intento sin ID
+confirmado, copia local y salida por enlaces. Sin idempotencia nueva de
 creación, persistencia browser o inferencia de éxito por valores. Incertidumbre
 bloquea reenvío; salir no cancela una venta. Back/Forward SPA/recarga/cierre
 forzado no tienen recuperación durable. Contratos financieros intactos.
 Pruebas/build/lane desechable en curso; no declarar done hasta completar
 [[UX-031-VALIDATION-2026-11-01]]. TD-069/072 siguen independientes.
-
 
 Cierre UX-031: done en su alcance compatible.184 casos distintos, lint/tipos,
 builds aislados y verificador aprobados; navegador PG real8 casos previos +5
@@ -1253,29 +1249,28 @@ SPA. Recuperar creación sin ID requiere acordar contrato; no se deduce de
 CompleteSale. TD-069/072 siguen abiertas. Este avance no certifica todo POS,
 cobro completo o UI V1. Sin commit/push o CI remota asumida.
 
-
 ## Caja: importes de lectura — UX-032, 2026-11-01
 
-Primer paso acotado completado: formato exacto es-PY para importes y
-diferencias con signo, mensajes de faltante/sobrante en español. Reutiliza
-helper existente sin cambiar comandos/inputs. Fechas esperan zona autoritativa
-del tenant; no se convierten por suposición. Formularios, estados, errores y
-localización integral de Caja quedan para otra etapa. No declarar módulo entero
-o UI V1 completos. Verificación dirigida según riesgo; no nueva ronda Playwright,
-PostgreSQL o build. Sin commit/push. Evidencia [[UX-032-VALIDATION-2026-11-01]].
+Primer paso acotado completado: formato exacto es-PY para importes y diferencias
+con signo, mensajes de faltante/sobrante en español. Reutiliza helper existente
+sin cambiar comandos/inputs. Fechas esperan zona autoritativa del tenant; no se
+convierten por suposición. Formularios, estados, errores y localización integral
+de Caja quedan para otra etapa. No declarar módulo entero o UI V1 completos.
+Verificación dirigida según riesgo; no nueva ronda Playwright, PostgreSQL o
+build. Sin commit/push. Evidencia [[UX-032-VALIDATION-2026-11-01]].
 
 Cierre UX-032:done.190 casos distintos, lint/tipos/formato aprobados; sin
-Playwright/PG/build nuevos para este ajuste de lectura. Próxima etapa: formularios
-y mensajes de Caja, conservando comandos y abordando fechas solo con zona
-autoritativa. No asumir que todo Caja está localizado ni cerrar UI V1 global.
-
+Playwright/PG/build nuevos para este ajuste de lectura. Próxima etapa:
+formularios y mensajes de Caja, conservando comandos y abordando fechas solo con
+zona autoritativa. No asumir que todo Caja está localizado ni cerrar UI V1
+global.
 
 ## Caja: formularios y feedback — UX-033, 2026-11-02
 
 Done: formularios/estados/mensajes en español, entrada es-PY exacta y revisión
 previa de apertura/movimiento/cierre. Cancelar no envía/genera clave; pendiente
-bloquea doble confirmación. Errores seguros, mismos cuerpos wire/backend.
-201 casos distintos, lint/tipos/formato y diff-check aprobados. Verificación
+bloquea doble confirmación. Errores seguros, mismos cuerpos wire/backend. 201
+casos distintos, lint/tipos/formato y diff-check aprobados. Verificación
 dirigida simulada, sin nueva ronda Playwright/PG/visual/build según riesgo.
 Evidencia y correcciones [[UX-033-VALIDATION-2026-11-02]].
 
@@ -1284,7 +1279,6 @@ con la misma key; se separan por tipo conservando remonte por sesión. No eran
 filas duplicadas probadas en PostgreSQL. Próxima etapa de Caja: continuidad de
 intentos pendientes/inciertos al navegar ([[TD-073]]) y fechas con zona
 autoritativa. No afirmar toda UI V1 finalizada. Sin commit/push/CI remota.
-
 
 ## Caja: intentos y fechas v1 — UX-034, 2026-11-02
 
@@ -1295,10 +1289,10 @@ Guardia de enlaces/beforeunload; salir no cancela ni confirma backend. Recibos
 resueltos no se mezclan al seleccionar otra sesión.
 
 Fechas/horas en es-PY con la zona fija v1 America/Asuncion, confirmada en el
-shared kernel existente; no nuevo setting/endpoint o zona del navegador.
-211 casos distintos aprobados, lint/tipos/formato y diff-check. Solo simulación
-UI/contratos; sin nueva lane PG, Playwright, visual o build. Node24 instalado con
-tzdata actual usado para fechas; TD-072 del Node habitual sigue abierta. QA
+shared kernel existente; no nuevo setting/endpoint o zona del navegador. 211
+casos distintos aprobados, lint/tipos/formato y diff-check. Solo simulación
+UI/contratos; sin nueva lane PG, Playwright, visual o build. Node24 instalado
+con tzdata actual usado para fechas; TD-072 del Node habitual sigue abierta. QA
 [[UX-034-VALIDATION-2026-11-02]] incluye el fallo de aviso inicial y corrección.
 
 TD-073 sigue parcialmente abierta por durabilidad tras perder documento o

@@ -532,7 +532,9 @@ describe("schema · cash foundation (EPIC-12 POS-002)", () => {
     expect(register).toMatch(/@@unique\(\[tenantId, name\]\)/);
     // MB-002 (DEC-094 §9) supersedes DEC-020 here: a drawer belongs to a branch.
     expect(register).toMatch(/branchId\s+String\s+@map\("branch_id"\)\s+@db\.Uuid/);
-    expect(register).toMatch(/@relation\(fields: \[tenantId, branchId\], references: \[tenantId, id\]/);
+    expect(register).toMatch(
+      /@relation\(fields: \[tenantId, branchId\], references: \[tenantId, id\]/
+    );
     expect(register).not.toMatch(/\bFloat\b/);
   });
 

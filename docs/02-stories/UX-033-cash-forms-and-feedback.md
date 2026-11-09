@@ -22,27 +22,28 @@ Continuación autorizada. Aplicar DEC-080 a la UI existente sin ampliar PRD.
       respuestas privadas desconocidas no se muestran. Clasificadores conservan
       códigos y mensajes wire existentes. Fechas UTC no cambian en esta etapa.
 - [x] Apertura, movimiento y conteo aceptan es-PY y normalizan por texto al wire
-      Decimal(14,2), sin Number/redondeo. Cero permitido al abrir/contar, prohibido
-      en movimientos; escala, rango, motivo y dirección mantienen reglas.
+      Decimal(14,2), sin Number/redondeo. Cero permitido al abrir/contar,
+      prohibido en movimientos; escala, rango, motivo y dirección mantienen
+      reglas.
 - [x] Revisar y confirmar apertura, movimiento y cierre en modal existente,
       cancelar sin comando/clave nueva, pendiente sin doble confirmación y error
       seguro sin éxito supuesto. Clave de movimiento se conserva tras rechazo.
 - [x] Preservar cuerpos wire, idempotencia, permisos, tenant, ledger, auditoría
       y backend. No efectos por abrir revisión o cambiar selección.
-- [x] Pruebas dirigidas Caja/BFF/helper y regresión pertinente, lint/tipos/formato
-      aprobados; documentar gates simuladas y límites sin Playwright/PG nuevo.
+- [x] Pruebas dirigidas Caja/BFF/helper y regresión pertinente,
+      lint/tipos/formato aprobados; documentar gates simuladas y límites sin
+      Playwright/PG nuevo.
 - [x] Story, Cash, continuidad, changelog y QA actualizados.
 
 ## Límites
 
-No nuevos endpoints, migraciones, permisos, dependencias, monedas o cálculos.
-No conversión de fechas sin zona autoritativa, cierre/reapertura automáticos,
+No nuevos endpoints, migraciones, permisos, dependencias, monedas o cálculos. No
+conversión de fechas sin zona autoritativa, cierre/reapertura automáticos,
 recuperación durable o nuevo protocolo de idempotencia. Datos CONFIDENTIAL solo
 en estado local; sin URL/logs/storage nuevos. No borrar historial, recibos o
 movimientos. No alterar clínica, POS, Portal u otros módulos. Revisar flujo con
-componentes y contratos actuales; navegador/PG/build nuevos solo si hay un riesgo
-concreto que esas pruebas no cubran. Sin commit/push o CI remota asumida.
-
+componentes y contratos actuales; navegador/PG/build nuevos solo si hay un
+riesgo concreto que esas pruebas no cubran. Sin commit/push o CI remota asumida.
 
 ## Cierre — 2026-11-02
 
@@ -59,6 +60,6 @@ PostgreSQL, Playwright, revisión visual o build. Foco en jsdom no es auditoría
 nativa. Evidencia/fallos en [[UX-033-VALIDATION-2026-11-02]].
 
 Fechas y continuidad de intentos inciertos/durables siguen pendientes, la última
-registrada por inspección estática en TD-073. No afirmar todo Caja/UI V1 completo
-ni CI remota. Módulo, continuidad y changelog sincronizados, trabajo anterior
-preservado. Sin commit/push o despliegue.
+registrada por inspección estática en TD-073. No afirmar todo Caja/UI V1
+completo ni CI remota. Módulo, continuidad y changelog sincronizados, trabajo
+anterior preservado. Sin commit/push o despliegue.

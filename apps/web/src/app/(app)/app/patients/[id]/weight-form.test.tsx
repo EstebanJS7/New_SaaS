@@ -107,7 +107,9 @@ async function editForm() {
   fireEvent.click(screen.getByRole("button", { name: /Ver registro de peso/ }));
   await screen.findByText("Valor registrado");
   fireEvent.click(screen.getByRole("button", { name: "Corregir peso" }));
-  fireEvent.change(screen.getByLabelText("Motivo de la corrección"), { target: { value: "Motivo sintético" } });
+  fireEvent.change(screen.getByLabelText("Motivo de la corrección"), {
+    target: { value: "Motivo sintético" },
+  });
 }
 function review(create = false) {
   fireEvent.click(
@@ -154,7 +156,12 @@ describe("Weight entry with declared KG", () => {
     review();
     confirm();
     await screen.findByText("Peso corregido.");
-    expect(writes[0].body).toEqual({ expectedVersion: 1, correctionReason: "Motivo sintético", quantity: "9999999.999", unit: "KG" });
+    expect(writes[0].body).toEqual({
+      expectedVersion: 1,
+      correctionReason: "Motivo sintético",
+      quantity: "9999999.999",
+      unit: "KG",
+    });
     await screen.findByText("9.999.999,999");
   });
   it("does not infer KG while opening an unknown record or editing its date only", async () => {
@@ -168,7 +175,11 @@ describe("Weight entry with declared KG", () => {
     expect(screen.getByRole("dialog")).toHaveTextContent("unidad no especificada");
     confirm();
     await screen.findByText("Peso corregido.");
-    expect(writes[0].body).toEqual({ expectedVersion: 1, correctionReason: "Motivo sintético", measuredAt: "2026-10-21T15:00:00.000Z" });
+    expect(writes[0].body).toEqual({
+      expectedVersion: 1,
+      correctionReason: "Motivo sintético",
+      measuredAt: "2026-10-21T15:00:00.000Z",
+    });
     await screen.findByText("Unidad no especificada en el registro.");
   });
   it("requires explicit confirmation before replacing an unknown quantity as KG", async () => {
@@ -184,7 +195,12 @@ describe("Weight entry with declared KG", () => {
     review();
     confirm();
     await screen.findByText("Peso corregido.");
-    expect(writes[0].body).toEqual({ expectedVersion: 1, correctionReason: "Motivo sintético", quantity: "0.001", unit: "KG" });
+    expect(writes[0].body).toEqual({
+      expectedVersion: 1,
+      correctionReason: "Motivo sintético",
+      quantity: "0.001",
+      unit: "KG",
+    });
   });
   it("can explicitly confirm KG for an unchanged stored quantity", async () => {
     const { writes } = setup({ unknown: true });
@@ -193,7 +209,11 @@ describe("Weight entry with declared KG", () => {
     review();
     confirm();
     await screen.findByText("Peso corregido.");
-    expect(writes[0].body).toEqual({ expectedVersion: 1, correctionReason: "Motivo sintético", unit: "KG" });
+    expect(writes[0].body).toEqual({
+      expectedVersion: 1,
+      correctionReason: "Motivo sintético",
+      unit: "KG",
+    });
   });
   it.each(["0", "0,0001", "1.5", "1e3", "10.000.000"])(
     "rejects invalid or inexact input %s without rounding",
@@ -285,10 +305,13 @@ describe("Weight entry with declared KG", () => {
 });
 
 it("requires a nonempty correction reason before submitting a changed record", async () => {
-  const {writes}=setup();await editForm();
-  fireEvent.change(screen.getByLabelText("Peso (kg)"),{target:{value:"0,125"}});
-  fireEvent.change(screen.getByLabelText("Motivo de la corrección"),{target:{value:""}});
-  fireEvent.submit(screen.getByRole("button",{name:"Revisar corrección"}).closest("form")!);
-  expect(await screen.findByText("Ingresá el motivo de la corrección (hasta 2000 caracteres).")).toBeInTheDocument();
+  const { writes } = setup();
+  await editForm();
+  fireEvent.change(screen.getByLabelText("Peso (kg)"), { target: { value: "0,125" } });
+  fireEvent.change(screen.getByLabelText("Motivo de la corrección"), { target: { value: "" } });
+  fireEvent.submit(screen.getByRole("button", { name: "Revisar corrección" }).closest("form")!);
+  expect(
+    await screen.findByText("Ingresá el motivo de la corrección (hasta 2000 caracteres).")
+  ).toBeInTheDocument();
   expect(writes).toHaveLength(0);
 });

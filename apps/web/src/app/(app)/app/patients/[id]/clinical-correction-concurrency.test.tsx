@@ -109,7 +109,9 @@ describe.each(cases)("$kind correction CAS UI", (c) => {
         )}
       </QueryClientProvider>
     );
-    fireEvent.change(screen.getByLabelText("Motivo de la corrección"), { target: { value: "Motivo sintético" } });
+    fireEvent.change(screen.getByLabelText("Motivo de la corrección"), {
+      target: { value: "Motivo sintético" },
+    });
     fireEvent.change(screen.getByLabelText(c.label), { target: { value: c.change } });
     fireEvent.click(screen.getByRole("button", { name: "Revisar corrección" }));
     fireEvent.click(

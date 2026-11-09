@@ -3217,7 +3217,6 @@ tdDesTiPag  1 Efectivo  2 Cheque  3 Tarjeta de crédito  4 Tarjeta de débito  5
             20 Consumo Interno  21 Pago Electrónico
 ```
 
-The descriptions are the schema's exact strings (capitalisation included:
-"Pago Móvil", "Pago Electrónico"). [[PAY-DET-001]] emits them from
-`dte.payment.ts`; [[DEC-091]] records which application method maps to which
-code.
+The descriptions are the schema's exact strings (capitalisation included: "Pago
+Móvil", "Pago Electrónico"). [[PAY-DET-001]] emits them from `dte.payment.ts`;
+[[DEC-091]] records which application method maps to which code.

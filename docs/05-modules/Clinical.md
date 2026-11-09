@@ -887,7 +887,6 @@ UX-026 done: 767 pruebas especializadas + 29/29 E2E reales, lint/tipos/builds
 aislados y revisión visual acotada aprobados. TD-066 resolved; TD-068 registra
 expectativas antiguas de tests fuera de alcance. Sin CI remota o despliegue.
 
-
 ## Contexto y retorno de atención — UX-030, 2026-11-01
 
 POS ofrece volver a la consulta exacta después de leer sus vínculos con acceso
@@ -896,5 +895,5 @@ de navegación y no se muestra ID de cita sin permiso de lectura de agenda.
 Errores de lectura ofrecen GET explícito; asociar queda bloqueado durante
 revalidación. No se edita la consulta cerrada ni se alteran comandos clínicos,
 recuperación UX-018/024, historial o DTO de pesos. Vínculos existentes siguen
-explícitos, confirmados, inmutables y auditados según DEC-083/UX-006.
-Evidencia real y límites en [[UX-030-VALIDATION-2026-11-01]].
+explícitos, confirmados, inmutables y auditados según DEC-083/UX-006. Evidencia
+real y límites en [[UX-030-VALIDATION-2026-11-01]].

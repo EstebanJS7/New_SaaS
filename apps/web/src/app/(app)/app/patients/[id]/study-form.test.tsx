@@ -129,7 +129,9 @@ async function editForm() {
   fireEvent.click(screen.getByRole("button", { name: /Ver estudio/ }));
   await screen.findByText(original.result);
   fireEvent.click(screen.getByRole("button", { name: "Corregir estudio" }));
-  fireEvent.change(screen.getByLabelText("Motivo de la corrección"), { target: { value: "Motivo sintético" } });
+  fireEvent.change(screen.getByLabelText("Motivo de la corrección"), {
+    target: { value: "Motivo sintético" },
+  });
 }
 function confirm() {
   fireEvent.click(
@@ -205,7 +207,11 @@ describe("Study entry and correction", () => {
     fireEvent.click(screen.getByRole("button", { name: "Revisar corrección" }));
     confirm();
     await screen.findByText("Estudio corregido.");
-    expect(writes[0].body).toEqual({ expectedVersion: 1, correctionReason: "Motivo sintético", performedAt: "2026-10-20T23:30:00.000Z" });
+    expect(writes[0].body).toEqual({
+      expectedVersion: 1,
+      correctionReason: "Motivo sintético",
+      performedAt: "2026-10-20T23:30:00.000Z",
+    });
   });
   it("creates only after review, converting Paraguay clock and retaining list page", async () => {
     const storage = vi.spyOn(Storage.prototype, "setItem");
@@ -244,7 +250,10 @@ describe("Study entry and correction", () => {
     confirm();
     await screen.findByText("Estudio corregido.");
     expect(writes).toEqual([
-      { method: "PUT", body: { expectedVersion: 1, correctionReason: "Motivo sintético", studyType: "Corrección" } },
+      {
+        method: "PUT",
+        body: { expectedVersion: 1, correctionReason: "Motivo sintético", studyType: "Corrección" },
+      },
     ]);
     expect(await screen.findByText(original.result)).toBeInTheDocument();
   });
@@ -257,7 +266,11 @@ describe("Study entry and correction", () => {
     fireEvent.click(screen.getByRole("button", { name: "Revisar corrección" }));
     confirm();
     await screen.findByText("Estudio corregido.");
-    expect(writes[0].body).toEqual({ expectedVersion: 1, correctionReason: "Motivo sintético", result: "" });
+    expect(writes[0].body).toEqual({
+      expectedVersion: 1,
+      correctionReason: "Motivo sintético",
+      result: "",
+    });
     await screen.findByText("Sin resultado registrado.");
   });
   it("does not mutate when review is cancelled and asks before discarding dirty form", async () => {
@@ -370,10 +383,13 @@ describe("Study entry and correction", () => {
 });
 
 it("requires a nonempty correction reason before submitting a changed record", async () => {
-  const {writes}=setup();await editForm();
-  fireEvent.change(screen.getByLabelText("Tipo de estudio"),{target:{value:"Corrección"}});
-  fireEvent.change(screen.getByLabelText("Motivo de la corrección"),{target:{value:""}});
-  fireEvent.submit(screen.getByRole("button",{name:"Revisar corrección"}).closest("form")!);
-  expect(await screen.findByText("Ingresá el motivo de la corrección (hasta 2000 caracteres).")).toBeInTheDocument();
+  const { writes } = setup();
+  await editForm();
+  fireEvent.change(screen.getByLabelText("Tipo de estudio"), { target: { value: "Corrección" } });
+  fireEvent.change(screen.getByLabelText("Motivo de la corrección"), { target: { value: "" } });
+  fireEvent.submit(screen.getByRole("button", { name: "Revisar corrección" }).closest("form")!);
+  expect(
+    await screen.findByText("Ingresá el motivo de la corrección (hasta 2000 caracteres).")
+  ).toBeInTheDocument();
   expect(writes).toHaveLength(0);
 });
