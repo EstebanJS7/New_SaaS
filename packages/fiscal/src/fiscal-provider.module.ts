@@ -111,6 +111,12 @@ export interface BuildSelectedFiscalProviderArgs {
   readonly nodeEnv: string | undefined;
   readonly rawFiscalProvider: string | undefined;
   readonly rawSifenEnvironment: string | undefined;
+  /**
+   * `FISCAL_FAKE_REQUIRES_SIGNED_DOCUMENT`: exactly "true" makes the fake ask
+   * for a signed document (FakeFiscalProviderOptions.requiresSignedDocument).
+   * Ignored by the real adapter. Set it on the worker only.
+   */
+  readonly rawFakeRequiresSignedDocument?: string | undefined;
   readonly credentialPort: FiscalCredentialPort;
 }
 
@@ -142,7 +148,9 @@ export function buildSelectedFiscalProvider(
     // The non-production default and the explicit dedicated-demo opt-in.
     case undefined:
     case "fake":
-      return createFakeFiscalProvider();
+      return createFakeFiscalProvider({
+        requiresSignedDocument: args.rawFakeRequiresSignedDocument === "true",
+      });
     case "sifen-direct":
       return createSifenDirectFiscalProvider({
         facade: createSifenServiceFacade({
@@ -201,6 +209,7 @@ export class FiscalProviderModule {
               nodeEnv: process.env.NODE_ENV,
               rawFiscalProvider: process.env.FISCAL_PROVIDER,
               rawSifenEnvironment: process.env.SIFEN_ENVIRONMENT,
+              rawFakeRequiresSignedDocument: process.env.FISCAL_FAKE_REQUIRES_SIGNED_DOCUMENT,
               credentialPort,
             }),
           inject: [FISCAL_CREDENTIAL_PORT],

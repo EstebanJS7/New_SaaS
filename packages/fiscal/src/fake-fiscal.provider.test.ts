@@ -92,6 +92,25 @@ describe("FakeFiscalProvider", () => {
     expect((await issue(provider)).outcome).toBe("APPROVED");
   });
 
+  it("asks for a signed document when configured to (FISC-019)", () => {
+    expect(createFakeFiscalProvider({ requiresSignedDocument: true }).requiresSignedDocument).toBe(
+      true
+    );
+  });
+
+  it("echoes the signed document's CDC on approval, and only on approval", async () => {
+    const cdc = "01800123450001001000000122026010210000000011";
+    const document = { cdc, signedXml: "<rDE/>" };
+    const approving = createFakeFiscalProvider({ requiresSignedDocument: true });
+    expect((await approving.issue({ ...request, document })).cdc).toBe(cdc);
+
+    const rejecting = createFakeFiscalProvider({ outcomes: ["REJECTED"] });
+    expect((await rejecting.issue({ ...request, document })).cdc).toBeNull();
+
+    // Without a document there is no identity to echo.
+    expect((await createFakeFiscalProvider().issue(request)).cdc).toBeNull();
+  });
+
   it("consumes the script in order and repeats its last entry", async () => {
     const provider = createFakeFiscalProvider({ outcomes: ["APPROVED", "REJECTED"] });
     expect((await issue(provider)).outcome).toBe("APPROVED");
