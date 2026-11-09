@@ -15,13 +15,13 @@ Runner: vitest (apps/web), Playwright lane for the seam check.
 
 ## Tasks
 
-| ID  | Specs  | Route                                | Status  | Evidence |
-| --- | ------ | ------------------------------------ | ------- | -------- |
-| T1  | S2 (A) | delegated (parallel units, disjoint) | pending |          |
-| T2  | S2 (B) | delegated (parallel units, disjoint) | pending |          |
-| T3  | S2 (C) | delegated (parallel units, disjoint) | pending |          |
-| T4  | S2 (D) | delegated (parallel units, disjoint) | pending |          |
-| T5  | S2     | inline seam check (web suite + lane) | pending |          |
+| ID  | Specs  | Route                                | Status | Evidence                                                         |
+| --- | ------ | ------------------------------------ | ------ | ---------------------------------------------------------------- |
+| T1  | S2 (A) | delegated (parallel units, disjoint) | done   | A: 125 tests                                                     |
+| T2  | S2 (B) | delegated (parallel units, disjoint) | done   | B: 117 tests                                                     |
+| T3  | S2 (C) | delegated (parallel units, disjoint) | done   | C: 80 tests; CSV unchanged                                       |
+| T4  | S2 (D) | delegated (parallel units, disjoint) | done   | D: 782 tests in its folders; 6 page tests updated with approval  |
+| T5  | S2     | inline seam check (web suite + lane) | done   | lint/format/typecheck clean; web 2370/2370; build OK; lane 31/31 |
 
 ## Log
 
