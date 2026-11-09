@@ -483,6 +483,7 @@ interface CatalogItemDto {
   taxRate: { code: string; name: string; rate: string };
   referencePriceAmount: string | null;
   referencePriceCurrency: string | null;
+  unitOfMeasureCode: string | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -590,6 +591,8 @@ const CATALOG_ITEM_DTO_KEYS = [
   "taxRateId",
   "tenantId",
   "tracksStock",
+  // DEC-097 (FISC-020 T9): the declared SIFEN unit, null when undeclared.
+  "unitOfMeasureCode",
   "updatedAt",
 ].sort();
 

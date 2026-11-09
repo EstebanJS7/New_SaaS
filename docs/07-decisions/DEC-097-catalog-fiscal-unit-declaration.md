@@ -15,13 +15,13 @@ prd_change_required: false
 
 Agregar la declaración opcional `unitOfMeasureCode` en las superficies actuales
 de alta/edición/detalle de artículos de catálogo, con un selector mínimo y
-validación del catálogo SIFEN ya implementado. No inventar una unidad por defecto
-ni modificar artículos existentes para acomodar una prueba.
+validación del catálogo SIFEN ya implementado. No inventar una unidad por
+defecto ni modificar artículos existentes para acomodar una prueba.
 
-**Aceptada el 2026-11-09.** El usuario respondió «conytinuemos» a la
-propuesta explícita de agregar este campo opcional en API, formulario y pruebas,
-sin migraciones ni valores predeterminados. Amplía las dos declaraciones
-concretas que DEC-096 había autorizado.
+**Aceptada el 2026-11-09.** El usuario respondió «conytinuemos» a la propuesta
+explícita de agregar este campo opcional en API, formulario y pruebas, sin
+migraciones ni valores predeterminados. Amplía las dos declaraciones concretas
+que DEC-096 había autorizado.
 
 ## Evidencia y causa
 
@@ -38,10 +38,10 @@ configurarse por las rutas existentes y las dos nuevas de FISC-020.
 
 ## Opciones
 
-| Opción | Alcance y consecuencia |
-| --- | --- |
+| Opción                                             | Alcance y consecuencia                                                                                                                                                                                                                                                          |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | A — Agregar la declaración de unidad (recomendada) | Ampliar FISC-020 con el campo opcional en API, proxy/formulario/detalle de catálogo y pruebas. Reutilizar permisos y catálogo SIFEN existentes, preservar omisión/null y aislamiento tenant, sin migraciones ni nuevas dependencias. Permite continuar el gate NCE-001 sin SQL. |
-| B — No ampliar | Conservar el trabajo autorizado de certificado/CSC y DEC-096, pero dejar explícitamente pendientes el gate de navegador y el cierre de las Stories que lo requieren. No usar SQL, un valor implícito ni una aprobación fabricada como sustituto. |
+| B — No ampliar                                     | Conservar el trabajo autorizado de certificado/CSC y DEC-096, pero dejar explícitamente pendientes el gate de navegador y el cierre de las Stories que lo requieren. No usar SQL, un valor implícito ni una aprobación fabricada como sustituto.                                |
 
 ## Límites
 
