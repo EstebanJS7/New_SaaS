@@ -10,7 +10,7 @@ prd_sections: ["§19", "§22"]
 permissions: [sales.complete]
 branch:
 created: 2026-11-03
-updated: 2026-11-03
+updated: 2026-11-09
 ---
 
 # PAY-DET-001 — Datos del pago para la factura electrónica
@@ -46,7 +46,10 @@ datos de cada pago tomados en caja. Cierra [[TD-074]]. Decisión: [[DEC-091]].
       dato inventado.
 - [ ] XSD oficial (CI con `DTE_XSD_REQUIRED=1`).
 - [ ] Ambiente de test de SIFEN (habilitación).
-- [ ] Prueba en navegador del cobro con cada medio.
+- [x] Prueba en navegador del cobro con cada medio
+      (`apps/e2e/specs/payment-detail.spec.ts`). Límite: ninguna lectura del
+      proxy devuelve el detalle guardado; la persistencia se apoya en la guardia
+      de inserción de la base.
 
 ## Base de datos
 
