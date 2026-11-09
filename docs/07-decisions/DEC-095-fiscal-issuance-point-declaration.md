@@ -87,8 +87,11 @@ operador descartable en cuanto exista la pantalla.
    rangos de timbrado (alta y retiro) y punto de expedición, sobre las rutas
    existentes; el proxy web agrega solo esas rutas. El mensaje
    `CREDIT_NOTE_NO_RANGE_MESSAGE` pasa a remitir a una pantalla real.
-3. **Certificado de firma.** Subida y retiro del material de firma en su propia
-   entrega y revisión: maneja secretos (riesgo alto, ítem 2).
+3. **Certificado de firma y CSC.** Subida y retiro del material de firma, y
+   carga del CSC (código de seguridad del contribuyente), que ninguna ruta de la
+   API escribe hoy y que una factura electrónica necesita para quedar aprobada.
+   Ambos son secretos del contribuyente: van en su propia entrega y revisión
+   (riesgo alto, ítem 2). Ampliación aceptada por el usuario el 2026-11-09.
 
 ## Impacto
 
