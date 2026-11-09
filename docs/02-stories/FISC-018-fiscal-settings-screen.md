@@ -102,9 +102,29 @@ Pendiente:
 - NCE-001 en navegador: aprobar la factura electrónica exige el certificado de
   firma (solo por la API; su pantalla es la entrega 3 de [[DEC-095]]) y el CSC,
   que ninguna ruta escribe; el carril no lo falsea con SQL.
-- La API no devuelve el responsable de la emisión ni ciudad, teléfono, correo y
-  complementos del establecimiento: la pantalla pide reescribirlos al guardar,
-  porque el `PUT` reemplaza todo.
+
+2026-11-09 — correcciones de la revisión de la entrega 2:
+
+- Claves desconocidas: los cuerpos de perfil y establecimiento, y cada objeto
+  anidado (`responsibleIssuer`, `activities[]`, `district`), son `strict()` en
+  la API; una clave desconocida es `400 VALIDATION_FAILED`. La pantalla solo
+  envía claves aceptadas.
+- La API devuelve el responsable de la emisión y ciudad, teléfono, correo,
+  distrito, complementos y sucursal del establecimiento (aditivo, por los DTO);
+  los formularios de edición los precargan y ya no piden reescribirlos.
+  Clasificación en `docs/05-modules/Fiscal.md`.
+- Proxy: `PUT` sobre una forma válida de `fiscal-documents` vuelve a responder
+  `405` con `Allow`; rutas desconocidas siguen en `404`. Nuevos tests: barra
+  final y barra codificada en un id rechazadas (`400`), UUID en mayúsculas
+  aceptado.
+- RED: 6 tests de la API (zod, lecturas del servicio, DTO) y 3 de la web
+  (precarga del perfil, precarga del establecimiento, `405`) fallaban; GREEN
+  después.
+- `vitest run src/fiscal src/rbac` (api): 21 archivos, 286 tests, 0 fallidos.
+- `vitest run "src/app/(app)/app/settings/fiscal" src/app/api/fiscal` (web): 4
+  archivos, 51 tests, 0 fallidos.
+- `tsc --noEmit` (api y web), `eslint` y `prettier --check` sobre los archivos
+  cambiados: sin errores.
 
 ## Decisiones / ADRs
 

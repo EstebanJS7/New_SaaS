@@ -478,6 +478,52 @@ describe("the reads", () => {
     expect((await service.listEstablishments())[0]?.code).toBe("001");
     expect((await service.listRanges())[0]?.timbradoNumber).toBe("12345678");
   });
+
+  // FISC-018 review: the edit forms prefill what the PUT replaces, so the reads
+  // return every saved field, not a subset the operator has to retype.
+  it("returns the responsible issuer as one object, or null while none is declared", async () => {
+    expect((await buildService(client).service.getProfile()).responsibleIssuer).toBeNull();
+    const reader = client as unknown as {
+      fiscalEmitterProfile: { findUnique: (args: unknown) => Promise<Record<string, unknown>> };
+    };
+    const profileRow = await reader.fiscalEmitterProfile.findUnique({});
+    const { client: withIssuer } = buildClient({
+      fiscalEmitterProfile: {
+        findUnique: () =>
+          Promise.resolve({
+            ...profileRow,
+            responsibleIssuerType: 1,
+            responsibleIssuerTypeName: "Cédula paraguaya",
+            responsibleIssuerId: "1234567",
+            responsibleIssuerName: "Ana Pérez",
+            responsibleIssuerRole: "Contadora",
+          }),
+        create: () => Promise.resolve(null),
+        update: () => Promise.resolve(null),
+      },
+    });
+    expect((await buildService(withIssuer).service.getProfile()).responsibleIssuer).toEqual({
+      type: 1,
+      typeName: "Cédula paraguaya",
+      id: "1234567",
+      name: "Ana Pérez",
+      role: "Contadora",
+    });
+  });
+
+  it("returns every saved establishment field", async () => {
+    const [view] = await buildService(client).service.listEstablishments();
+    expect(view).toMatchObject({
+      addressComplement1: null,
+      addressComplement2: null,
+      districtCode: null,
+      districtName: null,
+      cityName: "ASUNCION",
+      phone: "021123456",
+      email: "fiscal@vetsur.example",
+      branchName: null,
+    });
+  });
 });
 
 /**

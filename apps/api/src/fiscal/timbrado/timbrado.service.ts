@@ -138,6 +138,8 @@ export interface EmitterProfileView {
   readonly regimeCode: number | null;
   readonly legalName: string;
   readonly tradeName: string | null;
+  /** `gRespDE`: the five columns together, or `null` while none is declared. */
+  readonly responsibleIssuer: ResponsibleIssuerView | null;
   readonly transactionType: number | null;
   readonly taxType: number;
   readonly emissionType: number;
@@ -146,6 +148,18 @@ export interface EmitterProfileView {
   readonly issuancePoint: IssuancePointView | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
+}
+
+/**
+ * The responsible issuer (`gRespDE`). Its identity document number is personal
+ * data (CONFIDENTIAL): returned only behind `fiscal.profile.manage`, never logged.
+ */
+export interface ResponsibleIssuerView {
+  readonly type: number;
+  readonly typeName: string;
+  readonly id: string;
+  readonly name: string;
+  readonly role: string;
 }
 
 /** A declared issuance point, with its establishment's code for display. */
@@ -169,9 +183,16 @@ export interface EstablishmentView {
   readonly code: string;
   readonly addressLine: string;
   readonly houseNumber: number;
+  readonly addressComplement1: string | null;
+  readonly addressComplement2: string | null;
   readonly departmentCode: number;
   readonly districtCode: number | null;
+  readonly districtName: string | null;
   readonly cityCode: number;
+  readonly cityName: string;
+  readonly phone: string;
+  readonly email: string;
+  readonly branchName: string | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -1131,6 +1152,7 @@ function toProfileView(
     regimeCode: row.regimeCode,
     legalName: row.legalName,
     tradeName: row.tradeName,
+    responsibleIssuer: toResponsibleIssuerView(row),
     transactionType: row.transactionType,
     taxType: row.taxType,
     emissionType: row.emissionType,
@@ -1141,15 +1163,36 @@ function toProfileView(
   };
 }
 
+/** The five `gRespDE` columns are all-or-nothing; anything less reads as none. */
+function toResponsibleIssuerView(row: EmitterProfileRow): ResponsibleIssuerView | null {
+  const {
+    responsibleIssuerType: type,
+    responsibleIssuerTypeName: typeName,
+    responsibleIssuerId: id,
+    responsibleIssuerName: name,
+    responsibleIssuerRole: role,
+  } = row;
+  if (type === null || typeName === null || id === null || name === null || role === null)
+    return null;
+  return { type, typeName, id, name, role };
+}
+
 function toEstablishmentView(row: EstablishmentRow): EstablishmentView {
   return {
     id: row.id,
     code: row.code,
     addressLine: row.addressLine,
     houseNumber: row.houseNumber,
+    addressComplement1: row.addressComplement1,
+    addressComplement2: row.addressComplement2,
     departmentCode: row.departmentCode,
     districtCode: row.districtCode,
+    districtName: row.districtName,
     cityCode: row.cityCode,
+    cityName: row.cityName,
+    phone: row.phone,
+    email: row.email,
+    branchName: row.branchName,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
