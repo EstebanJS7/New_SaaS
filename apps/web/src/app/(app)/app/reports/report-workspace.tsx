@@ -72,7 +72,7 @@ export interface ReportWorkspaceProps {
  * The surface renders every state explicitly: loading, permission-denied, error,
  * empty (through {@link ReportEmptyState}, which explains the fixable ones) and
  * success. It never computes a number: each cell is an API value, and a decimal
- * string is printed verbatim.
+ * string is grouped for es-PY textually, never through `Number()`.
  */
 export function ReportWorkspace({ reportCode, permissions }: ReportWorkspaceProps): JSX.Element {
   const definition = reportDefinition(reportCode);
@@ -131,7 +131,7 @@ export function ReportWorkspace({ reportCode, permissions }: ReportWorkspaceProp
     if (nextFrom.length === 0 || nextTo.length === 0) {
       // Half a range is ambiguous, and the API refuses it: an implied "today"
       // would be this surface's guess about a period.
-      setControlNotice("A custom range needs both a start date and an end date.");
+      setControlNotice("Un rango personalizado necesita una fecha de inicio y una fecha de fin.");
       return;
     }
     setControlNotice(null);
@@ -147,7 +147,7 @@ export function ReportWorkspace({ reportCode, permissions }: ReportWorkspaceProp
       parsed > REPORT_HORIZON_MAX_DAYS
     ) {
       setControlNotice(
-        `The horizon must be a whole number of days between ${REPORT_HORIZON_MIN_DAYS} and ${REPORT_HORIZON_MAX_DAYS}.`
+        `El horizonte debe ser un número entero de días entre ${REPORT_HORIZON_MIN_DAYS} y ${REPORT_HORIZON_MAX_DAYS}.`
       );
       return;
     }
@@ -173,7 +173,7 @@ export function ReportWorkspace({ reportCode, permissions }: ReportWorkspaceProp
           <>
             <div className="space-y-2">
               <label htmlFor="report-period" className="text-sm font-medium">
-                Period
+                Período
               </label>
               <select
                 id="report-period"
@@ -202,14 +202,14 @@ export function ReportWorkspace({ reportCode, permissions }: ReportWorkspaceProp
                     {REPORT_PERIOD_PRESET_LABELS[preset]}
                   </option>
                 ))}
-                <option value={CUSTOM_RANGE_OPTION}>Custom range</option>
+                <option value={CUSTOM_RANGE_OPTION}>Rango personalizado</option>
               </select>
             </div>
             {periodMode === "range" && (
               <>
                 <div className="space-y-2">
                   <label htmlFor="report-period-from" className="text-sm font-medium">
-                    From
+                    Desde
                   </label>
                   <input
                     id="report-period-from"
@@ -221,7 +221,7 @@ export function ReportWorkspace({ reportCode, permissions }: ReportWorkspaceProp
                 </div>
                 <div className="space-y-2">
                   <label htmlFor="report-period-to" className="text-sm font-medium">
-                    To
+                    Hasta
                   </label>
                   <input
                     id="report-period-to"
@@ -239,7 +239,7 @@ export function ReportWorkspace({ reportCode, permissions }: ReportWorkspaceProp
         {definition.queryShape === "due" && (
           <div className="space-y-2">
             <label htmlFor="report-horizon" className="text-sm font-medium">
-              Horizon (days)
+              Horizonte (días)
             </label>
             <input
               id="report-horizon"
@@ -257,7 +257,7 @@ export function ReportWorkspace({ reportCode, permissions }: ReportWorkspaceProp
         {showBranchFilter && (
           <div className="space-y-2">
             <label htmlFor="report-branch" className="text-sm font-medium">
-              Branch
+              Sucursal
             </label>
             <select
               id="report-branch"
@@ -265,10 +265,10 @@ export function ReportWorkspace({ reportCode, permissions }: ReportWorkspaceProp
               value={branchChoice}
               onChange={(event) => setBranchChoice(event.target.value)}
             >
-              <option value={ALL_BRANCHES_OPTION}>All branches</option>
+              <option value={ALL_BRANCHES_OPTION}>Todas las sucursales</option>
               {branchOptions.map((branch) => (
                 <option key={branch.id} value={branch.id}>
-                  {branch.isActive ? branch.name : `${branch.name} (inactive)`}
+                  {branch.isActive ? branch.name : `${branch.name} (inactiva)`}
                 </option>
               ))}
             </select>
@@ -278,8 +278,8 @@ export function ReportWorkspace({ reportCode, permissions }: ReportWorkspaceProp
         {definition.queryShape === "none" && (
           <p data-testid="report-no-query" className="text-sm text-muted-foreground">
             {showBranchFilter
-              ? "This report is a current-state view: it takes no period."
-              : "This report is a current-state view: it takes no period and no other parameter."}
+              ? "Este informe muestra el estado actual: no usa período."
+              : "Este informe muestra el estado actual: no usa período ni otro parámetro."}
           </p>
         )}
 
@@ -292,7 +292,7 @@ export function ReportWorkspace({ reportCode, permissions }: ReportWorkspaceProp
               API's filename with one derived from the URL.
             */}
             <a data-testid="report-export" href={reportExportPath(reportCode, selection, branchId)}>
-              Export CSV
+              Exportar CSV
             </a>
           </Button>
         )}
@@ -306,7 +306,7 @@ export function ReportWorkspace({ reportCode, permissions }: ReportWorkspaceProp
 
       {query.isLoading && (
         <p data-testid="report-loading" className="text-sm text-muted-foreground">
-          Loading report...
+          Cargando informe...
         </p>
       )}
 
@@ -316,7 +316,7 @@ export function ReportWorkspace({ reportCode, permissions }: ReportWorkspaceProp
           data-testid="report-permission-denied"
           className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
         >
-          <p className="font-medium">Reports are not available to this account</p>
+          <p className="font-medium">Los informes no están disponibles para esta cuenta</p>
           <p>{userFacingReportError(readError)}</p>
         </div>
       )}
@@ -327,7 +327,7 @@ export function ReportWorkspace({ reportCode, permissions }: ReportWorkspaceProp
           data-testid="report-error"
           className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
         >
-          <p className="font-medium">The report could not be loaded</p>
+          <p className="font-medium">No se pudo cargar el informe</p>
           {/* The API's own sentence, verbatim: an over-long period explains
               itself ("spans more than 366 days") and a generic failure would
               throw that explanation away. */}

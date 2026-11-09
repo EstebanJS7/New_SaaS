@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReportWorkspace } from "./report-workspace";
 import type { ReportResponse } from "./reports-api";
+import { formatEsPyDateOnly, formatEsPyInstant } from "@/lib/es-py-format";
 
 /**
  * The report view ([[REP-008]], [[DEC-062]], [[DEC-063]], [[DEC-065]]).
@@ -12,9 +13,9 @@ import type { ReportResponse } from "./reports-api";
  * 1. **The query.** Controls derive from the report's OWN contract, so a period
  *    report can send a preset or a complete range, a due report can send a
  *    horizon and no period, and `low-stock` sends nothing at all.
- * 2. **The numbers.** A fixed-scale decimal string is printed verbatim — the
- *    surface never converts `"1234.50"` into `1234.5` — and a total is never
- *    computed here ([[DEC-062]]: one aggregation path).
+ * 2. **The numbers.** A fixed-scale decimal string is grouped for es-PY
+ *    textually — the surface never converts `"1234.50"` into `1234.5` — and a
+ *    total is never computed here ([[DEC-062]]: one aggregation path).
  * 3. **Every state**, including the three empty reports that are empty for a
  *    FIXABLE reason and therefore must say which fact is missing and link to where
  *    it is entered.
@@ -132,15 +133,15 @@ describe("ReportWorkspace · the period query", () => {
     renderWorkspace("sales-by-period");
 
     await screen.findByTestId("report-table");
-    expect(screen.getByRole("columnheader", { name: "Date" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "Sales" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "Gross" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Fecha" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Ventas" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Bruto" })).toBeInTheDocument();
 
     // The opening selection is the preset the select shows, so the first request
     // and the visible control cannot disagree.
     expect(requestedUrls(fetchMock)).toEqual(["/api/reports/sales-by-period?preset=last30Days"]);
 
-    fireEvent.change(screen.getByLabelText("Period"), { target: { value: "last7Days" } });
+    fireEvent.change(screen.getByLabelText("Período"), { target: { value: "last7Days" } });
 
     await screen.findByTestId("report-table");
     expect(requestedUrls(fetchMock)).toContain("/api/reports/sales-by-period?preset=last7Days");
@@ -151,13 +152,15 @@ describe("ReportWorkspace · the period query", () => {
     renderWorkspace("sales-by-period");
     await screen.findByTestId("report-table");
 
-    fireEvent.change(screen.getByLabelText("Period"), { target: { value: "custom" } });
-    expect(screen.getByLabelText("From")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Período"), { target: { value: "custom" } });
+    expect(screen.getByLabelText("Desde")).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-06-10" } });
+    fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2026-06-10" } });
     // Half a range is ambiguous and the API refuses it, so it is not sent: the
     // surface says what is missing instead of asking for a period it cannot name.
-    expect(screen.getByTestId("report-control-notice")).toHaveTextContent("both a start date");
+    expect(screen.getByTestId("report-control-notice")).toHaveTextContent(
+      "Un rango personalizado necesita una fecha de inicio y una fecha de fin."
+    );
     expect(
       requestedUrls(fetchMock).some((url) => url === "/api/reports/sales-by-period?from=2026-06-10")
     ).toBe(false);
@@ -165,7 +168,7 @@ describe("ReportWorkspace · the period query", () => {
       requestedUrls(fetchMock).some((url) => url.includes("from=") && !url.includes("to="))
     ).toBe(false);
 
-    fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-06-11" } });
+    fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: "2026-06-11" } });
 
     await screen.findByTestId("report-table");
     expect(requestedUrls(fetchMock)).toContain(
@@ -178,11 +181,11 @@ describe("ReportWorkspace · the period query", () => {
     renderWorkspace("vaccines-due");
 
     await screen.findByTestId("report-empty-due");
-    expect(screen.getByLabelText("Horizon (days)")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Period")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Horizonte (días)")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Período")).not.toBeInTheDocument();
     expect(requestedUrls(fetchMock)).toEqual(["/api/reports/vaccines-due?horizonDays=30"]);
 
-    fireEvent.change(screen.getByLabelText("Horizon (days)"), { target: { value: "60" } });
+    fireEvent.change(screen.getByLabelText("Horizonte (días)"), { target: { value: "60" } });
 
     await screen.findByTestId("report-empty-due");
     expect(requestedUrls(fetchMock)).toContain("/api/reports/vaccines-due?horizonDays=60");
@@ -193,8 +196,8 @@ describe("ReportWorkspace · the period query", () => {
     renderWorkspace("low-stock");
 
     await screen.findByTestId("report-empty-low-stock-thresholds");
-    expect(screen.queryByLabelText("Period")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Horizon (days)")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Período")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Horizonte (días)")).not.toBeInTheDocument();
     expect(screen.getByTestId("report-no-query")).toBeInTheDocument();
     // `low-stock` refuses every query key, so the request carries none.
     expect(requestedUrls(fetchMock)).toEqual(["/api/reports/low-stock"]);
@@ -211,7 +214,7 @@ describe("ReportWorkspace · the export action", () => {
       "/api/reports/sales-by-period/export?preset=last30Days"
     );
 
-    fireEvent.change(screen.getByLabelText("Period"), { target: { value: "thisMonth" } });
+    fireEvent.change(screen.getByLabelText("Período"), { target: { value: "thisMonth" } });
 
     await screen.findByTestId("report-table");
     expect(screen.getByTestId("report-export").getAttribute("href")).toBe(
@@ -250,22 +253,28 @@ describe("ReportWorkspace · the export action", () => {
   });
 });
 
-describe("ReportWorkspace · decimal strings render verbatim", () => {
-  it("prints 1234.50 as 1234.50 and never as 1234.5", async () => {
+describe("ReportWorkspace · cells read as es-PY without changing the value", () => {
+  it("groups 1234.50 as 1.234,50 — never through Number(), so never 1.234,5", async () => {
     installFetch(() => jsonResponse(SALES_BY_PERIOD));
     renderWorkspace("sales-by-period");
 
     await screen.findByTestId("report-table");
 
-    // A fixed-scale decimal string IS the value. `Number()` here would print a
-    // different number at a scale the report never chose.
-    expect(screen.getByText("1234.50")).toBeInTheDocument();
-    expect(screen.queryByText("1234.5")).not.toBeInTheDocument();
-    // A count is a number in the DTO and may be printed as one.
-    expect(screen.getByText("2")).toBeInTheDocument();
+    // A fixed-scale decimal string IS the value: it is grouped textually, so the
+    // significant fraction survives and no float ever touches it.
+    expect(screen.getByTestId("report-cell-gross")).toHaveTextContent(/^1\.234,50$/);
+    expect(screen.queryByText("1.234,5")).not.toBeInTheDocument();
+    expect(screen.queryByText("1234.50")).not.toBeInTheDocument();
+    expect(screen.getByTestId("report-cell-net")).toHaveTextContent(/^1\.000$/);
+    // A count is a number in the DTO and is printed as one.
+    expect(screen.getByTestId("report-cell-saleCount")).toHaveTextContent(/^2$/);
+    // A tenant calendar day reads as a local date.
+    expect(screen.getByTestId("report-cell-bucketDate")).toHaveTextContent(
+      formatEsPyDateOnly("2026-06-10")
+    );
   });
 
-  it("prints a negative and a zero-scale decimal exactly as the API sent them", async () => {
+  it("prints a negative and a zero decimal with their sign, and labels the movement kinds", async () => {
     installFetch(() =>
       jsonResponse({
         report: "cash-movements",
@@ -274,16 +283,106 @@ describe("ReportWorkspace · decimal strings render verbatim", () => {
         rows: [
           { type: "REFUND", direction: null, movementCount: 1, signedAmount: "-10.00" },
           { type: "SALE", direction: null, movementCount: 4, signedAmount: "0.00" },
+          { type: "ADJUSTMENT", direction: "INCREASE", movementCount: 1250, signedAmount: "5.50" },
         ],
       })
     );
     renderWorkspace("cash-movements");
 
     await screen.findByTestId("report-table");
-    expect(screen.getByText("-10.00")).toBeInTheDocument();
-    expect(screen.getByText("0.00")).toBeInTheDocument();
+    expect(
+      screen.getAllByTestId("report-cell-signedAmount").map((cell) => cell.textContent)
+    ).toEqual(["-10", "0", "5,50"]);
+    expect(screen.getAllByTestId("report-cell-type").map((cell) => cell.textContent)).toEqual([
+      "Devolución",
+      "Venta",
+      "Ajuste",
+    ]);
     // A null direction is "no value", not the word null and not a zero.
-    expect(screen.getAllByText("—")).toHaveLength(2);
+    expect(screen.getAllByTestId("report-cell-direction").map((cell) => cell.textContent)).toEqual([
+      "—",
+      "—",
+      "Aumento",
+    ]);
+    expect(
+      screen.getAllByTestId("report-cell-movementCount").map((cell) => cell.textContent)
+    ).toEqual(["1", "4", "1.250"]);
+  });
+
+  it("shows instants in the report's own zone and labels the due status", async () => {
+    installFetch(() =>
+      jsonResponse({
+        report: "vaccines-due",
+        asOfDate: "2026-06-11",
+        timeZone: "America/Asuncion",
+        horizonDays: 30,
+        overdueCount: 1,
+        upcomingCount: 0,
+        rows: [
+          {
+            patientId: "44444444-4444-4444-8444-444444444444",
+            patientName: "Firulais",
+            vaccine: "Antirrábica",
+            administeredAt: "2025-06-01T15:00:00.000Z",
+            nextDueAt: "2026-06-01T02:30:00.000Z",
+            status: "overdue",
+          },
+        ],
+      })
+    );
+    renderWorkspace("vaccines-due");
+
+    await screen.findByTestId("report-table");
+    expect(screen.getByRole("columnheader", { name: "Vence" })).toBeInTheDocument();
+    // 02:30 UTC on 1 June is still 31 May in Asunción: the cell follows the tenant
+    // zone the API classified the row in, not UTC.
+    expect(screen.getByTestId("report-cell-nextDueAt")).toHaveTextContent(
+      formatEsPyInstant("2026-06-01T02:30:00.000Z", "America/Asuncion")
+    );
+    expect(screen.getByTestId("report-cell-nextDueAt")).toHaveTextContent(/^31 may/);
+    expect(screen.getByTestId("report-cell-status")).toHaveTextContent(/^Vencida$/);
+    expect(screen.getByTestId("report-cell-patientName")).toHaveTextContent(/^Firulais$/);
+  });
+
+  it("labels payment methods and catalog kinds, and leaves an unknown literal visible", async () => {
+    installFetch(() =>
+      jsonResponse({
+        report: "payment-methods",
+        period: PERIOD,
+        currency: "PYG",
+        totalGross: "1000.00",
+        rows: [
+          { method: "BANK_TRANSFER", paymentCount: 1, amount: "600.00", shareOfGross: "0.6000" },
+          { method: "CRYPTO", paymentCount: 1, amount: "400.00", shareOfGross: "0.4000" },
+        ],
+      })
+    );
+    renderWorkspace("payment-methods");
+
+    await screen.findByTestId("report-table");
+    expect(screen.getAllByTestId("report-cell-method").map((cell) => cell.textContent)).toEqual([
+      "Transferencia bancaria",
+      "CRYPTO",
+    ]);
+    expect(
+      screen.getAllByTestId("report-cell-shareOfGross").map((cell) => cell.textContent)
+    ).toEqual(["0,6000", "0,4000"]);
+  });
+
+  it("keeps the CSV export on the API's own route: display formatting never reaches it", async () => {
+    installFetch(() => jsonResponse(SALES_BY_PERIOD));
+    renderWorkspace("sales-by-period", { permissions: ["reports.read", "reports.export"] });
+
+    await screen.findByTestId("report-table");
+    const exportLink = screen.getByTestId("report-export");
+    expect(exportLink).toHaveTextContent(/^Exportar CSV$/);
+    // The file is built by the API from the raw values; the link carries only the
+    // query, byte for byte what it carried before the table was localized, and no
+    // `download` attribute that could rename or rewrite it.
+    expect(exportLink.getAttribute("href")).toBe(
+      "/api/reports/sales-by-period/export?preset=last30Days"
+    );
+    expect(exportLink).not.toHaveAttribute("download");
   });
 });
 
@@ -292,7 +391,7 @@ describe("ReportWorkspace · every state", () => {
     installPendingFetch();
     renderWorkspace("sales-by-period");
 
-    expect(screen.getByTestId("report-loading")).toHaveTextContent("Loading report");
+    expect(screen.getByTestId("report-loading")).toHaveTextContent("Cargando informe...");
   });
 
   it("shows the permission-denied state when the API refuses the read", async () => {
@@ -342,7 +441,7 @@ describe("ReportWorkspace · the empty states that have a fix", () => {
     renderWorkspace("low-stock");
 
     const empty = await screen.findByTestId("report-empty-low-stock-thresholds");
-    expect(empty).toHaveTextContent("No item has a low-stock threshold yet");
+    expect(empty).toHaveTextContent("Ningún ítem tiene un umbral de stock bajo todavía");
     // The link is the actionable half: the missing fact is entered there.
     expect(screen.getByTestId("report-empty-action")).toHaveAttribute("href", "/app/catalog");
   });
@@ -352,7 +451,7 @@ describe("ReportWorkspace · the empty states that have a fix", () => {
     renderWorkspace("low-stock");
 
     const empty = await screen.findByTestId("report-empty-low-stock-clear");
-    expect(empty).toHaveTextContent("No item is at or below its threshold");
+    expect(empty).toHaveTextContent("Ningún ítem está en su umbral o por debajo");
     // Nothing to fix here, so there is no link to a fix.
     expect(screen.queryByTestId("report-empty-action")).not.toBeInTheDocument();
   });
@@ -362,8 +461,12 @@ describe("ReportWorkspace · the empty states that have a fix", () => {
     renderWorkspace("vaccines-due");
 
     const empty = await screen.findByTestId("report-empty-due");
-    expect(empty).toHaveTextContent("No vaccination has a due date");
-    expect(empty).toHaveTextContent("2026-06-11");
+    expect(empty).toHaveTextContent("Ninguna vacunación tiene fecha de vencimiento");
+    // The as-of day reads as a local date, not as the wire's ISO form.
+    expect(empty).toHaveTextContent(
+      `dentro de 30 días desde el ${formatEsPyDateOnly("2026-06-11")}`
+    );
+    expect(empty).not.toHaveTextContent("2026-06-11");
     expect(screen.getByTestId("report-empty-action")).toHaveAttribute("href", "/app/patients");
   });
 
@@ -372,7 +475,7 @@ describe("ReportWorkspace · the empty states that have a fix", () => {
     renderWorkspace("deworming-due");
 
     const empty = await screen.findByTestId("report-empty-due");
-    expect(empty).toHaveTextContent("No deworming treatment has a due date");
+    expect(empty).toHaveTextContent("Ninguna desparasitación tiene fecha de vencimiento");
     expect(screen.getByTestId("report-empty-action")).toHaveAttribute("href", "/app/patients");
   });
 
@@ -381,11 +484,13 @@ describe("ReportWorkspace · the empty states that have a fix", () => {
     renderWorkspace("sales-by-period");
 
     const empty = await screen.findByTestId("report-empty-period");
-    expect(empty).toHaveTextContent("Nothing was recorded in this period");
+    expect(empty).toHaveTextContent("No se registró nada en este período");
     // The echo comes from the response, so it is the range that answered — not the
     // range the browser believes it asked for.
-    expect(empty).toHaveTextContent("2026-05-13");
-    expect(empty).toHaveTextContent("2026-06-11");
+    expect(empty).toHaveTextContent(
+      `del ${formatEsPyDateOnly("2026-05-13")} al ${formatEsPyDateOnly("2026-06-11")} (America/Asuncion)`
+    );
+    expect(empty).not.toHaveTextContent("2026-05-13");
     expect(screen.queryByTestId("report-table")).not.toBeInTheDocument();
   });
 });
@@ -403,8 +508,8 @@ describe("ReportWorkspace · the branch filter (MB-004)", () => {
     );
     renderWorkspace("sales-by-period");
 
-    const select = await screen.findByLabelText("Branch");
-    expect(screen.getByRole("option", { name: "Vieja (inactive)" })).toBeInTheDocument();
+    const select = await screen.findByLabelText("Sucursal");
+    expect(screen.getByRole("option", { name: "Vieja (inactiva)" })).toBeInTheDocument();
     expect(requestedUrls(fetchMock)).toEqual(["/api/reports/sales-by-period?preset=last30Days"]);
 
     fireEvent.change(select, { target: { value: BRANCHES[1]?.id } });
@@ -425,8 +530,8 @@ describe("ReportWorkspace · the branch filter (MB-004)", () => {
         : jsonResponse(SALES_BY_PERIOD)
     );
     renderWorkspace("sales-by-period");
-    await screen.findByRole("columnheader", { name: "Gross" });
-    expect(screen.queryByLabelText("Branch")).not.toBeInTheDocument();
+    await screen.findByRole("columnheader", { name: "Bruto" });
+    expect(screen.queryByLabelText("Sucursal")).not.toBeInTheDocument();
   });
 
   it("never asks for branches on a veterinary report", async () => {

@@ -40,13 +40,13 @@ export interface ReportDefinition {
 export const REPORT_GROUPS: readonly ReportGroup[] = [
   {
     id: "core",
-    title: "Core",
-    description: "Sales, cash, purchases and inventory — the business every vertical shares.",
+    title: "Negocio",
+    description: "Ventas, caja, compras e inventario: la gestión que comparte todo el negocio.",
   },
   {
     id: "veterinary",
-    title: "Veterinary",
-    description: "Clinical activity and the patients it belongs to.",
+    title: "Clínica veterinaria",
+    description: "La actividad clínica y los pacientes a los que corresponde.",
   },
 ];
 
@@ -59,64 +59,70 @@ export const REPORT_GROUPS: readonly ReportGroup[] = [
  */
 const REPORT_TEXT: Readonly<Record<ReportCode, Omit<ReportDefinition, "code" | "queryShape">>> = {
   "sales-by-period": {
-    title: "Sales by period",
-    description: "Completed sales per day: count, net, tax and gross, with the period totals.",
+    title: "Ventas por período",
+    description:
+      "Ventas completadas por día: cantidad, neto, impuesto y bruto, con los totales del período.",
     group: "core",
   },
   "payment-methods": {
-    title: "Payment methods",
-    description: "How the period's money arrived, per tender, with its share of the gross.",
+    title: "Medios de pago",
+    description:
+      "Cómo ingresó el dinero del período, por medio de pago, con su proporción del bruto.",
     group: "core",
   },
   "sales-by-product-service": {
-    title: "Sales by product and service",
-    description: "Which catalog items earned the money, with quantity, net, tax and gross.",
+    title: "Ventas por producto y servicio",
+    description:
+      "Qué ítems del catálogo generaron el dinero, con cantidad, neto, impuesto y bruto.",
     group: "core",
   },
   "cash-sessions": {
-    title: "Cash sessions",
+    title: "Sesiones de caja",
     description:
-      "Every drawer that closed in the period: opening, expected, counted and difference.",
+      "Cada caja que se cerró en el período: monto inicial, esperado, contado y diferencia.",
     group: "core",
   },
   "cash-movements": {
-    title: "Cash movements",
-    description: "The period's cash ledger, rolled up by kind with the sign convention resolved.",
+    title: "Movimientos de caja",
+    description: "Los movimientos de caja del período, agrupados por tipo y con el signo resuelto.",
     group: "core",
   },
   purchases: {
-    title: "Purchases",
-    description: "The purchases received in the period, with their supplier and quantities.",
+    title: "Compras",
+    description: "Las compras recibidas en el período, con su proveedor y sus cantidades.",
     group: "core",
   },
   stock: {
     title: "Stock",
-    description: "Each tracked item's current balance beside what moved in and out in the period.",
+    description:
+      "El saldo actual de cada ítem controlado junto a lo que entró y salió en el período.",
     group: "core",
   },
   "low-stock": {
-    title: "Low stock",
-    description: "Items at or below their own low-stock threshold, most depleted first.",
+    title: "Stock bajo",
+    description: "Ítems en su umbral de stock bajo o por debajo, primero los más agotados.",
     group: "core",
   },
   consultations: {
-    title: "Consultations",
-    description: "Consultations closed per day, with amendments counted separately.",
+    title: "Consultas",
+    description: "Consultas cerradas por día, con las enmiendas contadas aparte.",
     group: "veterinary",
   },
   "new-patients": {
-    title: "New patients",
-    description: "Patients registered per day in the period, deactivated ones included.",
+    title: "Pacientes nuevos",
+    description: "Pacientes registrados por día en el período, incluidos los desactivados.",
     group: "veterinary",
   },
   "vaccines-due": {
-    title: "Vaccines due",
-    description: "Vaccinations overdue or due inside the horizon, longest overdue first.",
+    title: "Vacunas por vencer",
+    description:
+      "Vacunaciones vencidas o que vencen dentro del horizonte, primero las más atrasadas.",
     group: "veterinary",
   },
   "deworming-due": {
-    title: "Deworming due",
-    description: "Deworming treatments overdue or due inside the horizon, longest overdue first.",
+    title: "Desparasitaciones por vencer",
+    description:
+      "Desparasitaciones vencidas o que vencen dentro del horizonte, primero las más atrasadas.",
     group: "veterinary",
   },
 };

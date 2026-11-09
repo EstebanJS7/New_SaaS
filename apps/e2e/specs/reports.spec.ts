@@ -191,9 +191,9 @@ test.describe("the staff reporting surfaces", () => {
 
     // ---- its period changed -------------------------------------------------
 
-    await page.getByLabel("Period").selectOption("custom");
-    await page.getByLabel("From").fill(EXPORT_FROM);
-    await page.getByLabel("To").fill(EXPORT_TO);
+    await page.getByLabel("Período", { exact: true }).selectOption("custom");
+    await page.getByLabel("Desde", { exact: true }).fill(EXPORT_FROM);
+    await page.getByLabel("Hasta", { exact: true }).fill(EXPORT_TO);
 
     // The export link carries the very query the table is showing, so this is also
     // the surface's own statement that the range was applied.
