@@ -152,3 +152,8 @@ vitest (`pnpm test`, `test:live-pg`), Playwright lane.
 - L14 (2026-11-09, user to Claude session): "estaba trabajando otra herramienta,
   ve los cambios y continuemos". Ownership: single writer from here; the other
   tool stays paused.
+- L15: NCE-001 browser green end to end (worker SIGNING→SENDING fix for
+  providers without a signed document; fake echoes the approved CDC; opt-in
+  FISCAL_FAKE_REQUIRES_SIGNED_DOCUMENT for the lane worker; CI lane fetches the
+  official XSDs). Spec 1/1, lane 31/31. Independent verification of delivery 3 +
+  FISC-020: no blockers. Remaining external: SIFEN test environment.

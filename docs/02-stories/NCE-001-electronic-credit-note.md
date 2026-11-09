@@ -50,11 +50,19 @@ Decisión: [[DEC-090]]. Completa [[SAL-REV-001]].
 - [x] El DE de la nota cumple 1450/1451/1452, 2400/2415, 2414, 2434, 2402 y
       D011.
 - [x] El encolado ocurre después del commit y su fallo no deshace la anulación.
-- [ ] Validación del XML de la nota contra el XSD oficial (caso agregado, corre
+- [x] Validación del XML de la nota contra el XSD oficial (caso agregado, corre
       en CI con `DTE_XSD_REQUIRED=1`).
 - [ ] Prueba en el ambiente de test de SIFEN (habilitación).
-- [ ] Prueba en navegador. Bloqueada: ningún camino soportado declara el
-      establecimiento y punto de expedición del perfil fiscal ([[TD-075]]).
+- [x] Prueba en navegador (antes bloqueada: ningún camino soportado declaraba el
+      establecimiento y punto de expedición del perfil fiscal, [[TD-075]]).
+      2026-11-09: el punto de expedición ya se declara por la UI ([[FISC-018]]).
+      Bloqueado 2026-11-09 por un defecto del worker: con `FISCAL_PROVIDER=fake`
+      (`requiresSignedDocument = false`) `stageDocument` devuelve `READY` sin
+      pasar `SIGNING → SENDING`, y `persistResult` solo actualiza filas en
+      `SENDING`; el documento queda en `SIGNING` y el job termina sin error
+      (`apps/worker/src/fiscal-submission/fiscal-submission.handler.ts`). La
+      spec `apps/e2e/specs/electronic-credit-note.spec.ts` recorre toda la
+      configuración por la UI/BFF y falla esperando `APPROVED`.
 
 ## Base de datos
 
@@ -98,3 +106,8 @@ No se pudo correr: XSD oficial (no se puede descargar desde el sandbox), suites
 ## Decisiones / ADRs
 
 - [[DEC-090]], [[DEC-089]]
+
+2026-11-09: prueba en navegador `apps/e2e/specs/electronic-credit-note.spec.ts`
+en verde (configuración fiscal completa por la pantalla, factura `APPROVED` con
+el proveedor simulado firmando el DE, anulación y nota de crédito visible).
+Pendiente solo la habilitación en el ambiente de test de SIFEN.

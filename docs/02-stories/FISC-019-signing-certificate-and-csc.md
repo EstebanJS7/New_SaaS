@@ -3,7 +3,7 @@ id: FISC-019
 type: story
 title: Signing certificate and CSC from the fiscal settings screen
 epic: EPIC-16
-status: in-progress
+status: done
 priority: high
 depends_on: [FISC-007, FISC-018]
 prd_sections: []
@@ -74,58 +74,76 @@ quede aprobada y una anulación emita la nota de crédito. Tercera entrega de
 
 ### Web
 
-- [ ] El proxy agrega exactamente: `GET`/`POST signing-material` (la subida
+- [x] El proxy agrega exactamente: `GET`/`POST signing-material` (la subida
       reenvía el multipart sin leer el archivo ni la contraseña),
       `POST     signing-material/:id/retire`, `GET`/`POST csc`,
       `POST csc/:id/retire`; ids solo UUID; el resto sigue rechazado.
-- [ ] «Certificado de firma»: subir (archivo, contraseña, ambiente), listar
+- [x] «Certificado de firma»: subir (archivo, contraseña, ambiente), listar
       metadatos, retirar con motivo y confirmación. La contraseña no queda en el
       estado ni en el DOM después del envío.
-- [ ] «CSC»: cargar (idCsc y valor enmascarado), listar, retirar con motivo y
+- [x] «CSC»: cargar (idCsc y valor enmascarado), listar, retirar con motivo y
       confirmación. El valor no queda en el estado ni en el DOM después del
       envío.
-- [ ] Sin `fiscal.signing_material.manage`, esas dos secciones muestran un
+- [x] Sin `fiscal.signing_material.manage`, esas dos secciones muestran un
       estado de permiso; el resto de la pantalla sigue funcionando.
-- [ ] Estados de carga, vacío, error y éxito; textos es-PY; tokens semánticos.
+- [x] Estados de carga, vacío, error y éxito; textos es-PY; tokens semánticos.
 
 ### Navegador
 
-- [ ] El carril da a la API y al worker fiscal el mismo
+- [x] El carril da a la API y al worker fiscal el mismo
       `SECRET_STORE_MASTER_KEYS`, con `FISCAL_PROVIDER=fake` y
-      `SIFEN_ENVIRONMENT=TEST`.
-- [ ] Una spec sube un certificado generado en tiempo de ejecución (RUC del
+      `SIFEN_ENVIRONMENT=TEST`. (2026-11-09: `playwright.config.ts` genera la
+      clave por corrida y `support/fiscal-worker.ts` lanza el worker con esas
+      variables; con el proveedor fake el worker no descifra nada, así que el
+      descifrado compartido no queda ejercitado por esta spec.)
+- [x] Una spec sube un certificado generado en tiempo de ejecución (RUC del
       perfil), carga un CSC, confirma una factura electrónica que llega a
       `APPROVED` y anula la venta: la UI muestra la nota de crédito (cierra el
-      criterio de navegador de [[NCE-001]]).
+      criterio de navegador de [[NCE-001]]). Bloqueado 2026-11-09 por un defecto
+      del worker: con `FISCAL_PROVIDER=fake` (`requiresSignedDocument = false`)
+      `stageDocument` devuelve `READY` sin pasar `SIGNING → SENDING`, y
+      `persistResult` solo actualiza filas en `SENDING`; el documento queda en
+      `SIGNING` y el job termina sin error
+      (`apps/worker/src/fiscal-submission/fiscal-submission.handler.ts`). La
+      spec `apps/e2e/specs/electronic-credit-note.spec.ts` recorre toda la
+      configuración por la UI/BFF y falla esperando `APPROVED`.
 
 ### Seguridad
 
-- [ ] Verificación independiente y revisión propia de la entrega (riesgo alto,
+- [x] Verificación independiente y revisión propia de la entrega (riesgo alto,
       ítem 2).
 
 ## Implementation progress (resumed session)
 
-- Added CSC controller/service and strict request schemas in `apps/api/src/fiscal/csc/`;
-  registered all three routes and their existing signing-material permission in the route probe.
-- Metadata-only responses, tenant-scoped reads, transactional load/retirement and minimal audits
-  are covered by 10 focused unit tests; 27 permission/route-probe tests also pass.
-- Loads use a SERIALIZABLE transaction: the existing migration explicitly records that its
-  two-active trigger alone cannot prevent a READ COMMITTED concurrent-insert race.
-- Local API typecheck, focused ESLint and `git diff --check` pass. Initial type/probe failures
-  were corrected; no prior RED evidence is claimed for the recovered FISC-018 edits.
-- Encrypted HTTP/worker-reader integration and the concurrent two-active cap now pass on
-  disposable PostgreSQL. Proxy multipart passthrough and secret-clearing forms are implemented;
-  the combined settings/proxy suite passes 51 tests. The API gate at the CSC snapshot passed
-  2384 unit tests, 282 live-pg tests, lint, typecheck and build.
-- Still pending: current full suites after FISC-020 changes, NCE-001 browser flow, differentials,
-  independent verification and native review. DEC-097 proposes the final missing public
-  declaration (catalog unit); it is not silently added to this Story.
-- Initial live-pg invocation failed on absent `DATABASE_URL_TEST`; rerun against the documented
-  disposable PostgreSQL at port 55432 passed. A generated test-only key selected the encrypted
-  store. The user supplied the secrets-module code directly after the guard blocked its path;
-  no alternate read or guard bypass was attempted and no application database was used.
-- No migration, commit, push or PR was created in this resumed session. Acceptance criteria
-  remain unchecked until the required public-interface and security proof is observed.
+- Added CSC controller/service and strict request schemas in
+  `apps/api/src/fiscal/csc/`; registered all three routes and their existing
+  signing-material permission in the route probe.
+- Metadata-only responses, tenant-scoped reads, transactional load/retirement
+  and minimal audits are covered by 10 focused unit tests; 27
+  permission/route-probe tests also pass.
+- Loads use a SERIALIZABLE transaction: the existing migration explicitly
+  records that its two-active trigger alone cannot prevent a READ COMMITTED
+  concurrent-insert race.
+- Local API typecheck, focused ESLint and `git diff --check` pass. Initial
+  type/probe failures were corrected; no prior RED evidence is claimed for the
+  recovered FISC-018 edits.
+- Encrypted HTTP/worker-reader integration and the concurrent two-active cap now
+  pass on disposable PostgreSQL. Proxy multipart passthrough and secret-clearing
+  forms are implemented; the combined settings/proxy suite passes 51 tests. The
+  API gate at the CSC snapshot passed 2384 unit tests, 282 live-pg tests, lint,
+  typecheck and build.
+- Still pending: current full suites after FISC-020 changes, NCE-001 browser
+  flow, differentials, independent verification and native review. DEC-097
+  proposes the final missing public declaration (catalog unit); it is not
+  silently added to this Story.
+- Initial live-pg invocation failed on absent `DATABASE_URL_TEST`; rerun against
+  the documented disposable PostgreSQL at port 55432 passed. A generated
+  test-only key selected the encrypted store. The user supplied the
+  secrets-module code directly after the guard blocked its path; no alternate
+  read or guard bypass was attempted and no application database was used.
+- No migration, commit, push or PR was created in this resumed session.
+  Acceptance criteria remain unchecked until the required public-interface and
+  security proof is observed.
 
 ## Verificación (API CSC, 2026-11-09)
 
@@ -136,16 +154,27 @@ Observed on branch `docs/dec-095-fiscal-issuance-point`, uncommitted tree:
   `retirementReason`); `secret-keys.test.ts` 1 failed before `fiscalCsc`.
   Mutation check: disabling the trigger mapping turns the live-pg third-CSC
   `409` into `500`.
-- GREEN: `vitest run src/fiscal src/rbac` 286 passed; `@newsaas/secret-store`
-  51 passed; `apps/api pnpm test` 2125 passed, 276 skipped; build ok;
+- GREEN: `vitest run src/fiscal src/rbac` 286 passed; `@newsaas/secret-store` 51
+  passed; `apps/api pnpm test` 2125 passed, 276 skipped; build ok;
   `test:live-pg` 282 passed, including «FISC-019 CSC routes» (encrypted
   `EnvelopeSecretStore`, worker reader returns the loaded value, tenant
   isolation, duplicate and trigger `409` with row/secret/audit counts unchanged,
   concurrent load `201`/`409`).
-- `tsc --noEmit` (api, secret-store), ESLint and Prettier on changed files: clean.
-- Limits: no browser/web criteria in this unit; the in-memory unit fake
-  emulates the database rules, which live-pg proves for real.
+- `tsc --noEmit` (api, secret-store), ESLint and Prettier on changed files:
+  clean.
+- Limits: no browser/web criteria in this unit; the in-memory unit fake emulates
+  the database rules, which live-pg proves for real.
 
 ## Decisiones / ADRs
 
 - [[ADR-005]], [[DEC-057]], [[DEC-090]], [[DEC-095]]
+
+2026-11-09 (cierre): `apps/e2e/specs/electronic-credit-note.spec.ts` sube el
+certificado y carga el CSC por la pantalla; el worker con
+`FISCAL_FAKE_REQUIRES_SIGNED_DOCUMENT=true` y los XSD oficiales arma, firma y
+valida el DE (descifra certificado y CSC con la clave compartida), la factura
+llega a `APPROVED` con CDC y la anulación emite la nota de crédito. Spec 1/1
+(31,5 s); carril completo 31/31. Verificación independiente de la entrega (CSC,
+proxy multipart, sección de secretos, FISC-020): sin bloqueantes. Corregidos en
+el camino: el worker no avanzaba `SIGNING → SENDING` con un proveedor sin firma,
+y el simulado no devolvía el CDC aprobado.

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { defineConfig, devices } from "@playwright/test";
 import { loadRepoEnv } from "./load-env.js";
 import { WEB_BASE_URL } from "./specs/fixtures.js";
@@ -23,6 +24,17 @@ process.env.DEMO_RECOVERABLE_EMAIL ??= `recoverable+e2e-${Date.now()}@demo.newsa
 // hour. A fresh address is a fresh access row — and its own customer, because the partial index
 // `customer_portal_access_active_customer_key` allows one ACTIVE holder per customer.
 process.env.DEMO_PORTAL_HOLDER_EMAIL ??= `portal-holder+e2e-${Date.now()}@demo.newsaas.test`;
+
+/**
+ * One secret-store master key for the whole run, shared by the API and the fiscal worker.
+ *
+ * The API encrypts the tenant's signing key and CSC; the worker decrypts them to sign a DE
+ * ([[FISC-019]]). Each process would otherwise fall back to its own in-memory store, and the worker
+ * would never see what the API stored. The key is generated here, per run, and never committed:
+ * set in `process.env` before the web servers start, it reaches the API, and Playwright's workers —
+ * and the worker process a spec spawns — inherit it. An explicitly exported value wins.
+ */
+process.env.SECRET_STORE_MASTER_KEYS ??= `1:${randomBytes(32).toString("base64")}`;
 
 /**
  * The browser lane's configuration.

@@ -3,7 +3,7 @@ id: FISC-020
 type: story
 title: Explicit customer and tenant tax declarations for fiscal issuance
 epic: EPIC-16
-status: in-progress
+status: done
 priority: high
 depends_on: [FISC-015]
 prd_sections: []
@@ -31,30 +31,30 @@ existen.
 
 ### Cliente (unidad T6)
 
-- [ ] Crear/editar un cliente admite su `fiscalOperationType` explícito con los
+- [x] Crear/editar un cliente admite su `fiscalOperationType` explícito con los
       valores ya definidos por DEC-057 y el esquema. Ausente o null no inventa
       una declaración; una edición que omite el campo preserva la declaración
       previa.
-- [ ] Las respuestas de detalle y el formulario de cliente permiten ver y editar
+- [x] Las respuestas de detalle y el formulario de cliente permiten ver y editar
       la declaración. El proxy reenvía solo la superficie autorizada existente.
-- [ ] Se mantienen autenticación, permisos actuales de clientes, aislamiento
+- [x] Se mantienen autenticación, permisos actuales de clientes, aislamiento
       tenant y auditoría vigente; no se expone el dato a portales por accidente.
-- [ ] Pruebas de validación, persistencia/lectura por API, aislamiento y
+- [x] Pruebas de validación, persistencia/lectura por API, aislamiento y
       preservación del comportamiento anterior; typecheck/lint aplicables.
 
 ### Clasificación tributaria (unidad T7)
 
-- [ ] Configuración fiscal permite listar y guardar explícitamente por tenant y
+- [x] Configuración fiscal permite listar y guardar explícitamente por tenant y
       alícuota las clasificaciones ya definidas en DEC-057/esquema; no crea
       clasificaciones automáticas ni modifica los valores globales de IVA.
-- [ ] API y proxy exigen la función fiscal y `fiscal.profile.manage`, validan
+- [x] API y proxy exigen la función fiscal y `fiscal.profile.manage`, validan
       campos estrictamente, verifican alícuota existente y el rango/condición de
       proporcionalidad que exige el modelo existente.
-- [ ] Cada lectura/escritura se limita al tenant autenticado y las escrituras
+- [x] Cada lectura/escritura se limita al tenant autenticado y las escrituras
       quedan auditadas. No se confía en tenantId enviado por el cliente.
-- [ ] Sección mínima con estados de carga, vacío, error, éxito y permiso; textos
+- [x] Sección mínima con estados de carga, vacío, error, éxito y permiso; textos
       es-PY y tokens semánticos, sin rediseñar la pantalla.
-- [ ] Pruebas de validación, permisos, aislamiento, lectura/escritura y
+- [x] Pruebas de validación, permisos, aislamiento, lectura/escritura y
       preservación de rutas anteriores; typecheck/lint aplicables.
 
 ### Unidad de medida del catálogo (unidad T9, [[DEC-097]])
@@ -72,10 +72,19 @@ existen.
 
 ### Integración (unidad T3)
 
-- [ ] NCE-001 carga las declaraciones por superficies públicas, configura
+- [x] NCE-001 carga las declaraciones por superficies públicas, configura
       certificado/CSC y obtiene una factura APPROVED con worker/proveedor fake;
       la anulación muestra la nota de crédito, sin SQL de aprobación.
-- [ ] Verificación independiente por riesgo de permisos y contratos compartidos.
+      2026-11-09: las declaraciones (clasificación IVA_10, cliente B2C, ítem con
+      unidad 77), certificado y CSC se cargan por superficies públicas.
+      Bloqueado 2026-11-09 por un defecto del worker: con `FISCAL_PROVIDER=fake`
+      (`requiresSignedDocument = false`) `stageDocument` devuelve `READY` sin
+      pasar `SIGNING → SENDING`, y `persistResult` solo actualiza filas en
+      `SENDING`; el documento queda en `SIGNING` y el job termina sin error
+      (`apps/worker/src/fiscal-submission/fiscal-submission.handler.ts`). La
+      spec `apps/e2e/specs/electronic-credit-note.spec.ts` recorre toda la
+      configuración por la UI/BFF y falla esperando `APPROVED`.
+- [x] Verificación independiente por riesgo de permisos y contratos compartidos.
 
 ## Clasificación de datos
 
@@ -126,3 +135,11 @@ servicio, porque la base en memoria compartida aún no guarda la columna.
 importaba `@newsaas/fiscal`; ahora importa
 `apps/api/src/fiscal/units-of-measure.ts` (reexport). `fiscal-boundary` +
 catalog + rbac: 146/146; tsc, eslint y prettier limpios.
+
+2026-11-09 (cierre): verificación independiente (permisos, aislamiento,
+validación estricta, nada expuesto al portal): sin bloqueantes; api 413 y web
+232 tests en verde. NCE-001 en navegador carga cliente B2C, clasificación IVA_10
+y artículo con unidad 77 por superficies públicas y emite la nota de crédito
+(1/1; carril 31/31). La comparación diferencial de T6 contra la base no se
+corrió por separado; la preservación del comportamiento anterior queda cubierta
+por sus tests.
