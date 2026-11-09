@@ -23,12 +23,14 @@ import type { ImportJob } from "./imports-api";
 /**
  * The API's by-name refusal of a spreadsheet, copied verbatim from
  * `IMPORT_ARTEFACT_SPREADSHEET_MESSAGE` in
- * `apps/api/src/imports/import-artefact.pipe.ts`. Asserted against the rendered
- * alert to prove the surface prints the SERVER's sentence and not a paraphrase of
- * its own.
+ * `apps/api/src/imports/import-artefact.pipe.ts`. The API speaks English, so the
+ * surface shows that same explanation in es-PY — never the English sentence and
+ * never a vaguer paraphrase.
  */
 const SPREADSHEET_REFUSAL =
   "Spreadsheet uploads are not supported: export the data as CSV. The accepted format is CSV (text/csv).";
+const SPREADSHEET_REFUSAL_ES =
+  "No se aceptan planillas de cálculo: exportá los datos como CSV. El formato aceptado es CSV (text/csv).";
 
 const IMPORT_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_ID = "22222222-2222-4222-8222-222222222222";
@@ -128,9 +130,9 @@ describe("ImportsIndex · the upload", () => {
     // The history starts empty, and says so rather than rendering an empty table.
     expect(await screen.findByTestId("imports-empty")).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Import entity"), { target: { value: "PATIENT" } });
+    fireEvent.change(screen.getByLabelText("Entidad a importar"), { target: { value: "PATIENT" } });
     const file = chooseFile();
-    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
+    fireEvent.click(screen.getByRole("button", { name: "Subir" }));
 
     // The multipart body carries the entity the selector named and the file the
     // picker handed over. The browser writes the boundary; nothing here sets it.
@@ -154,7 +156,8 @@ describe("ImportsIndex · the upload", () => {
     // The accepted panel states the phase the API answered with — never a summary
     // the request cannot have yet — and links to the import to watch.
     const accepted = await screen.findByTestId("imports-upload-accepted");
-    expect(accepted).toHaveTextContent("UPLOADED");
+    expect(accepted).toHaveTextContent("Subida");
+    expect(accepted).not.toHaveTextContent("UPLOADED");
     expect(screen.getByTestId("imports-upload-accepted-link")).toHaveAttribute(
       "href",
       `/app/imports/${IMPORT_ID}`
@@ -162,11 +165,11 @@ describe("ImportsIndex · the upload", () => {
 
     // The history is invalidated, so the new import appears without a reload.
     const row = await screen.findByTestId("imports-row");
-    expect(within(row).getByTestId("imports-row-state")).toHaveTextContent("UPLOADED");
-    expect(within(row).getByTestId("imports-row-action")).toHaveTextContent("Preview");
+    expect(within(row).getByTestId("imports-row-state")).toHaveTextContent("Subida");
+    expect(within(row).getByTestId("imports-row-action")).toHaveTextContent("Previsualizar");
   });
 
-  it("shows the server's own refusal verbatim instead of duplicating the rule", async () => {
+  it("shows the server's own refusal in es-PY instead of duplicating the rule", async () => {
     installFetch((_url, init) => {
       if (init?.method === "POST") {
         return jsonResponse(
@@ -181,12 +184,14 @@ describe("ImportsIndex · the upload", () => {
     await screen.findByTestId("imports-empty");
 
     chooseFile("customers.xlsx");
-    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
+    fireEvent.click(screen.getByRole("button", { name: "Subir" }));
 
     const alert = await screen.findByTestId("imports-upload-error");
-    // The exact sentence the API sends — "export the data as CSV" and all. A
-    // client-side copy of the rule could only paraphrase it.
-    expect(alert).toHaveTextContent(SPREADSHEET_REFUSAL);
+    // The same explanation the API sends — "export the data as CSV" and all — in
+    // es-PY, and never the English sentence itself.
+    expect(alert).toHaveTextContent("El archivo no fue aceptado");
+    expect(alert).toHaveTextContent(SPREADSHEET_REFUSAL_ES);
+    expect(alert).not.toHaveTextContent(SPREADSHEET_REFUSAL);
   });
 
   it("keeps the upload disabled until a file is chosen", async () => {
@@ -194,9 +199,9 @@ describe("ImportsIndex · the upload", () => {
     renderIndex();
     await screen.findByTestId("imports-empty");
 
-    expect(screen.getByRole("button", { name: "Upload" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Subir" })).toBeDisabled();
     chooseFile();
-    expect(screen.getByRole("button", { name: "Upload" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Subir" })).toBeEnabled();
   });
 });
 
@@ -210,25 +215,34 @@ describe("ImportsIndex · the history", () => {
     expect(rows).toHaveLength(2);
 
     const uploaded = rows[0];
-    expect(uploaded).toHaveTextContent("Customers");
-    expect(within(uploaded).getByTestId("imports-row-state")).toHaveTextContent("UPLOADED");
+    expect(uploaded).toHaveTextContent("Clientes");
+    expect(within(uploaded).getByTestId("imports-row-state")).toHaveTextContent("Subida");
     // The counters are the API's own numbers, printed as given.
     expect(within(uploaded).getByTestId("imports-row-created")).toHaveTextContent("0");
     expect(within(uploaded).getByTestId("imports-row-failed")).toHaveTextContent("0");
     expect(within(uploaded).getByTestId("imports-row-suspected")).toHaveTextContent("0");
-    expect(uploaded).toHaveTextContent(UPLOADED_JOB.createdAt);
-    expect(within(uploaded).getByRole("button", { name: "Preview" })).toBeInTheDocument();
-    expect(within(uploaded).queryByRole("button", { name: "Commit" })).not.toBeInTheDocument();
+    // The instant is the API's, shown in es-PY in the clinic's zone (Asunción),
+    // with the ISO value kept machine-readable on the <time> element.
+    expect(uploaded).toHaveTextContent("22 oct. 2026, 06:59");
+    expect(uploaded).not.toHaveTextContent(UPLOADED_JOB.createdAt);
+    expect(within(uploaded).getByText(/22 oct\. 2026/)).toHaveAttribute(
+      "dateTime",
+      UPLOADED_JOB.createdAt
+    );
+    expect(within(uploaded).getByRole("button", { name: "Previsualizar" })).toBeInTheDocument();
+    expect(within(uploaded).queryByRole("button", { name: "Confirmar" })).not.toBeInTheDocument();
 
     const previewed = rows[1];
-    expect(previewed).toHaveTextContent("Patients");
-    expect(within(previewed).getByTestId("imports-row-state")).toHaveTextContent("PREVIEWED");
+    expect(previewed).toHaveTextContent("Pacientes");
+    expect(within(previewed).getByTestId("imports-row-state")).toHaveTextContent("Previsualizada");
     expect(within(previewed).getByTestId("imports-row-created")).toHaveTextContent("3");
     expect(within(previewed).getByTestId("imports-row-failed")).toHaveTextContent("1");
     // A suspected duplicate is a SUBSET of the created count, never a third bucket.
     expect(within(previewed).getByTestId("imports-row-suspected")).toHaveTextContent("1");
-    expect(within(previewed).getByRole("button", { name: "Commit" })).toBeInTheDocument();
-    expect(within(previewed).queryByRole("button", { name: "Preview" })).not.toBeInTheDocument();
+    expect(within(previewed).getByRole("button", { name: "Confirmar" })).toBeInTheDocument();
+    expect(
+      within(previewed).queryByRole("button", { name: "Previsualizar" })
+    ).not.toBeInTheDocument();
     // The row links to the import, which is where it is watched and read.
     expect(within(previewed).getByTestId("imports-row-open")).toHaveAttribute(
       "href",
@@ -247,7 +261,7 @@ describe("ImportsIndex · the history", () => {
     renderIndex();
 
     const row = await screen.findByTestId("imports-row");
-    fireEvent.click(within(row).getByRole("button", { name: "Commit" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Confirmar" }));
 
     // The command is the import's own sub-path: no body, no state parameter.
     const commitCall = await waitFor(() => {
@@ -263,9 +277,9 @@ describe("ImportsIndex · the history", () => {
     // The row reads the phase the API ACCEPTED (the worker has not claimed it yet),
     // and the command that would replay it is gone.
     await waitFor(() => {
-      expect(within(row).getByTestId("imports-row-state")).toHaveTextContent("COMMITTING");
+      expect(within(row).getByTestId("imports-row-state")).toHaveTextContent("Confirmando");
     });
-    expect(within(row).queryByRole("button", { name: "Commit" })).not.toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: "Confirmar" })).not.toBeInTheDocument();
   });
 
   it("offers no command on a terminal import", async () => {
@@ -278,7 +292,7 @@ describe("ImportsIndex · the history", () => {
     renderIndex();
 
     const row = await screen.findByTestId("imports-row");
-    expect(within(row).getByTestId("imports-row-state")).toHaveTextContent("COMMITTED");
+    expect(within(row).getByTestId("imports-row-state")).toHaveTextContent("Confirmada");
     expect(within(row).queryByTestId("imports-row-action")).not.toBeInTheDocument();
     // The row is still reachable: the summary is what an operator keeps.
     expect(within(row).getByTestId("imports-row-open")).toBeInTheDocument();
@@ -291,7 +305,9 @@ describe("ImportsIndex · the history", () => {
     await screen.findByTestId("imports-row");
     expect(fetchMock).toHaveBeenCalledWith("/api/imports", { cache: "no-store" });
 
-    fireEvent.change(screen.getByLabelText("Filter by entity"), { target: { value: "PATIENT" } });
+    fireEvent.change(screen.getByLabelText("Filtrar por entidad"), {
+      target: { value: "PATIENT" },
+    });
 
     // The filter is the API's own query parameter, so the narrowed list is what the
     // server says it is rather than what this screen would slice to.
@@ -306,16 +322,18 @@ describe("ImportsIndex · the history", () => {
     renderIndex();
     await screen.findByTestId("imports-empty");
 
-    fireEvent.change(screen.getByLabelText("Filter by entity"), { target: { value: "PATIENT" } });
+    fireEvent.change(screen.getByLabelText("Filtrar por entidad"), {
+      target: { value: "PATIENT" },
+    });
 
     await waitFor(() => {
       expect(screen.getByTestId("imports-empty")).toHaveTextContent(
-        "This tenant has not run an import for Patients."
+        "Esta organización todavía no importó pacientes."
       );
     });
   });
 
-  it("shows the API's own message when the history cannot be read", async () => {
+  it("shows a Spanish message, not the API's English one, when the history cannot be read", async () => {
     installFetch(() =>
       jsonResponse(
         { error: { code: "INTERNAL_ERROR", message: "The imports could not be read." } },
@@ -326,7 +344,9 @@ describe("ImportsIndex · the history", () => {
     renderIndex();
 
     const alert = await screen.findByTestId("imports-error");
-    expect(alert).toHaveTextContent("The imports could not be read.");
+    expect(alert).toHaveTextContent("No se pudo cargar el historial de importaciones");
+    expect(alert).toHaveTextContent("No se pudo completar la operación. Volvé a intentar.");
+    expect(alert).not.toHaveTextContent("The imports could not be read.");
   });
 
   it("shows a permission-denied panel when the API refuses the read", async () => {
@@ -339,12 +359,15 @@ describe("ImportsIndex · the history", () => {
 
     renderIndex();
 
-    expect(await screen.findByTestId("imports-permission-denied")).toBeInTheDocument();
+    const denied = await screen.findByTestId("imports-permission-denied");
+    expect(denied).toHaveTextContent("Las importaciones no están disponibles para esta cuenta");
+    expect(denied).toHaveTextContent("No tenés permiso para trabajar con importaciones.");
+    expect(denied).not.toHaveTextContent("Insufficient permissions");
     // A refusal is not an outage: the generic error panel is not what is shown.
     expect(screen.queryByTestId("imports-error")).not.toBeInTheDocument();
   });
 
-  it("shows the API's own message when a command is refused", async () => {
+  it("explains a refused command in es-PY", async () => {
     installFetch((_url, init) => {
       if (init?.method === "POST") {
         return jsonResponse(
@@ -363,13 +386,15 @@ describe("ImportsIndex · the history", () => {
     renderIndex();
 
     const row = await screen.findByTestId("imports-row");
-    fireEvent.click(within(row).getByRole("button", { name: "Commit" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Confirmar" }));
 
     const alert = await screen.findByTestId("imports-command-error");
-    expect(alert).toHaveTextContent("The import is not in a state that allows this transition.");
+    expect(alert).toHaveTextContent("La importación no se inició");
+    expect(alert).toHaveTextContent("La importación no está en un estado que permita esta acción.");
+    expect(alert).not.toHaveTextContent("The import is not in a state");
     // The refusal leaves the row exactly where it was: nothing is optimistically
     // advanced on a command the API rejected.
-    expect(within(row).getByTestId("imports-row-state")).toHaveTextContent("PREVIEWED");
+    expect(within(row).getByTestId("imports-row-state")).toHaveTextContent("Previsualizada");
   });
 });
 
@@ -385,7 +410,7 @@ describe("ImportsIndex · the permission gate", () => {
     // control that would be refused.
     expect(screen.queryByTestId("imports-upload")).not.toBeInTheDocument();
     expect(screen.queryByTestId("imports-row-action")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Upload" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Subir" })).not.toBeInTheDocument();
     // The history itself is readable with only `imports.read`.
     expect(screen.getByTestId("imports-history")).toBeInTheDocument();
   });
@@ -395,7 +420,9 @@ describe("ImportsIndex · the permission gate", () => {
 
     renderIndex(["imports.run"]);
 
-    expect(await screen.findByTestId("imports-permission-denied")).toBeInTheDocument();
+    expect(await screen.findByTestId("imports-permission-denied")).toHaveTextContent(
+      "Ver el historial de importaciones requiere el permiso imports.read."
+    );
     // The upload is still available: running an import does not require reading the
     // whole history.
     expect(screen.getByTestId("imports-upload")).toBeInTheDocument();

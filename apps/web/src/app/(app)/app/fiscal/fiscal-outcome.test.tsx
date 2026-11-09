@@ -4,30 +4,37 @@ import { ApiRequestError } from "./fiscal-api";
 import { FiscalErrorAlert, fiscalErrorTitle } from "./fiscal-outcome";
 describe("fiscal outcomes", () => {
   it("chooses distinct headings for classifiers", () => {
-    expect(fiscalErrorTitle(new ApiRequestError("FEATURE_NOT_ENTITLED", "safe", 403))).toContain(
-      "Fiscal features"
+    expect(fiscalErrorTitle(new ApiRequestError("FEATURE_NOT_ENTITLED", "safe", 403))).toBe(
+      "Facturación electrónica no habilitada"
     );
-    expect(fiscalErrorTitle(new ApiRequestError("FORBIDDEN", "safe", 403))).toBe(
-      "Permission denied"
-    );
+    expect(fiscalErrorTitle(new ApiRequestError("FORBIDDEN", "safe", 403))).toBe("Sin permiso");
     expect(fiscalErrorTitle(new ApiRequestError("NOT_FOUND", "safe", 404))).toBe(
-      "Fiscal document not found"
+      "No encontramos el documento fiscal"
     );
     expect(fiscalErrorTitle(new ApiRequestError("CONFLICT", "safe", 409))).toBe(
-      "The API refused the request"
+      "La operación fue rechazada"
     );
     expect(fiscalErrorTitle(new ApiRequestError("VALIDATION_FAILED", "safe", 400))).toBe(
-      "The request was rejected as invalid"
+      "Revisá los datos de la operación"
     );
   });
   it("renders alert and value-free transport copy", () => {
     render(<FiscalErrorAlert error={new TypeError("private-value")} testId="fiscal-error" />);
     const alert = screen.getByTestId("fiscal-error");
     expect(alert).toHaveAttribute("role", "alert");
-    expect(alert).toHaveTextContent("Could not reach the server");
+    expect(alert).toHaveTextContent("No se pudo conectar con el servidor");
     expect(alert).toHaveTextContent(
-      "The request could not reach the server. Check your connection and try again."
+      "No se pudo conectar con el servidor. Revisá tu conexión y volvé a intentar."
     );
     expect(alert).not.toHaveTextContent("private-value");
+  });
+  it("falls back to a Spanish heading and body for an unknown failure", () => {
+    const unknown = new ApiRequestError("UNKNOWN", "Request failed (500)", 500);
+    expect(fiscalErrorTitle(unknown)).toBe("No pudimos completar la operación");
+    render(<FiscalErrorAlert error={unknown} />);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "No pudimos completar la operación. Revisá los datos y volvé a intentar."
+    );
+    expect(screen.getByRole("alert")).not.toHaveTextContent("Request failed");
   });
 });

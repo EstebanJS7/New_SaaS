@@ -63,8 +63,8 @@ describe("ReportsIndex", () => {
 
     const groups = screen.getAllByTestId("reports-group");
     expect(groups).toHaveLength(2);
-    expect(within(groups[0]).getByText("Core")).toBeInTheDocument();
-    expect(within(groups[1]).getByText("Veterinary")).toBeInTheDocument();
+    expect(within(groups[0]).getByText("Negocio")).toBeInTheDocument();
+    expect(within(groups[1]).getByText("Clínica veterinaria")).toBeInTheDocument();
 
     const entries = screen.getAllByTestId("report-index-entry");
     expect(entries).toHaveLength(12);
@@ -93,6 +93,22 @@ describe("ReportsIndex", () => {
       );
     }
 
+    expect(screen.getByRole("heading", { level: 1, name: "Informes" })).toBeInTheDocument();
+    expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual([
+      "Ventas por período",
+      "Medios de pago",
+      "Ventas por producto y servicio",
+      "Sesiones de caja",
+      "Movimientos de caja",
+      "Compras",
+      "Stock",
+      "Stock bajo",
+      "Consultas",
+      "Pacientes nuevos",
+      "Vacunas por vencer",
+      "Desparasitaciones por vencer",
+    ]);
+
     const hrefs = screen.getAllByRole("link").map((link) => link.getAttribute("href"));
     expect(hrefs).toEqual([
       "/app/reports/sales-by-period",
@@ -118,7 +134,9 @@ describe("ReportsIndex", () => {
     installPendingFetch();
     renderIndex();
 
-    expect(screen.getByTestId("reports-loading")).toHaveTextContent("Checking your report access");
+    expect(screen.getByTestId("reports-loading")).toHaveTextContent(
+      "Verificando tu acceso a los informes..."
+    );
     // The catalogue is not hidden behind the probe: an unusable link is still a
     // report the product ships.
     expect(screen.getAllByTestId("report-index-entry")).toHaveLength(12);
@@ -131,6 +149,7 @@ describe("ReportsIndex", () => {
     renderIndex();
 
     const denied = await screen.findByTestId("reports-permission-denied");
+    expect(denied).toHaveTextContent("Los informes no están disponibles para esta cuenta");
     expect(denied).toHaveTextContent("No tenés permiso para ver los informes.");
     expect(screen.queryByTestId("reports-error")).not.toBeInTheDocument();
     expect(screen.getAllByTestId("report-index-entry")).toHaveLength(12);
@@ -146,7 +165,19 @@ describe("ReportsIndex", () => {
     renderIndex();
 
     const error = await screen.findByTestId("reports-error");
+    expect(error).toHaveTextContent("No se pudo verificar el acceso a los informes");
     expect(error).toHaveTextContent("Reporting is temporarily unavailable.");
     expect(screen.queryByTestId("reports-permission-denied")).not.toBeInTheDocument();
+  });
+
+  it("renders the shared connection sentence when the probe never reaches the server", async () => {
+    global.fetch = vi.fn(() => Promise.reject(new TypeError("Failed to fetch")));
+    renderIndex();
+
+    const error = await screen.findByTestId("reports-error");
+    expect(error).toHaveTextContent(
+      "No se pudo conectar con el servidor. Revisá tu conexión y volvé a intentar."
+    );
+    expect(error).not.toHaveTextContent("Failed to fetch");
   });
 });

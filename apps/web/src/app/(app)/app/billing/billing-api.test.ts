@@ -311,28 +311,53 @@ describe("billing-api transport contract", () => {
 
   it("maps not-found, entitlement, permission and transport failures to distinct copy", () => {
     expect(userFacingBillingError(new ApiRequestError("FORBIDDEN", "Access denied.", 403))).toBe(
-      "You do not have permission to manage invoices."
+      "No tenés permiso para gestionar facturas."
     );
     expect(
       userFacingBillingError(
         new ApiRequestError("FEATURE_NOT_ENTITLED", BILLING_FEATURE_NOT_ENTITLED_MESSAGE, 403)
       )
-    ).toBe("Billing features are not enabled for this tenant.");
+    ).toBe("Facturación no está habilitada para esta organización.");
     expect(
       userFacingBillingError(new ApiRequestError("NOT_FOUND", "Invoice was not found.", 404))
-    ).toBe("Invoice not found.");
+    ).toBe("No encontramos la factura.");
     expect(
       userFacingBillingError(
         new ApiRequestError("UNAUTHENTICATED", "Authentication required.", 401)
       )
-    ).toBe("You must be signed in to use billing.");
+    ).toBe("Iniciá sesión para usar Facturación.");
     expect(userFacingBillingError(new TypeError("Failed to fetch"))).toBe(
-      "The request could not reach the server. Check your connection and try again."
+      "No se pudo conectar con el servidor. Revisá tu conexión y volvé a intentar."
     );
-    // An unmapped code keeps the server message instead of inventing a cause.
+    // An unmapped code gets Spanish generic copy, never the server's English text.
     expect(userFacingBillingError(new ApiRequestError("VALIDATION_FAILED", "Bad body.", 400))).toBe(
-      "Bad body."
+      "No pudimos completar la operación. Revisá los datos y volvé a intentar."
     );
+    expect(
+      userFacingBillingError(new ApiRequestError("SOMETHING_NEW", "Unexpected failure.", 500))
+    ).toBe("No pudimos completar la operación. Revisá los datos y volvé a intentar.");
+  });
+
+  it("maps every named billing conflict to Spanish copy instead of the server's English", () => {
+    const cases: readonly (readonly [string, string])[] = [
+      [INVOICE_SALE_NOT_COMPLETED_MESSAGE, "Solo se puede facturar una venta completada."],
+      [
+        INVOICE_CUSTOMER_REQUIRED_MESSAGE,
+        "Esta organización exige un cliente para emitir una factura.",
+      ],
+      [INVOICE_SALE_ALREADY_INVOICED_MESSAGE, "Esta venta ya tiene una factura."],
+      [INVOICE_NOT_DRAFT_MESSAGE, "Solo se puede confirmar una factura en borrador."],
+      [
+        INVOICE_NOT_CANCELLABLE_MESSAGE,
+        "Solo se puede anular una factura en borrador o confirmada.",
+      ],
+    ];
+    for (const [message, copy] of cases) {
+      expect(userFacingBillingError(new ApiRequestError("CONFLICT", message, 409))).toBe(copy);
+    }
+    expect(
+      userFacingBillingError(new ApiRequestError("CONFLICT", "Some other conflict.", 409))
+    ).toBe("No pudimos completar la operación. Revisá los datos y volvé a intentar.");
   });
 
   it("surfaces a backend 404 as a failure and never as data", async () => {
@@ -366,7 +391,9 @@ describe("billing-api transport contract", () => {
     expect(isBillingConflict(error as Error)).toBe(true);
     expect(isBillingNotDraft(error as Error)).toBe(true);
     // The copy names the condition rather than echoing any document value.
-    expect(userFacingBillingError(error as Error)).toBe(INVOICE_NOT_DRAFT_MESSAGE);
+    expect(userFacingBillingError(error as Error)).toBe(
+      "Solo se puede confirmar una factura en borrador."
+    );
   });
 
   it("falls back to UNKNOWN when the failure carries no envelope", async () => {
@@ -377,7 +404,9 @@ describe("billing-api transport contract", () => {
 
     expect((error as ApiRequestError).code).toBe("UNKNOWN");
     expect((error as ApiRequestError).status).toBe(500);
-    expect(userFacingBillingError(error as Error)).toBe("Request failed (500)");
+    expect(userFacingBillingError(error as Error)).toBe(
+      "No pudimos completar la operación. Revisá los datos y volvé a intentar."
+    );
   });
 
   it("never writes an invoice payload to the console", async () => {

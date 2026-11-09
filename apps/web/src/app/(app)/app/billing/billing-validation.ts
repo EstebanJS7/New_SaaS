@@ -32,10 +32,10 @@ const INVOICE_SALE_ID_PATTERN =
 export function invoiceSaleIdError(saleId: string): string | null {
   const trimmed = saleId.trim();
   if (trimmed.length === 0) {
-    return "A completed sale id is required.";
+    return "Ingresá el identificador de una venta completada.";
   }
   if (!INVOICE_SALE_ID_PATTERN.test(trimmed)) {
-    return "The sale id must be a UUID.";
+    return "El identificador de la venta debe ser un UUID válido.";
   }
   return null;
 }
@@ -49,10 +49,10 @@ export function invoiceSaleIdError(saleId: string): string | null {
 export function invoiceCancelReasonError(reason: string): string | null {
   const trimmed = reason.trim();
   if (trimmed.length === 0) {
-    return "An invoice cancel reason is required.";
+    return "Ingresá el motivo de la anulación.";
   }
   if (trimmed.length > INVOICE_CANCEL_REASON_MAX_LENGTH) {
-    return `An invoice cancel reason must be at most ${INVOICE_CANCEL_REASON_MAX_LENGTH} characters.`;
+    return `El motivo de la anulación puede tener hasta ${INVOICE_CANCEL_REASON_MAX_LENGTH} caracteres.`;
   }
   return null;
 }

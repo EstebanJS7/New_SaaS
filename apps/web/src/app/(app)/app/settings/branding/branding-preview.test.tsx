@@ -12,8 +12,13 @@ describe("BrandingPreview", () => {
 
     render(<BrandingPreview primary="#0ea5e9" accent="#f43f5e" radius="0.75rem" />);
 
-    expect(screen.getByText("Primary surface")).toBeInTheDocument();
-    expect(screen.getByText("Accent surface")).toBeInTheDocument();
+    expect(screen.getByText("Superficie primaria")).toBeInTheDocument();
+    expect(screen.getByText("Superficie de acento")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Esta tarjeta de ejemplo refleja solo tus cambios locales. El resto de la interfaz se actualiza cuando guardás."
+      )
+    ).toBeInTheDocument();
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
@@ -22,7 +27,7 @@ describe("BrandingPreview", () => {
 
     render(<BrandingPreview primary="" accent="" radius="" />);
 
-    expect(screen.getByText("Primary surface")).toBeInTheDocument();
+    expect(screen.getByText("Superficie primaria")).toBeInTheDocument();
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
@@ -34,7 +39,7 @@ describe("BrandingPreview", () => {
     );
 
     const card =
-      screen.getByText("Preview").closest('[class*="max-w-xl"]') ??
+      screen.getByText("Vista previa").closest('[class*="max-w-xl"]') ??
       container.querySelector('[class*="max-w-xl"]');
     expect(card).toBeTruthy();
 
@@ -42,7 +47,9 @@ describe("BrandingPreview", () => {
     expect(document.documentElement.getAttribute("style")).toBeNull();
     expect(document.body.getAttribute("style")).toBeNull();
 
-    const surfaces = within(card as HTMLElement).getAllByText(/Primary surface|Accent surface/);
+    const surfaces = within(card as HTMLElement).getAllByText(
+      /Superficie primaria|Superficie de acento/
+    );
     expect(surfaces.length).toBe(2);
     for (const surface of surfaces) {
       expect(surface.getAttribute("style")).toContain("background-color");
@@ -77,6 +84,8 @@ describe("BrandingPreview", () => {
     expect(logo.getAttribute("src")).toBe("/branding/assets/logoLight/content?token=a");
     expect(favicon.getAttribute("src")).toBe("/branding/assets/favicon/content?token=b");
     expect(logo.getAttribute("src")).not.toContain("http");
+    expect(logo).toHaveAttribute("alt", "Vista previa del logo");
+    expect(favicon).toHaveAttribute("alt", "Vista previa del favicon");
     expect(global.fetch).not.toHaveBeenCalled();
   });
 });

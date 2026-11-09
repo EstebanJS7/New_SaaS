@@ -13,15 +13,15 @@ import {
 } from "./fiscal-api";
 
 export function fiscalErrorTitle(error: Error): string {
-  if (isFiscalNotEntitled(error)) return "Fiscal features are not enabled for this tenant";
-  if (isFiscalPermissionDenied(error)) return "Permission denied";
-  if (isFiscalNotFound(error)) return "Fiscal document not found";
-  if (isFiscalConflict(error)) return "The API refused the request";
-  if (isFiscalValidationFailed(error)) return "The request was rejected as invalid";
+  if (isFiscalNotEntitled(error)) return "Facturación electrónica no habilitada";
+  if (isFiscalPermissionDenied(error)) return "Sin permiso";
+  if (isFiscalNotFound(error)) return "No encontramos el documento fiscal";
+  if (isFiscalConflict(error)) return "La operación fue rechazada";
+  if (isFiscalValidationFailed(error)) return "Revisá los datos de la operación";
   if (error instanceof ApiRequestError && error.status === 400)
-    return "The request was rejected as invalid";
-  if (isFiscalTransportError(error)) return "Could not reach the server";
-  return "The request failed";
+    return "Revisá los datos de la operación";
+  if (isFiscalTransportError(error)) return "No se pudo conectar con el servidor";
+  return "No pudimos completar la operación";
 }
 interface FiscalErrorAlertProps {
   readonly error: Error;

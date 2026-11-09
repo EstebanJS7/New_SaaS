@@ -149,19 +149,48 @@ export function isFiscalValidationFailed(error: Error): boolean {
 export function isFiscalTransportError(error: Error): boolean {
   return !(error instanceof ApiRequestError);
 }
+/** Shared staff copy for a request that never reached the API. */
+export const FISCAL_CONNECTION_ERROR_MESSAGE =
+  "No se pudo conectar con el servidor. Revisá tu conexión y volvé a intentar.";
+/** Spanish copy for a refusal the client does not name, instead of the server's English. */
+export const FISCAL_GENERIC_ERROR_MESSAGE =
+  "No pudimos completar la operación. Revisá los datos y volvé a intentar.";
+/** es-PY copy for each named, value-free refusal the fiscal API emits. */
+const FISCAL_NAMED_ERROR_COPY: ReadonlyMap<string, string> = new Map([
+  [
+    FISCAL_DOCUMENT_SOURCE_INVOICE_NOT_FOUND_MESSAGE,
+    "No encontramos la factura de origen del documento fiscal.",
+  ],
+  [
+    FISCAL_INVOICE_NOT_CONFIRMED_MESSAGE,
+    "Solo una factura confirmada puede tener un documento fiscal.",
+  ],
+  [FISCAL_DOCUMENT_ALREADY_ISSUED_MESSAGE, "Ya se emitió un documento fiscal para esta factura."],
+  [
+    FISCAL_DOCUMENT_CANCEL_SENDING_MESSAGE,
+    "Este documento fiscal se está enviando y todavía no se puede cancelar.",
+  ],
+  [
+    FISCAL_DOCUMENT_CANCEL_CONFLICT_MESSAGE,
+    "El documento fiscal cambió mientras se procesaba la cancelación.",
+  ],
+  [FISCAL_DOCUMENT_CANCEL_REFUSED_MESSAGE, "El proveedor fiscal rechazó la cancelación."],
+]);
+/** Staff-facing es-PY copy; the server's English text is never passed through. */
 export function userFacingFiscalError(error: Error): string {
-  if (!(error instanceof ApiRequestError))
-    return "The request could not reach the server. Check your connection and try again.";
+  if (!(error instanceof ApiRequestError)) return FISCAL_CONNECTION_ERROR_MESSAGE;
+  const named = FISCAL_NAMED_ERROR_COPY.get(error.message);
+  if (named !== undefined) return named;
   switch (error.code) {
     case "UNAUTHENTICATED":
-      return "You must be signed in to use Fiscal.";
+      return "Iniciá sesión para gestionar documentos fiscales.";
     case "FORBIDDEN":
-      return "You do not have permission to manage fiscal documents.";
+      return "No tenés permiso para gestionar documentos fiscales.";
     case "FEATURE_NOT_ENTITLED":
-      return FISCAL_FEATURE_NOT_ENTITLED_MESSAGE;
+      return "La facturación electrónica no está habilitada para esta organización.";
     case "NOT_FOUND":
-      return "Fiscal document not found.";
+      return "No encontramos el documento fiscal.";
     default:
-      return error.message;
+      return FISCAL_GENERIC_ERROR_MESSAGE;
   }
 }

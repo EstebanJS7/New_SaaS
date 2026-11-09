@@ -444,12 +444,26 @@ describe("sales-api transport contract", () => {
       userFacingSaleError(new ApiRequestError("UNAUTHENTICATED", "Authentication required.", 401))
     ).toBe("Iniciá sesión para usar el punto de venta.");
     expect(userFacingSaleError(new TypeError("Failed to fetch"))).toBe(
-      "No se pudo conectar con el servidor. Revisá tu conexión e intentá de nuevo."
+      "No se pudo conectar con el servidor. Revisá tu conexión y volvé a intentar."
     );
-    // An unmapped code keeps the server message instead of inventing a cause.
+  });
+
+  it("never shows the API's English in the sale fallback", () => {
+    // The sale API answers in English, so the remaining codes get Spanish copy
+    // that names no value and invents no cause beyond the code itself.
     expect(
       userFacingSaleError(new ApiRequestError("CONFLICT", SALE_NOT_EDITABLE_MESSAGE, 409))
-    ).toBe(SALE_NOT_EDITABLE_MESSAGE);
+    ).toBe(
+      "La venta cambió de estado. Actualizá los datos y revisalos antes de volver a intentar."
+    );
+    expect(
+      userFacingSaleError(
+        new ApiRequestError("VALIDATION_FAILED", "Request validation failed.", 400)
+      )
+    ).toBe("Revisá los datos de la venta e intentá de nuevo.");
+    expect(
+      userFacingSaleError(new ApiRequestError("INTERNAL", "Internal server error.", 500))
+    ).toBe("No se pudo completar la operación. Volvé a intentar.");
   });
 
   it("keeps the stable conflict copy value-free", async () => {

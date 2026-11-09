@@ -104,17 +104,17 @@ function installFetch(options: PagesFetchOptions): ReturnType<typeof vi.fn> {
 }
 
 function submitForm(): void {
-  const form = screen.getByRole("button", { name: /Create purchase|Save changes/ }).closest("form");
+  const form = screen.getByRole("button", { name: /Crear compra|Guardar cambios/ }).closest("form");
   fireEvent.submit(form!);
 }
 
 async function fillNewPurchase(): Promise<void> {
   await screen.findByRole("option", { name: "Distribuidora Central" });
-  fireEvent.change(screen.getByLabelText("Supplier"), { target: { value: SUPPLIER_ID } });
+  fireEvent.change(screen.getByLabelText("Proveedor"), { target: { value: SUPPLIER_ID } });
   await screen.findByRole("option", { name: "Gauze roll" });
-  fireEvent.change(screen.getByLabelText("Item 1"), { target: { value: ITEM_ID } });
-  fireEvent.change(screen.getByLabelText("Quantity"), { target: { value: "2.000" } });
-  fireEvent.change(screen.getByLabelText("Unit cost"), { target: { value: "1500.00" } });
+  fireEvent.change(screen.getByLabelText("Artículo 1"), { target: { value: ITEM_ID } });
+  fireEvent.change(screen.getByLabelText("Cantidad"), { target: { value: "2.000" } });
+  fireEvent.change(screen.getByLabelText("Costo unitario"), { target: { value: "1500.00" } });
 }
 
 function renderNewPage(): void {
@@ -177,8 +177,8 @@ describe("NewPurchasePage", () => {
     await fillNewPurchase();
     submitForm();
 
-    expect(await screen.findByRole("button", { name: "Saving..." })).toBeDisabled();
-    expect(screen.getByLabelText("Supplier")).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "Guardando…" })).toBeDisabled();
+    expect(screen.getByLabelText("Proveedor")).toBeDisabled();
     expect(pushMock).not.toHaveBeenCalled();
   });
 
@@ -193,12 +193,12 @@ describe("NewPurchasePage", () => {
     submitForm();
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("Permission denied");
-    expect(alert).toHaveTextContent("You do not have permission to manage purchases.");
+    expect(alert).toHaveTextContent("Sin permiso");
+    expect(alert).toHaveTextContent("No tenés permiso para gestionar compras.");
     expect(pushMock).not.toHaveBeenCalled();
   });
 
-  it("renders the API validation message when the create is refused with 400", async () => {
+  it("renders Spanish validation copy instead of the API message when the create is refused with 400", async () => {
     installFetch({
       purchases: () =>
         jsonResponse(
@@ -211,7 +211,9 @@ describe("NewPurchasePage", () => {
     await fillNewPurchase();
     submitForm();
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Invalid purchase create body.");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Revisá los datos de la compra antes de guardar.");
+    expect(alert).not.toHaveTextContent("Invalid purchase create body.");
   });
 });
 
@@ -227,7 +229,7 @@ describe("EditPurchasePage", () => {
 
     renderEditPage();
 
-    expect(screen.getByText("Loading purchase...")).toBeInTheDocument();
+    expect(screen.getByText("Cargando compra…")).toBeInTheDocument();
   });
 
   it("renders the not-found state when the purchase is missing", async () => {
@@ -238,7 +240,7 @@ describe("EditPurchasePage", () => {
 
     renderEditPage();
 
-    expect(await screen.findByText("Purchase not found.")).toBeInTheDocument();
+    expect(await screen.findByText("No encontramos la compra.")).toBeInTheDocument();
   });
 
   it("renders a permission-denied state when the read is refused with 403", async () => {
@@ -250,8 +252,8 @@ describe("EditPurchasePage", () => {
     renderEditPage();
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("Permission denied");
-    expect(alert).toHaveTextContent("You do not have permission to manage purchases.");
+    expect(alert).toHaveTextContent("Sin permiso");
+    expect(alert).toHaveTextContent("No tenés permiso para gestionar compras.");
   });
 
   it("updates the draft and returns to the list on success", async () => {
@@ -262,7 +264,7 @@ describe("EditPurchasePage", () => {
 
     renderEditPage();
 
-    const quantity = await screen.findByLabelText("Quantity");
+    const quantity = await screen.findByLabelText("Cantidad");
     fireEvent.change(quantity, { target: { value: "3.000" } });
     submitForm();
 
@@ -283,7 +285,12 @@ describe("EditPurchasePage", () => {
       purchases: (init) =>
         init?.method === "PUT"
           ? jsonResponse(
-              { error: { code: "CONFLICT", message: "Only a draft purchase can be changed." } },
+              {
+                error: {
+                  code: "CONFLICT",
+                  message: "Only a draft purchase can be changed.",
+                },
+              },
               409
             )
           : jsonResponse(DRAFT_PURCHASE),
@@ -291,12 +298,12 @@ describe("EditPurchasePage", () => {
 
     renderEditPage();
 
-    await screen.findByLabelText("Quantity");
+    await screen.findByLabelText("Cantidad");
     submitForm();
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("This purchase is no longer a draft");
-    expect(alert).toHaveTextContent("Only a draft purchase can be changed.");
+    expect(alert).toHaveTextContent("Esta compra ya no es un borrador");
+    expect(alert).toHaveTextContent("Solo se puede modificar una compra en borrador.");
     expect(pushMock).not.toHaveBeenCalled();
   });
 
@@ -305,9 +312,9 @@ describe("EditPurchasePage", () => {
 
     renderEditPage();
 
-    await screen.findByLabelText("Quantity");
+    await screen.findByLabelText("Cantidad");
     expect(
-      screen.queryByRole("button", { name: /delete|cancel purchase|receive/i })
+      screen.queryByRole("button", { name: /eliminar|cancelar compra|recibir/i })
     ).not.toBeInTheDocument();
   });
 });

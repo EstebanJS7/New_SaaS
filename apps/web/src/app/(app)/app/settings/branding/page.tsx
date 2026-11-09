@@ -11,7 +11,7 @@ import { BrandingForm } from "./branding-form";
 export default function BrandingSettingsPage(): JSX.Element {
   return (
     <div className="mx-auto max-w-3xl">
-      <h1 className="mb-6 text-2xl font-semibold tracking-tight">Branding</h1>
+      <h1 className="mb-6 text-2xl font-semibold tracking-tight">Marca</h1>
       <BrandingForm />
     </div>
   );

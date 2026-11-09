@@ -74,26 +74,28 @@ describe("SupplierDetail", () => {
       `/api/suppliers/${SUPPLIER_ID}`
     );
 
-    expect(screen.getByText("Legal name")).toBeInTheDocument();
+    expect(screen.getByText("Razón social")).toBeInTheDocument();
     expect(screen.getByText("Distribuidora Central S.A.")).toBeInTheDocument();
-    expect(screen.getByText("Tax identifier")).toBeInTheDocument();
+    expect(screen.getByText("RUC")).toBeInTheDocument();
     expect(screen.getByText("80012345-6")).toBeInTheDocument();
-    expect(screen.getByText("Email")).toBeInTheDocument();
+    expect(screen.getByText("Correo electrónico")).toBeInTheDocument();
     expect(screen.getByText("compras@distribuidora.example")).toBeInTheDocument();
-    expect(screen.getByText("Phone")).toBeInTheDocument();
+    expect(screen.getByText("Teléfono")).toBeInTheDocument();
     expect(screen.getByText("+595981123456")).toBeInTheDocument();
-    expect(screen.getByText("Address")).toBeInTheDocument();
+    expect(screen.getByText("Dirección")).toBeInTheDocument();
     expect(screen.getByText("Av. Mcal. López 1234, Asunción")).toBeInTheDocument();
-    expect(screen.getByText("Status")).toBeInTheDocument();
-    expect(screen.getByText("Active")).toBeInTheDocument();
+    expect(screen.getByText("Estado")).toBeInTheDocument();
+    expect(screen.getByText("Activo")).toBeInTheDocument();
 
-    expect(screen.getByRole("link", { name: "Edit" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Editar" })).toHaveAttribute(
       "href",
       `/app/suppliers/${SUPPLIER_ID}/edit`
     );
     // The read-only surface mutates nothing: no deactivate and no delete command.
-    expect(screen.queryByRole("button", { name: /Deactivate/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /delete|remove/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Desactivar/ })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /eliminar|borrar|quitar/i })
+    ).not.toBeInTheDocument();
   });
 
   it("shows an inactive supplier with absent fields without inventing a value", async () => {
@@ -115,8 +117,8 @@ describe("SupplierDetail", () => {
       </TestWrapper>
     );
 
-    expect(await screen.findByText("Inactive")).toBeInTheDocument();
-    expect(screen.getAllByText("Not set")).toHaveLength(5);
+    expect(await screen.findByText("Inactivo")).toBeInTheDocument();
+    expect(screen.getAllByText("Sin definir")).toHaveLength(5);
   });
 
   it("renders a permission-denied state when the API returns 403 FORBIDDEN", async () => {
@@ -128,8 +130,8 @@ describe("SupplierDetail", () => {
       </TestWrapper>
     );
 
-    expect(await screen.findByText("Permission denied")).toBeInTheDocument();
-    expect(screen.getByText("You do not have permission to manage suppliers.")).toBeInTheDocument();
+    expect(await screen.findByText("Sin permiso")).toBeInTheDocument();
+    expect(screen.getByText("No tenés permiso para gestionar proveedores.")).toBeInTheDocument();
   });
 
   it("renders the mapped not-found copy when the supplier is missing", async () => {
@@ -143,7 +145,7 @@ describe("SupplierDetail", () => {
       </TestWrapper>
     );
 
-    expect(await screen.findByText("Supplier not found.")).toBeInTheDocument();
+    expect(await screen.findByText("No encontramos el proveedor.")).toBeInTheDocument();
   });
 
   it("renders the unauthenticated UX message when the API returns 401", async () => {
@@ -157,7 +159,7 @@ describe("SupplierDetail", () => {
       </TestWrapper>
     );
 
-    expect(await screen.findByText("You must be signed in to view suppliers.")).toBeInTheDocument();
+    expect(await screen.findByText("Iniciá sesión para ver los proveedores.")).toBeInTheDocument();
   });
 
   it("renders an explicit loading state while the supplier is pending", () => {
@@ -169,7 +171,7 @@ describe("SupplierDetail", () => {
       </TestWrapper>
     );
 
-    expect(screen.getByText("Loading supplier...")).toBeInTheDocument();
+    expect(screen.getByText("Cargando proveedor…")).toBeInTheDocument();
   });
 
   it("never writes the CONFIDENTIAL payload to the console", async () => {

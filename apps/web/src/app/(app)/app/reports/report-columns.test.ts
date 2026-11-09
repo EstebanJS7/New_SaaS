@@ -13,8 +13,19 @@ import {
   SALES_BY_PRODUCT_SERVICE_HEADERS,
   STOCK_HEADERS,
   VACCINE_DUE_HEADERS,
+  CASH_MOVEMENT_FORMATS,
+  CASH_SESSION_FORMATS,
+  LOW_STOCK_FORMATS,
+  PAYMENT_METHOD_FORMATS,
+  PURCHASE_FORMATS,
+  SALES_BY_PERIOD_FORMATS,
+  SALES_BY_PRODUCT_SERVICE_FORMATS,
+  STOCK_FORMATS,
+  VACCINE_DUE_FORMATS,
+  formatReportCell,
   type ReportColumn,
 } from "./report-columns";
+import { formatEsPyDateOnly, formatEsPyInstant } from "@/lib/es-py-format";
 import type { SalesByPeriodRow, StockReportRow } from "./reports-api";
 
 /**
@@ -53,11 +64,11 @@ describe("the report table's columns", () => {
       "saleCount",
     ]);
     expect(columns.map((column) => column.header)).toEqual([
-      "Gross",
-      "Date",
-      "Tax",
-      "Net",
-      "Sales",
+      "Bruto",
+      "Fecha",
+      "Impuesto",
+      "Neto",
+      "Ventas",
     ]);
   });
 
@@ -191,7 +202,66 @@ describe("the report table's columns", () => {
     };
     const columns = columnsFromRows([row], STOCK_HEADERS);
 
-    expect(columns.find((column) => column.key === "quantity")?.header).toBe("Current balance");
-    expect(columns.find((column) => column.key === "net")?.header).toBe("Net (period)");
+    expect(columns.find((column) => column.key === "quantity")?.header).toBe("Saldo actual");
+    expect(columns.find((column) => column.key === "net")?.header).toBe("Neto (período)");
+  });
+});
+
+describe("the report table's cell display (UX-036)", () => {
+  it("declares a format for every field of every row DTO, in the header map's own order", () => {
+    // The format maps are typed by the DTO like the header maps, so the compiler
+    // already refuses a missing or extra key; this pins that the two maps of one
+    // report describe the same fields.
+    const pairs: readonly (readonly [object, object])[] = [
+      [SALES_BY_PERIOD_HEADERS, SALES_BY_PERIOD_FORMATS],
+      [PAYMENT_METHOD_HEADERS, PAYMENT_METHOD_FORMATS],
+      [SALES_BY_PRODUCT_SERVICE_HEADERS, SALES_BY_PRODUCT_SERVICE_FORMATS],
+      [CASH_SESSION_HEADERS, CASH_SESSION_FORMATS],
+      [CASH_MOVEMENT_HEADERS, CASH_MOVEMENT_FORMATS],
+      [PURCHASE_HEADERS, PURCHASE_FORMATS],
+      [STOCK_HEADERS, STOCK_FORMATS],
+      [LOW_STOCK_HEADERS, LOW_STOCK_FORMATS],
+      [VACCINE_DUE_HEADERS, VACCINE_DUE_FORMATS],
+    ];
+    for (const [headers, formats] of pairs) {
+      expect(Object.keys(formats)).toEqual(Object.keys(headers));
+    }
+  });
+
+  it("groups a decimal string textually, keeping a significant fraction and its sign", () => {
+    expect(formatReportCell("1234.50", "decimal")).toBe("1.234,50");
+    expect(formatReportCell("3.500", "decimal")).toBe("3,500");
+    expect(formatReportCell("-1234567.00", "decimal")).toBe("-1.234.567");
+    expect(formatReportCell("0.0000", "decimal")).toBe("0");
+    // Beyond a float's precision: proof that no Number() round trip happens.
+    expect(formatReportCell("12345678901234567.25", "decimal")).toBe("12.345.678.901.234.567,25");
+  });
+
+  it("groups counts, and prints dates and instants with the es-PY helpers", () => {
+    expect(formatReportCell(1250, "count")).toBe("1.250");
+    expect(formatReportCell(0, "count")).toBe("0");
+    expect(formatReportCell("2026-06-10", "date")).toBe(formatEsPyDateOnly("2026-06-10"));
+    expect(formatReportCell("2026-06-10T15:00:00.000Z", "instant", "America/Asuncion")).toBe(
+      formatEsPyInstant("2026-06-10T15:00:00.000Z", "America/Asuncion")
+    );
+  });
+
+  it("labels the pinned enum literals and leaves an unknown one visible", () => {
+    expect(formatReportCell("CASH", "paymentMethod")).toBe("Efectivo");
+    expect(formatReportCell("MEDICATION", "catalogKind")).toBe("Medicamento");
+    expect(formatReportCell("SALE", "cashMovementType")).toBe("Venta");
+    expect(formatReportCell("DECREASE", "cashMovementDirection")).toBe("Disminución");
+    expect(formatReportCell("upcoming", "dueStatus")).toBe("Próxima");
+    expect(formatReportCell("NEW_KIND", "catalogKind")).toBe("NEW_KIND");
+  });
+
+  it("prints no-value as an em dash and an unformatted field verbatim", () => {
+    expect(formatReportCell(null, "cashMovementDirection")).toBe("—");
+    expect(formatReportCell(undefined, "decimal")).toBe("—");
+    // A field the API added that this client has no format for is shown raw.
+    expect(formatReportCell("1234.50", undefined)).toBe("1234.50");
+    expect(formatReportCell("ACME 1234.50", "text")).toBe("ACME 1234.50");
+    // A value that is not a decimal string is never mangled by the decimal format.
+    expect(formatReportCell("n/a", "decimal")).toBe("n/a");
   });
 });

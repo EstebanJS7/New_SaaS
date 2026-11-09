@@ -75,7 +75,7 @@ describe("InvoiceListPanel states", () => {
   it("renders the loading branch", () => {
     renderPanel({ invoices: [], isLoading: true });
 
-    expect(screen.getByTestId("invoices-loading")).toHaveTextContent("Loading invoices...");
+    expect(screen.getByTestId("invoices-loading")).toHaveTextContent("Cargando facturas…");
     expect(screen.queryByTestId("invoices-empty")).not.toBeInTheDocument();
   });
 
@@ -85,7 +85,7 @@ describe("InvoiceListPanel states", () => {
       loadError: new ApiRequestError("FORBIDDEN", "Access denied.", 403),
     });
 
-    expect(screen.getByTestId("invoices-error")).toHaveTextContent("Permission denied");
+    expect(screen.getByTestId("invoices-error")).toHaveTextContent("Sin permiso");
     expect(screen.queryByTestId("invoices-empty")).not.toBeInTheDocument();
   });
 
@@ -93,7 +93,7 @@ describe("InvoiceListPanel states", () => {
     renderPanel({ invoices: [] });
 
     expect(screen.getByTestId("invoices-empty")).toHaveTextContent(
-      "No invoices match this filter."
+      "Ninguna factura coincide con este filtro."
     );
     expect(screen.queryAllByTestId("invoice-list-item")).toHaveLength(0);
   });
@@ -105,16 +105,18 @@ describe("InvoiceListPanel content", () => {
 
     const items = screen.getAllByTestId("invoice-list-item");
     expect(items).toHaveLength(3);
-    expect(items[0]).toHaveTextContent("Draft invoice No number yet");
-    expect(items[0]).toHaveTextContent("1,500.00");
-    expect(items[1]).toHaveTextContent("Confirmed invoice A-12");
-    expect(items[2]).toHaveTextContent("Cancelled invoice A-12");
+    expect(items[0]).toHaveTextContent("Factura borrador · Sin número todavía");
+    expect(items[0]).toHaveTextContent("Gs. 1.500");
+    expect(items[1]).toHaveTextContent("Factura confirmada · A-12");
+    expect(items[2]).toHaveTextContent("Factura anulada · A-12");
   });
 
   it("asks the API for the chosen status filter", () => {
     const { onStatusFilterChange } = renderPanel();
 
-    fireEvent.change(screen.getByLabelText("Status filter"), { target: { value: "CONFIRMED" } });
+    fireEvent.change(screen.getByLabelText("Filtrar por estado"), {
+      target: { value: "CONFIRMED" },
+    });
 
     expect(onStatusFilterChange).toHaveBeenCalledWith("CONFIRMED");
   });
@@ -122,7 +124,7 @@ describe("InvoiceListPanel content", () => {
   it("selects the invoice the operator chose and marks it selected", () => {
     const { onSelectInvoice } = renderPanel();
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Select invoice" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Seleccionar factura" })[0]);
 
     expect(onSelectInvoice).toHaveBeenCalledWith(DRAFT_INVOICE);
   });
@@ -133,14 +135,14 @@ describe("InvoiceListPanel content", () => {
     const items = screen.getAllByTestId("invoice-list-item");
     expect(items[1]).toHaveAttribute("data-selected", "true");
     expect(items[0]).toHaveAttribute("data-selected", "false");
-    expect(screen.getByRole("button", { name: "Selected" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Seleccionada" })).toBeInTheDocument();
   });
 
   it("renders a line-free invoice list without inventing a line count", () => {
     renderPanel({ invoices: [{ ...DRAFT_INVOICE, lines: [LINE] }] });
 
     expect(screen.getByTestId("invoice-list-item")).toHaveTextContent(
-      "Draft invoice No number yet"
+      "Factura borrador · Sin número todavía"
     );
   });
 });

@@ -2,6 +2,7 @@ import {
   IMPORT_JOB_STATES,
   type ImportJobState,
   type ImportRowOutcome,
+  type ImportRowStatus,
   type ImportSummaryPage,
   type ImportSummary,
 } from "./imports-api";
@@ -31,6 +32,37 @@ export const IMPORTS_RUN_PERMISSION = "imports.run";
 
 /** The permission that reveals the history and one import's detail. UX only. */
 export const IMPORTS_READ_PERMISSION = "imports.read";
+
+/**
+ * The es-PY label of each lifecycle token. Presentation only: the token is the
+ * API's verdict and is never derived or sent from here. Feminine because it
+ * qualifies «la importación».
+ */
+const IMPORT_JOB_STATE_LABELS: Readonly<Record<ImportJobState, string>> = {
+  UPLOADED: "Subida",
+  PREVIEWING: "Previsualizando",
+  PREVIEWED: "Previsualizada",
+  COMMITTING: "Confirmando",
+  COMMITTED: "Confirmada",
+  FAILED: "Fallida",
+  EXPIRED: "Vencida",
+};
+
+/** The es-PY label of a lifecycle token. */
+export function importJobStateLabel(state: ImportJobState): string {
+  return IMPORT_JOB_STATE_LABELS[state];
+}
+
+/** The es-PY label of a row verdict: the row produces a record or it does not. */
+const IMPORT_ROW_STATUS_LABELS: Readonly<Record<ImportRowStatus, string>> = {
+  CREATE: "Se crea",
+  FAILED: "Con error",
+};
+
+/** The es-PY label of a row verdict token. */
+export function importRowStatusLabel(status: ImportRowStatus): string {
+  return IMPORT_ROW_STATUS_LABELS[status];
+}
 
 /** True only for one of the seven lifecycle tokens. */
 export function isImportJobState(value: unknown): value is ImportJobState {
@@ -118,9 +150,9 @@ export function nextImportAction(state: ImportJobState): "preview" | "commit" | 
 export function importPhaseNotice(state: ImportJobState | undefined): string | null {
   switch (state) {
     case "PREVIEWING":
-      return "Previewing the file. Watching for changes...";
+      return "Previsualizando el archivo. Revisando cambios…";
     case "COMMITTING":
-      return "Committing the accepted rows. Watching for changes...";
+      return "Confirmando las filas aceptadas. Revisando cambios…";
     case "UPLOADED":
     case "PREVIEWED":
     case "COMMITTED":
@@ -143,7 +175,7 @@ export function importPhaseNotice(state: ImportJobState | undefined): string | n
  * and the suspicion is reported, never acted on.
  */
 export function importRowWarningText(suspectedDuplicate: boolean): string {
-  return suspectedDuplicate ? "Suspected duplicate (warning)" : "";
+  return suspectedDuplicate ? "Posible duplicado (advertencia)" : "";
 }
 
 /**
@@ -187,11 +219,11 @@ export function summaryPageLabel(
 ): string {
   const total = summaryRowTotal(totals);
   if (total === 0) {
-    return "No row outcomes are stored for this import.";
+    return "No hay resultados de filas guardados para esta importación.";
   }
   const first = visibleRowCount === 0 ? 0 : page.offset + 1;
   const last = page.offset + visibleRowCount;
-  return `Rows ${String(first)}–${String(last)} of ${String(total)}`;
+  return `Filas ${String(first)}–${String(last)} de ${String(total)}`;
 }
 
 /**

@@ -567,8 +567,10 @@ export function isAgendaConflict(error: Error): boolean {
 /**
  * Maps the stable scheduling error contract to staff-facing UX copy.
  *
- * These messages are UX-only; the backend still enforces every gate, and any
- * unmapped code falls through to the server message.
+ * These messages are UX-only; the backend still enforces every gate. The API
+ * answers in English, so an unmapped code or runtime failure gets generic Spanish
+ * copy (a transport `TypeError` gets the common connection sentence), never the
+ * error's own text.
  *
  * `CONFLICT` is OVERLOADED upstream: the same 409 covers an illegal lifecycle
  * transition or a status that cannot be rescheduled, a stale optimistic version
@@ -605,8 +607,15 @@ export function userFacingAgendaError(error: Error): string {
     case "VALIDATION_FAILED":
       return "Revisá los datos del turno e intentá de nuevo.";
     default:
-      return error.message;
+      return agendaFallbackError(error);
   }
+}
+
+/** The Spanish fallback for an unmapped code or a failure that never got an API answer. */
+function agendaFallbackError(error: Error): string {
+  return error instanceof TypeError
+    ? "No se pudo conectar con el servidor. Revisá tu conexión y volvé a intentar."
+    : "No se pudo completar la operación. Volvé a intentar.";
 }
 
 /**
@@ -645,6 +654,6 @@ export function userFacingBookingRequestError(error: Error): string {
     case "VALIDATION_FAILED":
       return "Revisá la sucursal, el profesional y el horario e intentá de nuevo.";
     default:
-      return error.message;
+      return agendaFallbackError(error);
   }
 }

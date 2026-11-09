@@ -403,12 +403,19 @@ export function isClinicalConflict(error: Error): boolean {
 /**
  * Maps the stable `clinical.*` error contract to staff-facing UX copy.
  *
- * These messages are UX-only; the backend still enforces every gate, and any
- * unmapped code falls through to the server message.
+ * These messages are UX-only; the backend still enforces every gate. The API
+ * answers in English, so no API message is shown: unmapped codes get generic
+ * Spanish copy and a transport `TypeError` gets the common connection sentence.
+ * A plain `Error` is the workspace's own Spanish guard copy (for example "Resolvé
+ * el conflicto…" before closing) and keeps its message.
  */
 export function userFacingClinicalError(error: Error): string {
-  const code = error instanceof ApiRequestError ? error.code : "";
-  switch (code) {
+  if (!(error instanceof ApiRequestError)) {
+    return error instanceof TypeError
+      ? "No se pudo conectar con el servidor. Revisá tu conexión y volvé a intentar."
+      : error.message;
+  }
+  switch (error.code) {
     case "UNAUTHENTICATED":
       return "Iniciá sesión para ver las fichas clínicas.";
     case "FORBIDDEN":
@@ -417,8 +424,12 @@ export function userFacingClinicalError(error: Error): string {
       return "El módulo veterinario no está habilitado para esta organización.";
     case "NOT_FOUND":
       return "No encontramos la ficha clínica.";
+    case "CONFLICT":
+      return "La ficha clínica cambió mientras la editabas. Actualizá los datos y revisalos antes de volver a intentar.";
+    case "VALIDATION_FAILED":
+      return "Revisá los datos de la ficha clínica e intentá de nuevo.";
     default:
-      return error.message;
+      return "No se pudo completar la operación. Volvé a intentar.";
   }
 }
 

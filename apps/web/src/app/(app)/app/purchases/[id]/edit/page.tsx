@@ -48,7 +48,7 @@ export default function EditPurchasePage(): JSX.Element {
   if (query.isLoading) {
     return (
       <div className="mx-auto max-w-2xl">
-        <p className="text-sm text-muted-foreground">Loading purchase...</p>
+        <p className="text-sm text-muted-foreground">Cargando compra…</p>
       </div>
     );
   }
@@ -59,9 +59,7 @@ export default function EditPurchasePage(): JSX.Element {
         role="alert"
         className="mx-auto max-w-2xl rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
       >
-        {isPurchasePermissionDenied(query.error) && (
-          <p className="font-medium">Permission denied</p>
-        )}
+        {isPurchasePermissionDenied(query.error) && <p className="font-medium">Sin permiso</p>}
         <p>{userFacingPurchaseError(query.error)}</p>
       </div>
     );
@@ -70,7 +68,7 @@ export default function EditPurchasePage(): JSX.Element {
   if (!query.data) {
     return (
       <div className="mx-auto max-w-2xl">
-        <p className="text-sm text-muted-foreground">Purchase not found.</p>
+        <p className="text-sm text-muted-foreground">No encontramos la compra.</p>
       </div>
     );
   }

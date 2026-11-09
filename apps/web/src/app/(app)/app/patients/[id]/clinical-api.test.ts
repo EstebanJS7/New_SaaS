@@ -498,7 +498,7 @@ describe("clinical specialized record contract", () => {
     expect(call.body).toEqual({ nextDueAt: null });
   });
 
-  it("surfaces a 400 validation message verbatim instead of a generic failure", async () => {
+  it("maps a 400 validation failure to Spanish copy, never the server's English", async () => {
     const fetchMock = vi.fn(() =>
       Promise.resolve(
         jsonResponse(
@@ -515,7 +515,10 @@ describe("clinical specialized record contract", () => {
 
     expect(error.code).toBe("VALIDATION_FAILED");
     expect(error.status).toBe(400);
-    expect(userFacingClinicalError(error)).toBe("Invalid vaccination body.");
+    expect(userFacingClinicalError(error)).toBe(
+      "Revisá los datos de la ficha clínica e intentá de nuevo."
+    );
+    expect(userFacingClinicalError(error)).not.toBe("Invalid vaccination body.");
     expect(isClinicalConflict(error)).toBe(false);
     expect(isClinicalPermissionDenied(error)).toBe(false);
   });
@@ -549,7 +552,28 @@ describe("clinical specialized record contract", () => {
 
     expect(error.code).toBe("CONFLICT");
     expect(isClinicalConflict(error)).toBe(true);
-    expect(userFacingClinicalError(error)).toBe("Changed elsewhere.");
+    expect(userFacingClinicalError(error)).toBe(
+      "La ficha clínica cambió mientras la editabas. Actualizá los datos y revisalos antes de volver a intentar."
+    );
+  });
+
+  it("never shows server or transport English in the clinical fallback", () => {
+    expect(userFacingClinicalError(new TypeError("Failed to fetch"))).toBe(
+      "No se pudo conectar con el servidor. Revisá tu conexión y volvé a intentar."
+    );
+    expect(
+      userFacingClinicalError(new ApiRequestError("RATE_LIMITED", "Too many requests.", 429))
+    ).toBe("No se pudo completar la operación. Volvé a intentar.");
+    expect(
+      userFacingClinicalError(new ApiRequestError("INTERNAL", "Internal server error.", 500))
+    ).toBe("No se pudo completar la operación. Volvé a intentar.");
+  });
+
+  it("keeps the workspace's own Spanish guard messages, which are not server text", () => {
+    // The clinical workspace throws plain Errors with Spanish copy (for example
+    // before closing a conflicted encounter) and renders them through this mapper.
+    const guard = "Resolvé el conflicto y cargá la versión más reciente antes de cerrar la ficha.";
+    expect(userFacingClinicalError(new Error(guard))).toBe(guard);
   });
 
   it("rejects a malformed vaccination id before any request", async () => {

@@ -182,24 +182,32 @@ export function isSupplierPermissionDenied(error: Error): boolean {
 }
 
 /**
- * Maps the stable supplier error contract to staff-facing UX copy.
+ * Maps the stable supplier error contract to staff-facing es-PY copy.
  *
  * These messages are UX-only; the backend still enforces every gate. `CONFLICT`
- * deliberately keeps the API's own stable, value-free conflict copy — naming the
- * duplicate identifier would leak a CONFIDENTIAL value — and any unmapped code
- * falls through to the server message. Suppliers are a Core capability with no
- * entitlement gate, so no entitlement copy exists here.
+ * is the duplicate-`taxId` refusal and is rendered as value-free Spanish copy —
+ * naming the duplicate identifier would leak a CONFIDENTIAL value. Any unmapped
+ * code gets a generic Spanish sentence so the API's English text never reaches
+ * the staff surface, and a request that never reached the API gets the shared
+ * connection sentence instead of a raw browser string. Suppliers are a Core
+ * capability with no entitlement gate, so no entitlement copy exists here.
  */
 export function userFacingSupplierError(error: Error): string {
-  const code = error instanceof ApiRequestError ? error.code : "";
-  switch (code) {
+  if (!(error instanceof ApiRequestError)) {
+    return "No se pudo conectar con el servidor. Revisá tu conexión y volvé a intentar.";
+  }
+  switch (error.code) {
     case "UNAUTHENTICATED":
-      return "You must be signed in to view suppliers.";
+      return "Iniciá sesión para ver los proveedores.";
     case "FORBIDDEN":
-      return "You do not have permission to manage suppliers.";
+      return "No tenés permiso para gestionar proveedores.";
     case "NOT_FOUND":
-      return "Supplier not found.";
+      return "No encontramos el proveedor.";
+    case "CONFLICT":
+      return "Ya existe un proveedor con este RUC en la organización.";
+    case "VALIDATION_FAILED":
+      return "Revisá los datos del proveedor antes de guardar.";
     default:
-      return error.message;
+      return "No pudimos completar la operación. Revisá los datos y volvé a intentar.";
   }
 }

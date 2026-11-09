@@ -85,8 +85,11 @@ export function FiscalSurface(): JSX.Element {
           data-testid="fiscal-entitlement-denied"
           className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
         >
-          <p className="font-medium">Fiscal features are not enabled for this tenant</p>
-          <p>The tenant does not have the fiscal capability, so the workspace is not available.</p>
+          <p className="font-medium">Facturación electrónica no habilitada</p>
+          <p>
+            Esta organización no tiene habilitada la facturación electrónica, así que este espacio
+            no está disponible.
+          </p>
         </div>
       </div>
     );
@@ -99,17 +102,17 @@ export function FiscalSurface(): JSX.Element {
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Fiscal</h1>
         <p className="text-sm text-muted-foreground">
-          Fiscal documents, provider outcomes and cancellation.
+          Documentos fiscales electrónicos, su estado ante SIFEN y su cancelación.
         </p>
       </header>
       {documentsQuery.isLoading && (
         <p data-testid="fiscal-loading" className="text-sm text-muted-foreground">
-          Loading fiscal documents...
+          Cargando documentos fiscales…
         </p>
       )}
       {documentsQuery.data?.length === 0 && !documentsQuery.isLoading && readError === null && (
         <p data-testid="fiscal-empty" className="text-sm text-muted-foreground">
-          No fiscal documents match this filter.
+          Ningún documento fiscal coincide con este filtro.
         </p>
       )}
       {readError !== null && (

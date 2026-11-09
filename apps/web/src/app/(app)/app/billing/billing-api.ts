@@ -13,8 +13,8 @@
  * allocated number, the frozen rate code, the line description and the money
  * amounts are INTERNAL. This module sends and returns those fields and
  * deliberately writes none of them anywhere else: no console call, no error
- * telemetry and no analytics event takes an invoice payload, and only the API's
- * own stable, value-free error copy is surfaced.
+ * telemetry and no analytics event takes an invoice payload, and the surface
+ * shows only its own es-PY copy for each stable error outcome.
  *
  * This module is the WHOLE staff billing surface: the status-filtered list, the
  * id read with the immutable lines, the create-from-a-completed-sale command and
@@ -371,28 +371,45 @@ export function isBillingTransportError(error: Error): boolean {
   return !(error instanceof ApiRequestError);
 }
 
+/** Shared staff copy for a request that never reached the API. */
+export const BILLING_CONNECTION_ERROR_MESSAGE =
+  "No se pudo conectar con el servidor. Revisá tu conexión y volvé a intentar.";
+
+/** Spanish copy for a refusal the client does not name, instead of the server's English. */
+export const BILLING_GENERIC_ERROR_MESSAGE =
+  "No pudimos completar la operación. Revisá los datos y volvé a intentar.";
+
 /**
- * Maps the stable billing error contract to staff-facing UX copy.
+ * Maps the stable billing error contract to staff-facing es-PY copy.
  *
- * These messages are UX-only; the backend still enforces every gate. Every
- * unmapped code falls through to the server message — which the billing API
- * keeps value-free — instead of inventing a cause, and a bare transport failure
- * gets its own copy rather than a raw browser string.
+ * These messages are UX-only; the backend still enforces every gate. Each named
+ * `409` condition gets its own Spanish sentence (matched through the same
+ * predicates the outcome headings use), every unmapped code falls back to
+ * Spanish generic copy instead of passing the server's English text through,
+ * and a bare transport failure gets the shared connection sentence rather than a
+ * raw browser string.
  */
 export function userFacingBillingError(error: Error): string {
   if (!(error instanceof ApiRequestError)) {
-    return "The request could not reach the server. Check your connection and try again.";
+    return BILLING_CONNECTION_ERROR_MESSAGE;
   }
+  if (isBillingSaleNotCompleted(error)) return "Solo se puede facturar una venta completada.";
+  if (isBillingCustomerRequired(error))
+    return "Esta organización exige un cliente para emitir una factura.";
+  if (isBillingSaleAlreadyInvoiced(error)) return "Esta venta ya tiene una factura.";
+  if (isBillingNotDraft(error)) return "Solo se puede confirmar una factura en borrador.";
+  if (isBillingNotCancellable(error))
+    return "Solo se puede anular una factura en borrador o confirmada.";
   switch (error.code) {
     case "UNAUTHENTICATED":
-      return "You must be signed in to use billing.";
+      return "Iniciá sesión para usar Facturación.";
     case "FORBIDDEN":
-      return "You do not have permission to manage invoices.";
+      return "No tenés permiso para gestionar facturas.";
     case "FEATURE_NOT_ENTITLED":
-      return "Billing features are not enabled for this tenant.";
+      return "Facturación no está habilitada para esta organización.";
     case "NOT_FOUND":
-      return "Invoice not found.";
+      return "No encontramos la factura.";
     default:
-      return error.message;
+      return BILLING_GENERIC_ERROR_MESSAGE;
   }
 }

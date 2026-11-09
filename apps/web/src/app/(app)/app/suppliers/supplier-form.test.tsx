@@ -25,7 +25,9 @@ const SUPPLIER: Supplier = {
 };
 
 function submitForm(): void {
-  const form = screen.getByRole("button", { name: /Create supplier|Save changes/ }).closest("form");
+  const form = screen
+    .getByRole("button", { name: /Crear proveedor|Guardar cambios/ })
+    .closest("form");
   fireEvent.submit(form!);
 }
 
@@ -39,7 +41,9 @@ describe("SupplierForm", () => {
 
     render(<SupplierForm onSubmit={onSubmit} isPending={false} error={null} />);
 
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Distribuidora Central" } });
+    fireEvent.change(screen.getByLabelText("Nombre"), {
+      target: { value: "Distribuidora Central" },
+    });
     submitForm();
 
     expect(onSubmit).toHaveBeenCalledWith({ name: "Distribuidora Central" });
@@ -50,16 +54,18 @@ describe("SupplierForm", () => {
 
     render(<SupplierForm onSubmit={onSubmit} isPending={false} error={null} />);
 
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Distribuidora Central" } });
-    fireEvent.change(screen.getByLabelText("Legal name"), {
+    fireEvent.change(screen.getByLabelText("Nombre"), {
+      target: { value: "Distribuidora Central" },
+    });
+    fireEvent.change(screen.getByLabelText("Razón social"), {
       target: { value: "Distribuidora Central S.A." },
     });
-    fireEvent.change(screen.getByLabelText("Tax identifier"), { target: { value: "80012345-6" } });
-    fireEvent.change(screen.getByLabelText("Email"), {
+    fireEvent.change(screen.getByLabelText("RUC"), { target: { value: "80012345-6" } });
+    fireEvent.change(screen.getByLabelText("Correo electrónico"), {
       target: { value: "compras@distribuidora.example" },
     });
-    fireEvent.change(screen.getByLabelText("Phone"), { target: { value: "+595981123456" } });
-    fireEvent.change(screen.getByLabelText("Address"), {
+    fireEvent.change(screen.getByLabelText("Teléfono"), { target: { value: "+595981123456" } });
+    fireEvent.change(screen.getByLabelText("Dirección"), {
       target: { value: "Av. Mcal. López 1234, Asunción" },
     });
     submitForm();
@@ -81,7 +87,7 @@ describe("SupplierForm", () => {
 
     submitForm();
 
-    expect(screen.getByRole("alert")).toHaveTextContent("Name is required.");
+    expect(screen.getByRole("alert")).toHaveTextContent("El nombre es obligatorio.");
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
@@ -90,8 +96,8 @@ describe("SupplierForm", () => {
 
     render(<SupplierForm supplier={SUPPLIER} onSubmit={onSubmit} isPending={false} error={null} />);
 
-    expect(screen.getByLabelText("Name")).toHaveValue("Distribuidora Central");
-    expect(screen.getByLabelText("Tax identifier")).toHaveValue("80012345-6");
+    expect(screen.getByLabelText("Nombre")).toHaveValue("Distribuidora Central");
+    expect(screen.getByLabelText("RUC")).toHaveValue("80012345-6");
 
     submitForm();
 
@@ -105,11 +111,11 @@ describe("SupplierForm", () => {
 
     render(<SupplierForm supplier={SUPPLIER} onSubmit={onSubmit} isPending={false} error={null} />);
 
-    fireEvent.change(screen.getByLabelText("Legal name"), { target: { value: "" } });
-    fireEvent.change(screen.getByLabelText("Tax identifier"), { target: { value: "" } });
-    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "" } });
-    fireEvent.change(screen.getByLabelText("Phone"), { target: { value: "" } });
-    fireEvent.change(screen.getByLabelText("Address"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Razón social"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("RUC"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Correo electrónico"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Teléfono"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Dirección"), { target: { value: "" } });
     submitForm();
 
     expect(onSubmit).toHaveBeenCalledWith({
@@ -126,10 +132,10 @@ describe("SupplierForm", () => {
 
     render(<SupplierForm supplier={SUPPLIER} onSubmit={onSubmit} isPending={false} error={null} />);
 
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "   " } });
+    fireEvent.change(screen.getByLabelText("Nombre"), { target: { value: "   " } });
     submitForm();
 
-    expect(screen.getByRole("alert")).toHaveTextContent("Name is required.");
+    expect(screen.getByRole("alert")).toHaveTextContent("El nombre es obligatorio.");
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
@@ -144,10 +150,11 @@ describe("SupplierForm", () => {
     );
 
     const alert = screen.getByRole("alert");
-    expect(alert).toHaveTextContent("Tax identifier conflict");
-    expect(alert).toHaveTextContent(CONFLICT_MESSAGE);
+    expect(alert).toHaveTextContent("RUC duplicado");
+    expect(alert).toHaveTextContent("Ya existe un proveedor con este RUC en la organización.");
+    expect(alert).not.toHaveTextContent(CONFLICT_MESSAGE);
     // The conflict is attached to the identifier field it belongs to.
-    expect(screen.getByLabelText("Tax identifier")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("RUC")).toHaveAttribute("aria-invalid", "true");
   });
 
   it("does not mark the identifier invalid for an unrelated failure", () => {
@@ -159,8 +166,11 @@ describe("SupplierForm", () => {
       />
     );
 
-    expect(screen.getByRole("alert")).toHaveTextContent("Invalid supplier create body.");
-    expect(screen.getByLabelText("Tax identifier")).not.toHaveAttribute("aria-invalid");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Revisá los datos del proveedor antes de guardar."
+    );
+    expect(screen.getByRole("alert")).not.toHaveTextContent("Invalid supplier create body.");
+    expect(screen.getByLabelText("RUC")).not.toHaveAttribute("aria-invalid");
   });
 
   it("surfaces a 403 permission error truthfully", () => {
@@ -173,7 +183,7 @@ describe("SupplierForm", () => {
     );
 
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "You do not have permission to manage suppliers."
+      "No tenés permiso para gestionar proveedores."
     );
   });
 
@@ -191,9 +201,9 @@ describe("SupplierForm", () => {
   it("shows a pending state and blocks input while the save is in flight", () => {
     render(<SupplierForm onSubmit={vi.fn()} isPending error={null} />);
 
-    expect(screen.getByRole("button", { name: "Saving..." })).toBeDisabled();
-    expect(screen.getByLabelText("Name")).toBeDisabled();
-    expect(screen.getByLabelText("Tax identifier")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Guardando…" })).toBeDisabled();
+    expect(screen.getByLabelText("Nombre")).toBeDisabled();
+    expect(screen.getByLabelText("RUC")).toBeDisabled();
   });
 
   it("keeps the edited values after a failed submit so the user does not retype them", async () => {
@@ -203,7 +213,9 @@ describe("SupplierForm", () => {
       <SupplierForm onSubmit={onSubmit} isPending={false} error={null} />
     );
 
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Distribuidora Central" } });
+    fireEvent.change(screen.getByLabelText("Nombre"), {
+      target: { value: "Distribuidora Central" },
+    });
     submitForm();
 
     rerender(
@@ -215,7 +227,7 @@ describe("SupplierForm", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByLabelText("Name")).toHaveValue("Distribuidora Central");
+      expect(screen.getByLabelText("Nombre")).toHaveValue("Distribuidora Central");
     });
   });
 });

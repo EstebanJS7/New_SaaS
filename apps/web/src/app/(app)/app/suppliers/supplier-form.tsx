@@ -119,7 +119,7 @@ interface SupplierFormProps {
  *
  * A duplicate present `taxId` is the supplier API's only `409`, so that refusal
  * is presented as a conflict on the identifier field rather than as a generic
- * failure — and it renders the API's own stable, value-free copy, because the
+ * failure — and it renders value-free Spanish copy, because the
  * submitted identifier is CONFIDENTIAL and is never echoed back or logged.
  *
  * The API remains the validation and authorization authority; the client-side
@@ -151,7 +151,7 @@ export function SupplierForm({
     event.preventDefault();
 
     if (!values.name.trim()) {
-      setLocalError("Name is required.");
+      setLocalError("El nombre es obligatorio.");
       return;
     }
 
@@ -163,11 +163,11 @@ export function SupplierForm({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{isEdit ? "Edit supplier" : "New supplier"}</CardTitle>
+        <CardTitle>{isEdit ? "Editar proveedor" : "Nuevo proveedor"}</CardTitle>
         <CardDescription>
           {isEdit
-            ? "Update the supplier's identity and contact data."
-            : "Register a supplier with a required trading name."}
+            ? "Actualizá los datos de identificación y contacto del proveedor."
+            : "Registrá un proveedor con su nombre comercial obligatorio."}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -183,7 +183,7 @@ export function SupplierForm({
             role="alert"
             className="mb-4 rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
           >
-            <p className="font-medium">Tax identifier conflict</p>
+            <p className="font-medium">RUC duplicado</p>
             <p id="supplier-tax-id-conflict">{conflictError}</p>
           </div>
         ) : serverError !== null ? (
@@ -198,7 +198,7 @@ export function SupplierForm({
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <label htmlFor="name" className="text-sm font-medium">
-              Name
+              Nombre
             </label>
             <input
               id="name"
@@ -208,14 +208,14 @@ export function SupplierForm({
               required
               maxLength={NAME_MAX_LENGTH}
               disabled={isPending}
-              placeholder="How this supplier appears across the app"
+              placeholder="Cómo aparece este proveedor en la aplicación"
               className={inputClassName}
             />
           </div>
 
           <div className="space-y-2">
             <label htmlFor="legalName" className="text-sm font-medium">
-              Legal name
+              Razón social
             </label>
             <input
               id="legalName"
@@ -224,14 +224,14 @@ export function SupplierForm({
               onChange={(event) => setField("legalName", event.target.value)}
               maxLength={LEGAL_NAME_MAX_LENGTH}
               disabled={isPending}
-              placeholder="Optional registered name"
+              placeholder="Razón social registrada (opcional)"
               className={inputClassName}
             />
           </div>
 
           <div className="space-y-2">
             <label htmlFor="taxId" className="text-sm font-medium">
-              Tax identifier
+              RUC
             </label>
             <input
               id="taxId"
@@ -240,7 +240,7 @@ export function SupplierForm({
               onChange={(event) => setField("taxId", event.target.value)}
               maxLength={TAX_ID_MAX_LENGTH}
               disabled={isPending}
-              placeholder="Optional, unique per tenant when present"
+              placeholder="Opcional; único en la organización si se completa"
               className={inputClassName}
               aria-invalid={conflictError !== null ? true : undefined}
               aria-describedby={conflictError !== null ? "supplier-tax-id-conflict" : undefined}
@@ -250,7 +250,7 @@ export function SupplierForm({
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <label htmlFor="email" className="text-sm font-medium">
-                Email
+                Correo electrónico
               </label>
               <input
                 id="email"
@@ -259,14 +259,14 @@ export function SupplierForm({
                 onChange={(event) => setField("email", event.target.value)}
                 maxLength={EMAIL_MAX_LENGTH}
                 disabled={isPending}
-                placeholder="Optional contact email"
+                placeholder="Correo de contacto (opcional)"
                 className={inputClassName}
               />
             </div>
 
             <div className="space-y-2">
               <label htmlFor="phone" className="text-sm font-medium">
-                Phone
+                Teléfono
               </label>
               <input
                 id="phone"
@@ -275,7 +275,7 @@ export function SupplierForm({
                 onChange={(event) => setField("phone", event.target.value)}
                 maxLength={PHONE_MAX_LENGTH}
                 disabled={isPending}
-                placeholder="Optional contact phone"
+                placeholder="Teléfono de contacto (opcional)"
                 className={inputClassName}
               />
             </div>
@@ -283,7 +283,7 @@ export function SupplierForm({
 
           <div className="space-y-2">
             <label htmlFor="address" className="text-sm font-medium">
-              Address
+              Dirección
             </label>
             <input
               id="address"
@@ -292,19 +292,19 @@ export function SupplierForm({
               onChange={(event) => setField("address", event.target.value)}
               maxLength={ADDRESS_MAX_LENGTH}
               disabled={isPending}
-              placeholder="Optional address"
+              placeholder="Dirección (opcional)"
               className={inputClassName}
             />
           </div>
 
           <p className="text-xs text-muted-foreground">
-            Removal is a deactivation, never a delete: this form changes identity and contact data
-            only.
+            Quitar un proveedor es desactivarlo, nunca eliminarlo: este formulario cambia solo los
+            datos de identificación y contacto.
           </p>
 
           <div className="flex flex-wrap items-center gap-3 pt-4">
             <Button type="submit" disabled={isPending}>
-              {isPending ? "Saving..." : isEdit ? "Save changes" : "Create supplier"}
+              {isPending ? "Guardando…" : isEdit ? "Guardar cambios" : "Crear proveedor"}
             </Button>
             <Button
               type="button"
@@ -312,7 +312,7 @@ export function SupplierForm({
               onClick={() => router.back()}
               disabled={isPending}
             >
-              Cancel
+              Cancelar
             </Button>
           </div>
         </form>

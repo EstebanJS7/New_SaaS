@@ -47,7 +47,7 @@ export default function EditSupplierPage(): JSX.Element {
   if (query.isLoading) {
     return (
       <div className="mx-auto max-w-2xl">
-        <p className="text-sm text-muted-foreground">Loading supplier...</p>
+        <p className="text-sm text-muted-foreground">Cargando proveedor…</p>
       </div>
     );
   }
@@ -58,9 +58,7 @@ export default function EditSupplierPage(): JSX.Element {
         role="alert"
         className="mx-auto max-w-2xl rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
       >
-        {isSupplierPermissionDenied(query.error) && (
-          <p className="font-medium">Permission denied</p>
-        )}
+        {isSupplierPermissionDenied(query.error) && <p className="font-medium">Sin permiso</p>}
         <p>{userFacingSupplierError(query.error)}</p>
       </div>
     );
@@ -69,7 +67,7 @@ export default function EditSupplierPage(): JSX.Element {
   if (!query.data) {
     return (
       <div className="mx-auto max-w-2xl">
-        <p className="text-sm text-muted-foreground">Supplier not found.</p>
+        <p className="text-sm text-muted-foreground">No encontramos el proveedor.</p>
       </div>
     );
   }

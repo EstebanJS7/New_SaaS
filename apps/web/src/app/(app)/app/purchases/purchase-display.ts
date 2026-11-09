@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { listSuppliers } from "../suppliers/suppliers-api";
 import { listCatalogItems } from "../catalog/catalog-api";
+import { formatEsPyDateOnly } from "@/lib/es-py-format";
 import type { PurchaseStatus } from "./purchases-api";
 
 /**
@@ -29,17 +30,24 @@ export function shortId(id: string): string {
 
 /** Staff-facing label for each lifecycle value. */
 export const PURCHASE_STATUS_LABELS: Record<PurchaseStatus, string> = {
-  DRAFT: "Draft",
-  RECEIVED: "Received",
-  CANCELLED: "Cancelled",
+  DRAFT: "Borrador",
+  RECEIVED: "Recibida",
+  CANCELLED: "Cancelada",
+};
+
+/** Staff-facing headline for a purchase in each lifecycle value. */
+export const PURCHASE_STATUS_HEADLINES: Record<PurchaseStatus, string> = {
+  DRAFT: "Compra en borrador",
+  RECEIVED: "Compra recibida",
+  CANCELLED: "Compra cancelada",
 };
 
 /**
  * The API's `createdAt`/`updatedAt` are ISO timestamps; the surface shows the
- * stable UTC calendar date and performs no locale or arithmetic transformation.
+ * same stable UTC calendar date as before, in the es-PY date format.
  */
 export function formatDate(iso: string): string {
-  return iso.slice(0, 10);
+  return formatEsPyDateOnly(iso.slice(0, 10));
 }
 
 /** Resolves an id to a display name, falling back to a short id fragment. */

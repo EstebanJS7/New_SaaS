@@ -47,44 +47,44 @@ describe("CreateInvoicePanel validation", () => {
   it("requires a sale id before the request leaves the browser", () => {
     const { onCreate } = renderPanel();
 
-    fireEvent.click(screen.getByRole("button", { name: "Create invoice" }));
+    fireEvent.click(screen.getByRole("button", { name: "Crear factura" }));
 
     expect(onCreate).not.toHaveBeenCalled();
     expect(screen.getByTestId("invoice-sale-id-error")).toHaveTextContent(
-      "A completed sale id is required."
+      "Ingresá el identificador de una venta completada."
     );
   });
 
   it("refuses an id that is not a UUID", () => {
     const { onCreate } = renderPanel();
 
-    fireEvent.change(screen.getByLabelText("Completed sale id"), {
+    fireEvent.change(screen.getByLabelText("Identificador de la venta completada"), {
       target: { value: "not-a-uuid" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Create invoice" }));
+    fireEvent.click(screen.getByRole("button", { name: "Crear factura" }));
 
     expect(onCreate).not.toHaveBeenCalled();
     expect(screen.getByTestId("invoice-sale-id-error")).toHaveTextContent(
-      "The sale id must be a UUID."
+      "El identificador de la venta debe ser un UUID válido."
     );
   });
 
   it("creates from the sale id alone and clears the form", async () => {
     const { onCreate } = renderPanel();
 
-    fireEvent.change(screen.getByLabelText("Completed sale id"), {
+    fireEvent.change(screen.getByLabelText("Identificador de la venta completada"), {
       target: { value: `  ${SALE_ID}  ` },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Create invoice" }));
+    fireEvent.click(screen.getByRole("button", { name: "Crear factura" }));
 
     expect(onCreate).toHaveBeenCalledWith({ saleId: SALE_ID });
-    expect(await screen.findByLabelText("Completed sale id")).toHaveValue("");
+    expect(await screen.findByLabelText("Identificador de la venta completada")).toHaveValue("");
   });
 
   it("disables the command while the request is in flight", () => {
     renderPanel({ isCreating: true });
 
-    expect(screen.getByRole("button", { name: "Creating invoice..." })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Creando factura…" })).toBeDisabled();
   });
 });
 
@@ -93,9 +93,9 @@ describe("CreateInvoicePanel outcomes", () => {
     renderPanel({ created: DRAFT_INVOICE });
 
     const created = screen.getByTestId("invoice-created");
-    expect(created).toHaveTextContent("Draft invoice created");
-    expect(created).toHaveTextContent("1,500.00");
-    expect(created).toHaveTextContent("no number yet");
+    expect(created).toHaveTextContent("Borrador de factura creado");
+    expect(created).toHaveTextContent("Gs. 1.500");
+    expect(created).toHaveTextContent("sin número todavía");
   });
 
   it("renders a sale that already holds an invoice by its stable outcome", () => {
@@ -104,7 +104,7 @@ describe("CreateInvoicePanel outcomes", () => {
     });
 
     expect(screen.getByTestId("invoice-create-error")).toHaveTextContent(
-      "This sale already has an invoice"
+      "Esta venta ya tiene una factura"
     );
   });
 
@@ -114,7 +114,7 @@ describe("CreateInvoicePanel outcomes", () => {
     });
 
     expect(screen.getByTestId("invoice-create-error")).toHaveTextContent(
-      "Only a completed sale can be invoiced"
+      "Solo se puede facturar una venta completada"
     );
   });
 });

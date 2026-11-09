@@ -45,16 +45,16 @@ export function ReportsIndex(): JSX.Element {
   return (
     <div data-testid="reports-workspace" className="mx-auto max-w-5xl space-y-6">
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Reports</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Informes</h1>
         <p className="text-sm text-muted-foreground">
-          Read-only views over the tenant&apos;s own data. Every figure comes from the reporting
-          API, never from this surface.
+          Vistas de solo lectura sobre los datos de tu organización. Cada cifra viene del servicio
+          de informes, nunca de esta pantalla.
         </p>
       </header>
 
       {access.isLoading && (
         <p data-testid="reports-loading" className="text-sm text-muted-foreground">
-          Checking your report access...
+          Verificando tu acceso a los informes...
         </p>
       )}
 
@@ -64,7 +64,7 @@ export function ReportsIndex(): JSX.Element {
           data-testid="reports-permission-denied"
           className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
         >
-          <p className="font-medium">Reports are not available to this account</p>
+          <p className="font-medium">Los informes no están disponibles para esta cuenta</p>
           <p>{access.error === null ? "" : userFacingReportError(access.error)}</p>
         </div>
       )}
@@ -75,7 +75,7 @@ export function ReportsIndex(): JSX.Element {
           data-testid="reports-error"
           className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
         >
-          <p className="font-medium">Report access could not be checked</p>
+          <p className="font-medium">No se pudo verificar el acceso a los informes</p>
           {/* The API's own message, verbatim — the same rule the report view uses. */}
           <p>{userFacingReportError(access.error)}</p>
         </div>

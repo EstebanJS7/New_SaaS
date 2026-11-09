@@ -8,6 +8,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@newsaas/ui/components/ui/button";
 import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
 import { useWorkingBranches } from "@/lib/working-branches";
+import { formatEsPyDecimal } from "@/lib/es-py-format";
 import {
   Card,
   CardContent,
@@ -28,6 +29,7 @@ import {
   userFacingPurchaseError,
 } from "../purchases-api";
 import {
+  PURCHASE_STATUS_HEADLINES,
   PURCHASE_STATUS_LABELS,
   formatDate,
   shortId,
@@ -57,24 +59,24 @@ function DetailRow({
  */
 function receiveErrorTitle(error: Error): string {
   if (isPurchasePermissionDenied(error)) {
-    return "Permission denied";
+    return "Sin permiso";
   }
   if (isPurchaseNotFound(error)) {
-    return "Purchase not found";
+    return "No encontramos la compra";
   }
   if (isPurchaseNotEditableConflict(error)) {
-    return "This purchase is no longer a draft";
+    return "Esta compra ya no es un borrador";
   }
   if (isPurchaseInactiveItemConflict(error)) {
-    return "A line's catalog item is inactive";
+    return "El artículo de una línea está inactivo";
   }
   if (isPurchaseUntrackedItemConflict(error)) {
-    return "A line's catalog item does not track stock";
+    return "El artículo de una línea no controla stock";
   }
   if (isPurchaseTransportError(error)) {
-    return "Could not reach the server";
+    return "No se pudo conectar con el servidor";
   }
-  return "Receive failed";
+  return "No se pudo recibir la compra";
 }
 
 /**
@@ -130,7 +132,7 @@ export function PurchaseDetail(): JSX.Element {
   });
 
   if (query.isLoading) {
-    return <p className="text-sm text-muted-foreground">Loading purchase...</p>;
+    return <p className="text-sm text-muted-foreground">Cargando compra…</p>;
   }
 
   if (query.error) {
@@ -139,10 +141,8 @@ export function PurchaseDetail(): JSX.Element {
         role="alert"
         className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
       >
-        {isPurchasePermissionDenied(query.error) && (
-          <p className="font-medium">Permission denied</p>
-        )}
-        {isPurchaseNotFound(query.error) && <p className="font-medium">Not found</p>}
+        {isPurchasePermissionDenied(query.error) && <p className="font-medium">Sin permiso</p>}
+        {isPurchaseNotFound(query.error) && <p className="font-medium">No encontrada</p>}
         <p>{userFacingPurchaseError(query.error)}</p>
       </div>
     );
@@ -150,7 +150,7 @@ export function PurchaseDetail(): JSX.Element {
 
   const purchase = query.data;
   if (!purchase) {
-    return <p className="text-sm text-muted-foreground">Purchase not found.</p>;
+    return <p className="text-sm text-muted-foreground">No encontramos la compra.</p>;
   }
 
   const isDraft = purchase.status === "DRAFT";
@@ -166,17 +166,17 @@ export function PurchaseDetail(): JSX.Element {
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
               <h1 className="truncate text-2xl font-semibold tracking-tight">
-                Purchase #{shortId(purchase.id)}
+                Compra #{shortId(purchase.id)}
               </h1>
               <p className="text-sm text-muted-foreground">
-                {PURCHASE_STATUS_LABELS[purchase.status]} purchase
+                {PURCHASE_STATUS_HEADLINES[purchase.status]}
               </p>
             </div>
             <div className="flex shrink-0 flex-wrap gap-2">
               {isDraft && (
                 <>
                   <Button type="button" variant="outline" asChild>
-                    <Link href={`/app/purchases/${purchase.id}/edit`}>Edit</Link>
+                    <Link href={`/app/purchases/${purchase.id}/edit`}>Editar</Link>
                   </Button>
                   <Button
                     type="button"
@@ -184,14 +184,14 @@ export function PurchaseDetail(): JSX.Element {
                     onClick={() => setConfirmAction("cancel")}
                     disabled={cancelMutation.isPending || receiveMutation.isPending}
                   >
-                    {cancelMutation.isPending ? "Cancelling..." : "Cancel purchase"}
+                    {cancelMutation.isPending ? "Cancelando…" : "Cancelar compra"}
                   </Button>
                   <Button
                     type="button"
                     onClick={() => setConfirmAction("receive")}
                     disabled={receiveMutation.isPending || cancelMutation.isPending}
                   >
-                    {receiveMutation.isPending ? "Receiving..." : "Receive purchase"}
+                    {receiveMutation.isPending ? "Recibiendo…" : "Recibir compra"}
                   </Button>
                 </>
               )}
@@ -237,10 +237,10 @@ export function PurchaseDetail(): JSX.Element {
           role="status"
           className="rounded-lg border border-border bg-muted p-4 text-sm text-foreground"
         >
-          <p className="font-medium">Purchase received</p>
+          <p className="font-medium">Recepción registrada</p>
           <p>
-            Stock has been written for every line and the purchase is now RECEIVED. This cannot be
-            undone by editing.
+            Se registró el stock de todas las líneas y la compra quedó recibida. Esto no se corrige
+            editando.
           </p>
         </div>
       )}
@@ -254,8 +254,8 @@ export function PurchaseDetail(): JSX.Element {
           <p>{userFacingPurchaseError(receiveMutation.error)}</p>
           {isPurchaseNotEditableConflict(receiveMutation.error) && (
             <p className="mt-1 text-xs">
-              The purchase already moved on, so this was not applied. Reload to see its current
-              status; retrying the same receive will not change it.
+              La compra ya cambió de estado, así que esto no se aplicó. Recargá para ver su estado
+              actual; repetir la recepción no la va a cambiar.
             </p>
           )}
         </div>
@@ -268,10 +268,10 @@ export function PurchaseDetail(): JSX.Element {
         >
           <p className="font-medium">
             {isPurchaseNotEditableConflict(cancelMutation.error)
-              ? "This purchase is no longer a draft"
+              ? "Esta compra ya no es un borrador"
               : isPurchasePermissionDenied(cancelMutation.error)
-                ? "Permission denied"
-                : "Cancel failed"}
+                ? "Sin permiso"
+                : "No se pudo cancelar la compra"}
           </p>
           <p>{userFacingPurchaseError(cancelMutation.error)}</p>
         </div>
@@ -279,34 +279,34 @@ export function PurchaseDetail(): JSX.Element {
 
       <Card>
         <CardHeader>
-          <CardTitle>Purchase details</CardTitle>
+          <CardTitle>Detalle de la compra</CardTitle>
           <CardDescription>
-            Read-only view. No status control and no delete: the transitions are the explicit
-            receive and cancel actions above.
+            Vista de solo lectura. Sin control de estado ni eliminación: los cambios de estado son
+            las acciones explícitas de recibir y cancelar de arriba.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
-          <DetailRow label="Supplier" value={supplierNames.nameFor(purchase.supplierId)} />
-          <DetailRow label="Status" value={PURCHASE_STATUS_LABELS[purchase.status]} />
+          <DetailRow label="Proveedor" value={supplierNames.nameFor(purchase.supplierId)} />
+          <DetailRow label="Estado" value={PURCHASE_STATUS_LABELS[purchase.status]} />
           <DetailRow
-            label="Branch"
+            label="Sucursal"
             value={
               workingBranches.branches.find((branch) => branch.id === purchase.branchId)?.name ??
-              "Another branch"
+              "Otra sucursal"
             }
           />
-          <DetailRow label="Reference" value={`#${shortId(purchase.id)}`} />
-          <DetailRow label="Created" value={formatDate(purchase.createdAt)} />
-          <DetailRow label="Updated" value={formatDate(purchase.updatedAt)} />
+          <DetailRow label="Referencia" value={`#${shortId(purchase.id)}`} />
+          <DetailRow label="Creada" value={formatDate(purchase.createdAt)} />
+          <DetailRow label="Actualizada" value={formatDate(purchase.updatedAt)} />
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle>Lines</CardTitle>
+          <CardTitle>Líneas</CardTitle>
           <CardDescription>
-            {purchase.lines.length} {purchase.lines.length === 1 ? "line" : "lines"}. Quantities and
-            costs are the API&apos;s exact decimal strings; no total is derived.
+            {purchase.lines.length} {purchase.lines.length === 1 ? "línea" : "líneas"}. Cantidades y
+            costos tal como se registraron; no se calcula ningún total.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
@@ -318,9 +318,11 @@ export function PurchaseDetail(): JSX.Element {
               <span className="min-w-0 flex-1 truncate text-foreground">
                 {catalogItemNames.nameFor(line.catalogItemId)}
               </span>
-              <span className="text-muted-foreground">Qty {line.quantity}</span>
+              <span className="text-muted-foreground">{`Cant. ${formatEsPyDecimal(line.quantity)}`}</span>
               <span className="text-right font-medium text-foreground">
-                {line.unitCost === null ? "No unit cost" : `Unit cost ${line.unitCost}`}
+                {line.unitCost === null
+                  ? "Sin costo unitario"
+                  : `Costo unitario ${formatEsPyDecimal(line.unitCost)}`}
               </span>
             </div>
           ))}

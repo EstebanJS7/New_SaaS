@@ -12,6 +12,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@newsaas/ui/components/ui/card";
+import { formatEsPyInstant } from "@/lib/es-py-format";
 import {
   fetchImport,
   fetchImportSummary,
@@ -31,9 +32,11 @@ import {
 import {
   IMPORTS_READ_PERMISSION,
   IMPORTS_RUN_PERMISSION,
+  importJobStateLabel,
   importPhaseNotice,
   importRowMessageText,
   importRowReasonText,
+  importRowStatusLabel,
   importRowWarningText,
   nextImportAction,
   permissionGranted,
@@ -48,13 +51,13 @@ const controlButtonClassName = "min-w-24";
 type ImportCommand = "preview" | "commit";
 
 const COMMAND_LABELS: Readonly<Record<ImportCommand, string>> = {
-  preview: "Preview",
-  commit: "Commit",
+  preview: "Previsualizar",
+  commit: "Confirmar",
 };
 
 const COMMAND_PENDING_LABELS: Readonly<Record<ImportCommand, string>> = {
-  preview: "Queueing preview...",
-  commit: "Queueing commit...",
+  preview: "Iniciando previsualización…",
+  commit: "Iniciando confirmación…",
 };
 
 export interface ImportsDetailProps {
@@ -159,14 +162,14 @@ export function ImportsDetail({
       <header className="space-y-1">
         <p className="text-sm text-muted-foreground">
           <Link href="/app/imports" className="text-primary underline-offset-4 hover:underline">
-            Imports
+            Importaciones
           </Link>
         </p>
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Import</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Importación</h1>
         <p className="text-sm text-muted-foreground">
           {job === undefined
-            ? "One import, its state, and the verdict for every row it read."
-            : `A ${IMPORT_ENTITY_LABELS[job.entity]} import. Every verdict below is the server's.`}
+            ? "Una importación, su estado y el resultado de cada fila que leyó."
+            : `Importación de ${IMPORT_ENTITY_LABELS[job.entity].toLowerCase()}. Cada resultado de abajo lo decidió el servidor.`}
         </p>
         <p data-testid="imports-detail-id" className="font-mono text-xs text-muted-foreground">
           {importId}
@@ -179,14 +182,14 @@ export function ImportsDetail({
           data-testid="imports-permission-denied"
           className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
         >
-          <p className="font-medium">Imports are not available to this account</p>
-          <p>Reading an import requires the imports.read permission.</p>
+          <p className="font-medium">Las importaciones no están disponibles para esta cuenta</p>
+          <p>Ver una importación requiere el permiso imports.read.</p>
         </div>
       )}
 
       {canRead && detail.isLoading && (
         <p data-testid="imports-loading" className="text-sm text-muted-foreground">
-          Loading the import...
+          Cargando la importación…
         </p>
       )}
 
@@ -196,7 +199,7 @@ export function ImportsDetail({
           data-testid="imports-permission-denied"
           className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
         >
-          <p className="font-medium">Imports are not available to this account</p>
+          <p className="font-medium">Las importaciones no están disponibles para esta cuenta</p>
           <p>{userFacingImportError(detailError)}</p>
         </div>
       )}
@@ -207,9 +210,9 @@ export function ImportsDetail({
           data-testid="imports-error"
           className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
         >
-          <p className="font-medium">The import could not be loaded</p>
-          {/* The API's own sentence, verbatim. A foreign or unknown id answers the
-              same body, so this is also the "not found" state. */}
+          <p className="font-medium">No se pudo cargar la importación</p>
+          {/* A foreign or unknown id answers the same `404`, so this is also the
+              "not found" state. */}
           <p>{userFacingImportError(detailError)}</p>
         </div>
       )}
@@ -228,31 +231,31 @@ export function ImportsDetail({
 
           <Card data-testid="imports-summary-card">
             <CardHeader>
-              <CardTitle>State and counters</CardTitle>
+              <CardTitle>Estado y conteos</CardTitle>
               <CardDescription>
-                Written by the transition that produced them, so they cannot disagree with what the
-                import actually did.
+                Los registra la misma transición que los produjo, así que coinciden con lo que la
+                importación realmente hizo.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <Field label="Entity" testId="imports-entity">
+                <Field label="Entidad" testId="imports-entity">
                   {IMPORT_ENTITY_LABELS[job.entity]}
                 </Field>
-                <Field label="State" testId="imports-state">
-                  {job.state}
+                <Field label="Estado" testId="imports-state">
+                  {importJobStateLabel(job.state)}
                 </Field>
-                <Field label="Rows created" testId="imports-created">
+                <Field label="Filas creadas" testId="imports-created">
                   {job.createdCount}
                 </Field>
-                <Field label="Rows failed" testId="imports-failed">
+                <Field label="Filas con error" testId="imports-failed">
                   {job.failedCount}
                 </Field>
-                <Field label="Suspected duplicates" testId="imports-suspected">
+                <Field label="Posibles duplicados" testId="imports-suspected">
                   {job.suspectedDuplicateCount}
                 </Field>
-                <Field label="Uploaded at" testId="imports-created-at">
-                  <time dateTime={job.createdAt}>{job.createdAt}</time>
+                <Field label="Subida el" testId="imports-created-at">
+                  <time dateTime={job.createdAt}>{formatEsPyInstant(job.createdAt)}</time>
                 </Field>
               </dl>
 
@@ -262,15 +265,15 @@ export function ImportsDetail({
                   data-testid="imports-failure-reason"
                   className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
                 >
-                  <p className="font-medium">The import failed</p>
+                  <p className="font-medium">La importación falló</p>
                   <p>{job.failureReason}</p>
                 </div>
               )}
 
               <p data-testid="imports-artefact" className="text-xs text-muted-foreground">
                 {job.artefactDeletedAt === null
-                  ? `The uploaded file is removed after ${job.artefactExpiresAt}.`
-                  : `The uploaded file was removed at ${job.artefactDeletedAt}.`}
+                  ? `El archivo subido se elimina después del ${formatEsPyInstant(job.artefactExpiresAt)}.`
+                  : `El archivo subido se eliminó el ${formatEsPyInstant(job.artefactDeletedAt)}.`}
               </p>
 
               {canRun && action !== null && (
@@ -286,8 +289,8 @@ export function ImportsDetail({
                   </Button>
                   <p className="text-xs text-muted-foreground">
                     {action === "preview"
-                      ? "The preview validates every row and writes nothing."
-                      : "The commit writes the rows the preview accepted. It cannot be undone from here."}
+                      ? "La previsualización valida cada fila y no guarda nada."
+                      : "La confirmación guarda las filas que aceptó la previsualización. No se puede deshacer desde acá."}
                   </p>
                 </div>
               )}
@@ -298,7 +301,7 @@ export function ImportsDetail({
                   data-testid="imports-command-error"
                   className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
                 >
-                  <p className="font-medium">The command was refused</p>
+                  <p className="font-medium">El comando fue rechazado</p>
                   <p>{userFacingImportError(command.error)}</p>
                 </div>
               )}
@@ -307,16 +310,17 @@ export function ImportsDetail({
 
           <Card data-testid="imports-outcomes">
             <CardHeader>
-              <CardTitle>Row outcomes</CardTitle>
+              <CardTitle>Resultados por fila</CardTitle>
               <CardDescription>
-                One stored verdict per data row, in the file&apos;s own order. An errored row and a
-                suspected duplicate are different facts, and both are stated in words.
+                Un resultado guardado por cada fila de datos, en el orden del archivo. Una fila con
+                error y un posible duplicado son hechos distintos, y los dos se indican con
+                palabras.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               {summary.isLoading && (
                 <p data-testid="imports-summary-loading" className="text-sm text-muted-foreground">
-                  Loading the row outcomes...
+                  Cargando los resultados de filas…
                 </p>
               )}
 
@@ -326,7 +330,7 @@ export function ImportsDetail({
                   data-testid="imports-summary-error"
                   className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
                 >
-                  <p className="font-medium">The row outcomes could not be loaded</p>
+                  <p className="font-medium">No se pudieron cargar los resultados de filas</p>
                   <p>{userFacingImportError(summary.error)}</p>
                 </div>
               )}
@@ -339,8 +343,8 @@ export function ImportsDetail({
                       className="text-sm text-muted-foreground"
                     >
                       {job.state === "UPLOADED"
-                        ? "No row outcomes are stored yet: the file has not been previewed."
-                        : "No row outcomes are stored for this import."}
+                        ? "Todavía no hay resultados de filas guardados: el archivo no se previsualizó."
+                        : "No hay resultados de filas guardados para esta importación."}
                     </p>
                   ) : (
                     <OutcomeTable summary={summary.data} />
@@ -364,7 +368,7 @@ export function ImportsDetail({
                           setOffset((current) => Math.max(0, current - IMPORT_SUMMARY_PAGE_SIZE));
                         }}
                       >
-                        Previous
+                        Anterior
                       </Button>
                       <Button
                         type="button"
@@ -377,7 +381,7 @@ export function ImportsDetail({
                           setOffset((current) => current + IMPORT_SUMMARY_PAGE_SIZE);
                         }}
                       >
-                        Next
+                        Siguiente
                       </Button>
                     </div>
                   </div>
@@ -427,19 +431,19 @@ function OutcomeTable({ summary }: { readonly summary: ImportSummary }): JSX.Ele
         <thead className="bg-secondary text-secondary-foreground">
           <tr>
             <th scope="col" className="px-3 py-2 text-left font-medium">
-              Row
+              Fila
             </th>
             <th scope="col" className="px-3 py-2 text-left font-medium">
-              Status
+              Resultado
             </th>
             <th scope="col" className="px-3 py-2 text-left font-medium">
-              Reason
+              Motivo
             </th>
             <th scope="col" className="px-3 py-2 text-left font-medium">
-              Message
+              Mensaje
             </th>
             <th scope="col" className="px-3 py-2 text-left font-medium">
-              Warning
+              Advertencia
             </th>
           </tr>
         </thead>
@@ -457,7 +461,7 @@ function OutcomeTable({ summary }: { readonly summary: ImportSummary }): JSX.Ele
                 data-testid="imports-outcome-status"
                 className="whitespace-nowrap px-3 py-2 font-medium text-foreground"
               >
-                {row.status}
+                {importRowStatusLabel(row.status)}
               </td>
               <td
                 data-testid="imports-outcome-reason"

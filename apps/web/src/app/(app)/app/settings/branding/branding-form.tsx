@@ -73,11 +73,35 @@ function formStateToOverrides(state: FormState): BrandOverride {
   return overrides;
 }
 
+/**
+ * A refused branding request, carrying the API's stable error code. Anything
+ * else thrown by a fetcher is a request that never reached the server.
+ */
+class BrandingRequestError extends Error {
+  readonly code: string;
+  readonly status: number;
+
+  constructor(code: string, message: string, status: number) {
+    super(message);
+    this.name = "BrandingRequestError";
+    this.code = code;
+    this.status = status;
+  }
+}
+
+async function parseBrandingError(response: Response): Promise<BrandingRequestError> {
+  const body = (await response.json().catch(() => ({}))) as Partial<ApiErrorEnvelope>;
+  return new BrandingRequestError(
+    body.error?.code ?? "UNKNOWN",
+    body.error?.message ?? `HTTP ${response.status}`,
+    response.status
+  );
+}
+
 async function fetchBranding(): Promise<BrandingResponse> {
   const response = await fetch("/api/branding/current", { cache: "no-store" });
   if (!response.ok) {
-    const body = (await response.json().catch(() => ({}))) as ApiErrorEnvelope;
-    throw new Error(body.error?.message ?? `Failed to load branding (${response.status})`);
+    throw await parseBrandingError(response);
   }
   return response.json() as Promise<BrandingResponse>;
 }
@@ -89,8 +113,7 @@ async function saveBranding(overrides: BrandOverride): Promise<BrandingResponse>
     body: JSON.stringify({ overrides }),
   });
   if (!response.ok) {
-    const body = (await response.json().catch(() => ({}))) as ApiErrorEnvelope;
-    throw new Error(body.error?.message ?? `Failed to save branding (${response.status})`);
+    throw await parseBrandingError(response);
   }
   return response.json() as Promise<BrandingResponse>;
 }
@@ -102,8 +125,7 @@ async function resetBranding(): Promise<BrandingResponse> {
     body: JSON.stringify({}),
   });
   if (!response.ok) {
-    const body = (await response.json().catch(() => ({}))) as ApiErrorEnvelope;
-    throw new Error(body.error?.message ?? `Failed to reset branding (${response.status})`);
+    throw await parseBrandingError(response);
   }
   return response.json() as Promise<BrandingResponse>;
 }
@@ -111,8 +133,8 @@ async function resetBranding(): Promise<BrandingResponse> {
 type AssetKind = "logoLight" | "logoDark" | "favicon";
 
 const ASSET_KIND_LABELS: Record<AssetKind, string> = {
-  logoLight: "Logo light",
-  logoDark: "Logo dark",
+  logoLight: "Logo claro",
+  logoDark: "Logo oscuro",
   favicon: "Favicon",
 };
 
@@ -134,8 +156,7 @@ async function uploadAsset(kind: AssetKind, file: File): Promise<AssetUploadResu
     cache: "no-store",
   });
   if (!response.ok) {
-    const body = (await response.json().catch(() => ({}))) as ApiErrorEnvelope;
-    throw new Error(body.error?.message ?? `Failed to upload ${kind} (${response.status})`);
+    throw await parseBrandingError(response);
   }
   return response.json() as Promise<AssetUploadResult>;
 }
@@ -146,24 +167,34 @@ async function removeAsset(kind: AssetKind): Promise<{ kind: AssetKind; removed:
     cache: "no-store",
   });
   if (!response.ok) {
-    const body = (await response.json().catch(() => ({}))) as ApiErrorEnvelope;
-    throw new Error(body.error?.message ?? `Failed to remove ${kind} (${response.status})`);
+    throw await parseBrandingError(response);
   }
   return response.json() as Promise<{ kind: AssetKind; removed: boolean }>;
 }
 
+/** The sentence a failed branding request shows; never the API's English text. */
 function userFacingErrorMessage(error: Error): string {
-  const message = error.message;
-  if (message.includes("Authentication required") || message.includes("UNAUTHENTICATED")) {
-    return "You must be signed in to manage branding.";
+  if (!(error instanceof BrandingRequestError)) {
+    return "No se pudo conectar con el servidor. Revisá tu conexión y volvé a intentar.";
   }
-  if (message.includes("Access denied") || message.includes("FORBIDDEN")) {
-    return "You do not have permission to manage branding.";
+  switch (error.code) {
+    case "UNAUTHENTICATED":
+      return "Iniciá sesión para gestionar la marca.";
+    case "FORBIDDEN":
+      return "No tenés permiso para gestionar la marca.";
+    case "FEATURE_NOT_ENTITLED":
+      return "La marca personalizada no está habilitada para esta organización.";
+    case "BRAND_OVERRIDE_INVALID_VALUE":
+    case "BRAND_OVERRIDE_UNKNOWN_KEY":
+    case "BRAND_OVERRIDE_UNSUPPORTED_SCHEMA_VERSION":
+      return "Revisá los valores de la marca: alguno no tiene un formato válido.";
+    case "PAYLOAD_TOO_LARGE":
+      return "El archivo supera el tamaño permitido: hasta 2 MB para los logos y 512 KB para el favicon.";
+    case "VALIDATION_FAILED":
+      return "Revisá los datos: los archivos deben ser PNG, WebP o ICO y los valores, válidos.";
+    default:
+      return "No pudimos completar la operación de marca. Volvé a intentar.";
   }
-  if (message.includes("feature is not enabled") || message.includes("FEATURE_NOT_ENTITLED")) {
-    return "Custom branding is not enabled for this tenant.";
-  }
-  return message;
 }
 
 /**
@@ -286,21 +317,23 @@ export function BrandingForm(): JSX.Element {
 
       <Card>
         <CardHeader>
-          <CardTitle>Brand tokens</CardTitle>
+          <CardTitle>Apariencia de la marca</CardTitle>
           <CardDescription>
-            Customize the visual tokens used by the staff shell. Changes are previewed locally until
-            you save.
+            Personalizá los colores y la forma que usa la interfaz del personal. Los cambios se ven
+            en la vista previa hasta que guardás.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {query.isLoading ? (
-            <div className="text-sm text-muted-foreground">Loading branding settings...</div>
+            <div className="text-sm text-muted-foreground">
+              Cargando la configuración de marca...
+            </div>
           ) : (
             <>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <label htmlFor="primary" className="text-sm font-medium">
-                    Primary color
+                    Color primario
                   </label>
                   <input
                     id="primary"
@@ -309,14 +342,14 @@ export function BrandingForm(): JSX.Element {
                     onChange={(event) =>
                       setFormState((previous) => ({ ...previous, primary: event.target.value }))
                     }
-                    placeholder="hsl(...) or #rrggbb"
+                    placeholder="hsl(...) o #rrggbb"
                     disabled={disabled}
                     className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                   />
                 </div>
                 <div className="space-y-2">
                   <label htmlFor="accent" className="text-sm font-medium">
-                    Accent color
+                    Color de acento
                   </label>
                   <input
                     id="accent"
@@ -325,14 +358,14 @@ export function BrandingForm(): JSX.Element {
                     onChange={(event) =>
                       setFormState((previous) => ({ ...previous, accent: event.target.value }))
                     }
-                    placeholder="hsl(...) or #rrggbb"
+                    placeholder="hsl(...) o #rrggbb"
                     disabled={disabled}
                     className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                   />
                 </div>
                 <div className="space-y-2">
                   <label htmlFor="radius" className="text-sm font-medium">
-                    Radius
+                    Radio de bordes
                   </label>
                   <input
                     id="radius"
@@ -348,7 +381,7 @@ export function BrandingForm(): JSX.Element {
                 </div>
                 <div className="space-y-2">
                   <label htmlFor="defaultAppearance" className="text-sm font-medium">
-                    Default appearance
+                    Apariencia predeterminada
                   </label>
                   <select
                     id="defaultAppearance"
@@ -362,9 +395,9 @@ export function BrandingForm(): JSX.Element {
                     disabled={disabled}
                     className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    <option value="light">Light</option>
-                    <option value="dark">Dark</option>
-                    <option value="system">System</option>
+                    <option value="light">Clara</option>
+                    <option value="dark">Oscura</option>
+                    <option value="system">Según el sistema</option>
                   </select>
                 </div>
               </div>
@@ -375,7 +408,7 @@ export function BrandingForm(): JSX.Element {
                   onClick={() => saveMutation.mutate(formStateToOverrides(formState))}
                   disabled={disabled}
                 >
-                  {saveMutation.isPending ? "Saving..." : "Save"}
+                  {saveMutation.isPending ? "Guardando..." : "Guardar"}
                 </Button>
                 <Button
                   type="button"
@@ -383,13 +416,17 @@ export function BrandingForm(): JSX.Element {
                   onClick={() => resetMutation.mutate()}
                   disabled={disabled}
                 >
-                  {resetMutation.isPending ? "Resetting..." : "Reset to default"}
+                  {resetMutation.isPending
+                    ? "Restableciendo..."
+                    : "Restablecer valores predeterminados"}
                 </Button>
                 {saveSuccess && (
-                  <span className="text-sm text-status-success">Branding saved.</span>
+                  <span className="text-sm text-status-success">Marca guardada.</span>
                 )}
                 {resetSuccess && (
-                  <span className="text-sm text-status-success">Branding reset to default.</span>
+                  <span className="text-sm text-status-success">
+                    Marca restablecida a los valores predeterminados.
+                  </span>
                 )}
               </div>
             </>
@@ -399,15 +436,17 @@ export function BrandingForm(): JSX.Element {
 
       <Card>
         <CardHeader>
-          <CardTitle>Identity assets</CardTitle>
+          <CardTitle>Recursos de identidad</CardTitle>
           <CardDescription>
-            Upload logos and a favicon. Files must be PNG, WebP, or ICO. Logos may be up to 2 MB;
-            favicons up to 512 KB.
+            Subí los logos y un favicon. Los archivos deben ser PNG, WebP o ICO. Los logos pueden
+            pesar hasta 2 MB y el favicon, hasta 512 KB.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           {query.isLoading ? (
-            <div className="text-sm text-muted-foreground">Loading identity assets...</div>
+            <div className="text-sm text-muted-foreground">
+              Cargando los recursos de identidad...
+            </div>
           ) : (
             <>
               {(["logoLight", "logoDark", "favicon"] as AssetKind[]).map((kind) => {
@@ -432,8 +471,8 @@ export function BrandingForm(): JSX.Element {
                           data-testid={`asset-remove-${kind}`}
                         >
                           {removeMutation.isPending && removeMutation.variables === kind
-                            ? "Removing..."
-                            : "Remove"}
+                            ? "Quitando..."
+                            : "Quitar"}
                         </Button>
                       ) : null}
                     </div>
@@ -441,7 +480,7 @@ export function BrandingForm(): JSX.Element {
                     {currentUrl ? (
                       <img
                         src={currentUrl}
-                        alt={`${ASSET_KIND_LABELS[kind]} preview`}
+                        alt={`Vista previa: ${ASSET_KIND_LABELS[kind]}`}
                         width={kind === "favicon" ? 32 : 120}
                         height={kind === "favicon" ? 32 : 40}
                         className={
@@ -476,8 +515,8 @@ export function BrandingForm(): JSX.Element {
                           data-testid={`asset-upload-${kind}`}
                         >
                           {uploadMutation.isPending && uploadMutation.variables?.kind === kind
-                            ? "Uploading..."
-                            : "Upload"}
+                            ? "Subiendo..."
+                            : "Subir"}
                         </Button>
                         <Button
                           type="button"
@@ -494,7 +533,7 @@ export function BrandingForm(): JSX.Element {
                           }}
                           disabled={disabled}
                         >
-                          Clear
+                          Limpiar
                         </Button>
                       </div>
                     ) : null}

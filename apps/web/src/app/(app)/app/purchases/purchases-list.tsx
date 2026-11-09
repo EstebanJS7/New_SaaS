@@ -40,21 +40,21 @@ function PurchaseCard({
             href={`/app/purchases/${purchase.id}`}
             className="truncate font-medium text-primary hover:underline"
           >
-            Purchase #{shortId(purchase.id)}
+            Compra #{shortId(purchase.id)}
           </Link>
           <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
             {PURCHASE_STATUS_LABELS[purchase.status]}
           </span>
         </div>
         <p className="text-sm text-muted-foreground">
-          {supplierName} · {purchase.lines.length} {purchase.lines.length === 1 ? "line" : "lines"}{" "}
-          · {formatDate(purchase.createdAt)}
+          {supplierName} · {purchase.lines.length}{" "}
+          {purchase.lines.length === 1 ? "línea" : "líneas"} · {formatDate(purchase.createdAt)}
         </p>
       </div>
       <div className="flex shrink-0 gap-2">
         {purchase.status === "DRAFT" && (
           <Button type="button" variant="outline" size="sm" asChild>
-            <Link href={`/app/purchases/${purchase.id}/edit`}>Edit</Link>
+            <Link href={`/app/purchases/${purchase.id}/edit`}>Editar</Link>
           </Button>
         )}
       </div>
@@ -87,29 +87,28 @@ export function PurchaseList(): JSX.Element {
     queryFn: () => listPurchases({ status: status === "" ? undefined : status }),
   });
 
-  const emptyTitle = status === "" ? "No purchases yet" : "No purchases match this filter";
+  const emptyTitle =
+    status === "" ? "Todavía no hay compras" : "Ninguna compra coincide con este filtro";
   const emptyDescription =
-    status === ""
-      ? "Get started by drafting the first purchase for this tenant."
-      : "Try a different lifecycle status.";
+    status === "" ? "Empezá registrando el primer borrador de compra." : "Probá con otro estado.";
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Purchases</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Compras</h1>
           <p className="text-sm text-muted-foreground">
-            Draft, receive and cancel the purchases this tenant makes.
+            Registrá, recibí y cancelá las compras de la organización.
           </p>
         </div>
         <Button type="button" asChild>
-          <Link href="/app/purchases/new">New purchase</Link>
+          <Link href="/app/purchases/new">Nueva compra</Link>
         </Button>
       </div>
 
       <div className="space-y-2 sm:max-w-xs">
         <label htmlFor="purchase-status-filter" className="text-sm font-medium">
-          Status
+          Estado
         </label>
         <select
           id="purchase-status-filter"
@@ -117,7 +116,7 @@ export function PurchaseList(): JSX.Element {
           onChange={(event) => setStatus(event.target.value as PurchaseStatus | "")}
           className={selectClassName}
         >
-          <option value="">All statuses</option>
+          <option value="">Todos los estados</option>
           {PURCHASE_STATUSES.map((value) => (
             <option key={value} value={value}>
               {PURCHASE_STATUS_LABELS[value]}
@@ -129,7 +128,7 @@ export function PurchaseList(): JSX.Element {
       {query.isLoading ? (
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">Loading purchases...</p>
+            <p className="text-sm text-muted-foreground">Cargando compras…</p>
           </CardContent>
         </Card>
       ) : query.error ? (
@@ -137,9 +136,7 @@ export function PurchaseList(): JSX.Element {
           role="alert"
           className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
         >
-          {isPurchasePermissionDenied(query.error) && (
-            <p className="font-medium">Permission denied</p>
-          )}
+          {isPurchasePermissionDenied(query.error) && <p className="font-medium">Sin permiso</p>}
           <p>{userFacingPurchaseError(query.error)}</p>
         </div>
       ) : query.data?.length === 0 ? (
@@ -150,7 +147,7 @@ export function PurchaseList(): JSX.Element {
           </CardHeader>
           <CardContent>
             <Button type="button" asChild>
-              <Link href="/app/purchases/new">Draft purchase</Link>
+              <Link href="/app/purchases/new">Crear borrador de compra</Link>
             </Button>
           </CardContent>
         </Card>

@@ -2,6 +2,7 @@
 
 import type { JSX } from "react";
 import Link from "next/link";
+import { formatEsPyDateOnly } from "@/lib/es-py-format";
 import type { ReportResponse } from "./reports-api";
 
 /**
@@ -30,16 +31,16 @@ export function ReportEmptyState({ response }: { readonly response: ReportRespon
       return response.thresholdsConfigured ? (
         <EmptyPanel
           testId="report-empty-low-stock-clear"
-          title="No item is at or below its threshold"
-          body="Thresholds are configured and every tracked item sits above its own, so nothing needs restocking today."
+          title="Ningún ítem está en su umbral o por debajo"
+          body="Hay umbrales configurados y cada ítem controlado está por encima del suyo, así que hoy no hace falta reponer nada."
           action={null}
         />
       ) : (
         <EmptyPanel
           testId="report-empty-low-stock-thresholds"
-          title="No item has a low-stock threshold yet"
-          body="This report lists only items whose own threshold has been set, and none has: no threshold means the item is not monitored. It stays empty by design until a threshold is entered on a catalog item — not because stock is healthy."
-          action={{ href: "/app/catalog", label: "Open the catalog to set a threshold" }}
+          title="Ningún ítem tiene un umbral de stock bajo todavía"
+          body="Este informe lista solo los ítems que tienen su propio umbral cargado, y ninguno lo tiene: sin umbral, el ítem no se controla. Queda vacío a propósito hasta que cargues un umbral en un ítem del catálogo, no porque el stock esté bien."
+          action={{ href: "/app/catalog", label: "Abrí el catálogo para cargar un umbral" }}
         />
       );
     case "vaccines-due":
@@ -49,11 +50,14 @@ export function ReportEmptyState({ response }: { readonly response: ReportRespon
           testId="report-empty-due"
           title={
             response.report === "vaccines-due"
-              ? "No vaccination has a due date"
-              : "No deworming treatment has a due date"
+              ? "Ninguna vacunación tiene fecha de vencimiento"
+              : "Ninguna desparasitación tiene fecha de vencimiento"
           }
-          body={`This report lists only records where staff entered the next due date; no booster interval is derived. Nothing is overdue or due within ${response.horizonDays} days from ${response.asOfDate} because no record carries a due date at all.`}
-          action={{ href: "/app/patients", label: "Open patients to record a due date" }}
+          body={`Este informe lista solo los registros en los que el personal cargó la próxima fecha de vencimiento; no se calcula ningún intervalo de refuerzo. No hay nada vencido ni por vencer dentro de ${response.horizonDays} días desde el ${formatEsPyDateOnly(response.asOfDate)} porque ningún registro tiene fecha de vencimiento.`}
+          action={{
+            href: "/app/patients",
+            label: "Abrí pacientes para cargar una fecha de vencimiento",
+          }}
         />
       );
     default: {
@@ -64,8 +68,8 @@ export function ReportEmptyState({ response }: { readonly response: ReportRespon
       return (
         <EmptyPanel
           testId="report-empty-period"
-          title="Nothing was recorded in this period"
-          body={`No row matches ${fromDate} to ${toDate} (${timeZone}).`}
+          title="No se registró nada en este período"
+          body={`No hay filas del ${formatEsPyDateOnly(fromDate)} al ${formatEsPyDateOnly(toDate)} (${timeZone}).`}
           action={null}
         />
       );

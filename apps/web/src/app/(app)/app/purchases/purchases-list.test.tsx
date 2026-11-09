@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { formatEsPyDateOnly } from "@/lib/es-py-format";
 import { PurchaseList } from "./purchases-list";
 
 const SUPPLIER_ID = "11111111-1111-4111-8111-111111111111";
@@ -110,10 +111,10 @@ describe("PurchaseList", () => {
 
     renderList();
 
-    expect(await screen.findByText("Permission denied")).toBeInTheDocument();
-    expect(screen.getByText("You do not have permission to manage purchases.")).toBeInTheDocument();
+    expect(await screen.findByText("Sin permiso")).toBeInTheDocument();
+    expect(screen.getByText("No tenés permiso para gestionar compras.")).toBeInTheDocument();
     // A refusal is never rendered as an empty list.
-    expect(screen.queryByText("No purchases yet")).not.toBeInTheDocument();
+    expect(screen.queryByText("Todavía no hay compras")).not.toBeInTheDocument();
   });
 
   it("renders an unauthenticated UX message when the API returns 401", async () => {
@@ -127,8 +128,8 @@ describe("PurchaseList", () => {
 
     renderList();
 
-    expect(await screen.findByText("You must be signed in to view purchases.")).toBeInTheDocument();
-    expect(screen.queryByText("Permission denied")).not.toBeInTheDocument();
+    expect(await screen.findByText("Iniciá sesión para ver las compras.")).toBeInTheDocument();
+    expect(screen.queryByText("Sin permiso")).not.toBeInTheDocument();
   });
 
   it("renders an explicit loading state while the list is pending", () => {
@@ -136,7 +137,7 @@ describe("PurchaseList", () => {
 
     renderList();
 
-    expect(screen.getByText("Loading purchases...")).toBeInTheDocument();
+    expect(screen.getByText("Cargando compras…")).toBeInTheDocument();
   });
 
   it("renders the empty state when the tenant has no purchases", async () => {
@@ -144,7 +145,7 @@ describe("PurchaseList", () => {
 
     renderList();
 
-    expect(await screen.findByText("No purchases yet")).toBeInTheDocument();
+    expect(await screen.findByText("Todavía no hay compras")).toBeInTheDocument();
   });
 
   it("renders a filtered empty state that names the filter", async () => {
@@ -152,10 +153,10 @@ describe("PurchaseList", () => {
 
     renderList();
 
-    await screen.findByText("No purchases yet");
-    fireEvent.change(screen.getByLabelText("Status"), { target: { value: "RECEIVED" } });
+    await screen.findByText("Todavía no hay compras");
+    fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "RECEIVED" } });
 
-    expect(await screen.findByText("No purchases match this filter")).toBeInTheDocument();
+    expect(await screen.findByText("Ninguna compra coincide con este filtro")).toBeInTheDocument();
   });
 
   it("renders the purchase reference, status and resolved supplier name", async () => {
@@ -163,12 +164,19 @@ describe("PurchaseList", () => {
 
     renderList();
 
-    expect(await screen.findByRole("link", { name: "Purchase #22222222" })).toHaveAttribute(
+    expect(await screen.findByRole("link", { name: "Compra #22222222" })).toHaveAttribute(
       "href",
       `/app/purchases/${PURCHASE_ID}`
     );
-    expect(screen.getByText("Draft", { selector: "span" })).toBeInTheDocument();
+    expect(screen.getByText("Borrador", { selector: "span" })).toBeInTheDocument();
     expect(screen.getByText(/Distribuidora Central/)).toBeInTheDocument();
+    // The creation date uses the es-PY calendar format, never the raw ISO prefix.
+    const summary = screen.getByText(/Distribuidora Central/);
+    expect(summary).toHaveTextContent(
+      `Distribuidora Central · 1 línea · ${formatEsPyDateOnly("2026-09-26")}`
+    );
+    expect(summary).toHaveTextContent("26 sept. 2026");
+    expect(summary).not.toHaveTextContent("2026-09-26");
   });
 
   it("serializes the lifecycle filter as status", async () => {
@@ -177,7 +185,7 @@ describe("PurchaseList", () => {
     renderList();
 
     await screen.findByText(/Distribuidora Central/);
-    fireEvent.change(screen.getByLabelText("Status"), { target: { value: "RECEIVED" } });
+    fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "RECEIVED" } });
 
     await waitFor(() => {
       expect(
@@ -197,7 +205,7 @@ describe("PurchaseList", () => {
 
     // The page still renders; the unreadable supplier name becomes a fragment.
     expect(await screen.findByText(/^#11111111/)).toBeInTheDocument();
-    expect(screen.queryByText("Permission denied")).not.toBeInTheDocument();
+    expect(screen.queryByText("Sin permiso")).not.toBeInTheDocument();
   });
 
   it("offers Edit only for a draft and no delete or status affordance", async () => {
@@ -207,12 +215,14 @@ describe("PurchaseList", () => {
     renderList();
 
     await screen.findByText(/Distribuidora Central/);
-    expect(screen.getByRole("link", { name: "Edit" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Editar" })).toHaveAttribute(
       "href",
       `/app/purchases/${PURCHASE_ID}/edit`
     );
-    expect(screen.queryByRole("button", { name: /delete|remove/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /receive|cancel/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /eliminar|borrar|quitar/i })
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /recibir|cancelar/i })).not.toBeInTheDocument();
 
     for (const call of fetchMock.mock.calls) {
       const init = call[1] as RequestInit | undefined;
@@ -229,7 +239,7 @@ describe("PurchaseList", () => {
     renderList();
 
     await screen.findByText(/Distribuidora Central/);
-    expect(screen.getByText("Received", { selector: "span" })).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Edit" })).not.toBeInTheDocument();
+    expect(screen.getByText("Recibida", { selector: "span" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Editar" })).not.toBeInTheDocument();
   });
 });

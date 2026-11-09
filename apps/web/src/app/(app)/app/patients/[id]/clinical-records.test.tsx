@@ -337,7 +337,9 @@ describe("clinical record entry surface", () => {
 
     renderRecords();
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Boom");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("No se pudo completar la operación. Volvé a intentar.");
+    expect(alert).not.toHaveTextContent("Boom");
   });
 
   it("surfaces a generic error for the deworming list", async () => {
@@ -348,7 +350,9 @@ describe("clinical record entry surface", () => {
 
     renderRecords();
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Deworming broke");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("No se pudo completar la operación. Volvé a intentar.");
+    expect(alert).not.toHaveTextContent("Deworming broke");
   });
 
   it("renders the permission-denied state for the vaccination list", async () => {
@@ -593,7 +597,7 @@ describe("clinical record entry surface", () => {
     });
   });
 
-  it("shows the server's validation message instead of a generic failure", async () => {
+  it("shows Spanish validation copy instead of the server's English", async () => {
     mockRecords({
       createVaccination: () =>
         jsonResponse(
@@ -610,7 +614,9 @@ describe("clinical record entry surface", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Guardar vacuna" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Invalid vaccination body.");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Revisá los datos de la ficha clínica e intentá de nuevo.");
+    expect(alert).not.toHaveTextContent("Invalid vaccination body.");
   });
 
   it("distinguishes a conflict from a validation failure in the surfaced copy", async () => {
@@ -631,7 +637,10 @@ describe("clinical record entry surface", () => {
     fireEvent.click(screen.getByRole("button", { name: "Guardar desparasitación" }));
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("The record changed elsewhere.");
+    expect(alert).toHaveTextContent(
+      "La ficha clínica cambió mientras la editabas. Actualizá los datos y revisalos antes de volver a intentar."
+    );
+    expect(alert).not.toHaveTextContent("The record changed elsewhere.");
     expect(alert).not.toHaveTextContent("Invalid");
   });
 

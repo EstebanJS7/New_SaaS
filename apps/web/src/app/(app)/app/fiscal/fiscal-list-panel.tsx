@@ -44,13 +44,15 @@ export function FiscalListPanel({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Fiscal documents</CardTitle>
-        <CardDescription>The tenant&apos;s fiscal documents, newest first.</CardDescription>
+        <CardTitle>Documentos fiscales</CardTitle>
+        <CardDescription>
+          Los documentos fiscales de la organización, del más reciente al más antiguo.
+        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-2">
           <label htmlFor="fiscal-status-filter" className="text-sm font-medium">
-            Status filter
+            Filtrar por estado
           </label>
           <select
             id="fiscal-status-filter"
@@ -58,7 +60,7 @@ export function FiscalListPanel({
             onChange={(event) => onStatusFilterChange(event.target.value as FiscalStatusFilter)}
             className={fiscalInputClassName}
           >
-            <option value="ALL">All statuses</option>
+            <option value="ALL">Todos los estados</option>
             {FISCAL_DOCUMENT_STATUSES.map((status) => (
               <option key={status} value={status}>
                 {FISCAL_STATUS_LABELS[status]}
@@ -68,13 +70,13 @@ export function FiscalListPanel({
         </div>
         {isLoading ? (
           <p data-testid="fiscal-list-loading" className="text-sm text-muted-foreground">
-            Loading fiscal documents...
+            Cargando documentos fiscales…
           </p>
         ) : loadError !== null ? (
           <FiscalErrorAlert error={loadError} testId="fiscal-list-error" />
         ) : documents.length === 0 ? (
           <p data-testid="fiscal-list-empty" className="text-sm text-muted-foreground">
-            No fiscal documents match this filter.
+            Ningún documento fiscal coincide con este filtro.
           </p>
         ) : (
           <ul className="space-y-2">
@@ -88,8 +90,8 @@ export function FiscalListPanel({
                   className="flex items-center justify-between gap-4 rounded-lg border border-border p-3"
                 >
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-foreground">{`${FISCAL_STATUS_LABELS[document.status as FiscalDocumentStatus]} fiscal document #${shortId(document.id)}`}</p>
-                    <p className="text-xs text-muted-foreground">{`${document.creditNoteId ? `Nota de crédito #${shortId(document.creditNoteId)} · de la factura` : "Invoice"} #${shortId(document.invoiceId)} · ${document.attemptCount} attempts · ${formatTimestamp(document.createdAt)}`}</p>
+                    <p className="truncate text-sm font-medium text-foreground">{`Documento fiscal #${shortId(document.id)} · ${FISCAL_STATUS_LABELS[document.status as FiscalDocumentStatus]}`}</p>
+                    <p className="text-xs text-muted-foreground">{`${document.creditNoteId ? `Nota de crédito #${shortId(document.creditNoteId)} · de la factura` : "Factura"} #${shortId(document.invoiceId)} · ${document.attemptCount === 1 ? "1 intento" : `${document.attemptCount} intentos`} · ${formatTimestamp(document.createdAt)}`}</p>
                   </div>
                   <Button
                     type="button"
@@ -98,7 +100,7 @@ export function FiscalListPanel({
                     aria-pressed={selected}
                     onClick={() => onSelectDocument(document)}
                   >
-                    {selected ? "Selected" : "Select document"}
+                    {selected ? "Seleccionado" : "Seleccionar documento"}
                   </Button>
                 </li>
               );

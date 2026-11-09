@@ -405,7 +405,9 @@ describe("Agenda", () => {
     });
     renderAgenda();
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong.");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("No se pudo completar la operación. Volvé a intentar.");
+    expect(alert).not.toHaveTextContent("Something went wrong.");
   });
 
   it("renders a permission-denied state without appointment data", async () => {

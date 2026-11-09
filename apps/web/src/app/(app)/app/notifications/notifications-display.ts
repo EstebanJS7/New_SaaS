@@ -1,3 +1,4 @@
+import { formatEsPyInstant } from "@/lib/es-py-format";
 import type { NotificationDeliveryStatus } from "./notifications-api";
 
 /**
@@ -6,22 +7,22 @@ import type { NotificationDeliveryStatus } from "./notifications-api";
  * rather than the enum's SCREAMING_CASE.
  */
 export const NOTIFICATION_STATUS_LABELS: Readonly<Record<NotificationDeliveryStatus, string>> = {
-  SCHEDULED: "Scheduled",
-  QUEUED: "Queued",
-  SENDING: "Sending",
-  SENT: "Sent",
-  FAILED: "Failed",
-  CANCELLED: "Cancelled",
+  SCHEDULED: "Programada",
+  QUEUED: "En cola",
+  SENDING: "Enviando",
+  SENT: "Enviada",
+  FAILED: "Fallida",
+  CANCELLED: "Cancelada",
 };
 
 export const NOTIFICATION_CHANNEL_LABELS: Readonly<Record<string, string>> = {
-  EMAIL: "Email",
+  EMAIL: "Correo electrónico",
   WHATSAPP: "WhatsApp",
 };
 
 export const NOTIFICATION_SOURCE_LABELS: Readonly<Record<string, string>> = {
-  APPOINTMENT: "Appointment",
-  FISCAL_DOCUMENT: "Fiscal document",
+  APPOINTMENT: "Turno",
+  FISCAL_DOCUMENT: "Documento fiscal",
 };
 
 /** Shared input styling, token-based like every other surface. */
@@ -32,11 +33,9 @@ export function shortId(id: string): string {
   return id.slice(0, 8);
 }
 
+/** An API instant in es-PY, in the clinic's zone (Asunción); unparseable input is kept. */
 export function formatTimestamp(value: string): string {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
+  return formatEsPyInstant(value);
 }
 
 /** A failed delivery shows a bounded reason; there is no raw provider message to offer. */
@@ -45,5 +44,5 @@ export function deliveryFailureReason(delivery: {
   readonly lastErrorMessage: string | null;
 }): string | null {
   if (delivery.lastErrorCode === null && delivery.lastErrorMessage === null) return null;
-  return delivery.lastErrorMessage ?? delivery.lastErrorCode ?? "Delivery failed.";
+  return delivery.lastErrorMessage ?? delivery.lastErrorCode ?? "La entrega falló.";
 }

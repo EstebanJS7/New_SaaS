@@ -57,9 +57,9 @@ export function NotificationsSurface(): JSX.Element {
   return (
     <main data-testid="notifications-surface" className="space-y-6 p-6">
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold text-foreground">Notifications</h1>
+        <h1 className="text-2xl font-semibold text-foreground">Notificaciones</h1>
         <p className="text-sm text-muted-foreground">
-          Every reminder and fiscal notice this tenant scheduled, and what happened to it.
+          Cada recordatorio y aviso fiscal que programó esta organización, y qué pasó con él.
         </p>
       </header>
       <div className="grid gap-6 lg:grid-cols-2">
@@ -70,7 +70,7 @@ export function NotificationsSurface(): JSX.Element {
           errorMessage={
             listPermissionDenied || deliveriesQuery.error === null
               ? null
-              : "The deliveries could not be loaded. Try again."
+              : "No se pudieron cargar las entregas. Volvé a intentar."
           }
           statusFilter={statusFilter}
           channelFilter={channelFilter}
@@ -86,7 +86,7 @@ export function NotificationsSurface(): JSX.Element {
           errorMessage={
             detailQuery.error === null || forbiddenDetail
               ? null
-              : "This delivery could not be loaded."
+              : "No se pudo cargar esta entrega. Volvé a intentar."
           }
         />
       </div>

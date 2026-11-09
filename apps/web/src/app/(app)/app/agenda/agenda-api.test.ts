@@ -336,7 +336,23 @@ describe("agenda-api contract", () => {
     expect(userFacingAgendaError(new ApiRequestError("UNAUTHENTICATED", "Auth", 401))).toBe(
       "Iniciá sesión para ver la agenda."
     );
-    expect(userFacingAgendaError(new Error("boom"))).toBe("boom");
+  });
+
+  it("never shows server or runtime English in the agenda fallback", () => {
+    // A transport failure (fetch rejects with a TypeError) gets the common copy.
+    expect(userFacingAgendaError(new TypeError("Failed to fetch"))).toBe(
+      "No se pudo conectar con el servidor. Revisá tu conexión y volvé a intentar."
+    );
+    // Any other unmapped failure gets generic Spanish copy, never its own text.
+    expect(userFacingAgendaError(new Error("boom"))).toBe(
+      "No se pudo completar la operación. Volvé a intentar."
+    );
+    expect(
+      userFacingAgendaError(new ApiRequestError("RATE_LIMITED", "Too many requests.", 429))
+    ).toBe("No se pudo completar la operación. Volvé a intentar.");
+    expect(
+      userFacingAgendaError(new ApiRequestError("INTERNAL", "Internal server error.", 500))
+    ).toBe("No se pudo completar la operación. Volvé a intentar.");
   });
 
   it("covers every anchor a 404 can mean without naming one cause", () => {
@@ -486,7 +502,15 @@ describe("booking-request client contract", () => {
     expect(
       userFacingBookingRequestError(new ApiRequestError("FEATURE_NOT_ENTITLED", "nope", 403))
     ).toBe("La función solicitada no está habilitada para esta organización.");
-    expect(userFacingBookingRequestError(new Error("boom"))).toBe("boom");
+    expect(userFacingBookingRequestError(new Error("boom"))).toBe(
+      "No se pudo completar la operación. Volvé a intentar."
+    );
+    expect(userFacingBookingRequestError(new TypeError("Failed to fetch"))).toBe(
+      "No se pudo conectar con el servidor. Revisá tu conexión y volvé a intentar."
+    );
+    expect(
+      userFacingBookingRequestError(new ApiRequestError("RATE_LIMITED", "Too many requests.", 429))
+    ).toBe("No se pudo completar la operación. Volvé a intentar.");
   });
 });
 

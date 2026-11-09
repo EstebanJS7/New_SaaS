@@ -48,10 +48,10 @@ export function BrandingPreview({
   return (
     <Card className="max-w-xl" style={{ borderRadius: brand.theme.radius }}>
       <CardHeader>
-        <CardTitle>Preview</CardTitle>
+        <CardTitle>Vista previa</CardTitle>
         <CardDescription>
-          This sample card reflects your local changes only. The rest of the shell updates after you
-          save.
+          Esta tarjeta de ejemplo refleja solo tus cambios locales. El resto de la interfaz se
+          actualiza cuando guardás.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -60,7 +60,7 @@ export function BrandingPreview({
             {logoLightUrl ? (
               <img
                 src={logoLightUrl}
-                alt="Logo preview"
+                alt="Vista previa del logo"
                 width={120}
                 height={40}
                 className="h-10 w-auto object-contain"
@@ -70,7 +70,7 @@ export function BrandingPreview({
             {faviconUrl ? (
               <img
                 src={faviconUrl}
-                alt="Favicon preview"
+                alt="Vista previa del favicon"
                 width={32}
                 height={32}
                 className="h-8 w-8 object-contain"
@@ -87,7 +87,7 @@ export function BrandingPreview({
             borderRadius: brand.theme.radius,
           }}
         >
-          Primary surface
+          Superficie primaria
         </div>
         <div
           className="p-4 text-sm font-medium"
@@ -97,7 +97,7 @@ export function BrandingPreview({
             borderRadius: brand.theme.radius,
           }}
         >
-          Accent surface
+          Superficie de acento
         </div>
       </CardContent>
     </Card>
