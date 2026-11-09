@@ -29,9 +29,10 @@ import type { QueryClient } from "@tanstack/react-query";
  * 3. **No request carries a tenant.** Every path here is tenant-free: the BFF
  *    refuses a `tenantId` query key outright and the API resolves the tenant from
  *    the forwarded session ([[DEC-072]]).
- * 4. **Counts and instants are printed, never reformatted.** `createdCount`,
- *    `failedCount` and `suspectedDuplicateCount` are numbers and `createdAt` is
- *    the API's ISO instant; the surface renders them as given.
+ * 4. **Counts are printed, never recomputed.** `createdCount`, `failedCount` and
+ *    `suspectedDuplicateCount` are the API's numbers; instants are the API's ISO
+ *    values, displayed in es-PY with `formatEsPyInstant` and kept machine-readable
+ *    on `<time dateTime>`.
  */
 
 // ---------------------------------------------------------------------------
@@ -45,8 +46,8 @@ export type ImportEntity = (typeof IMPORT_ENTITIES)[number];
 
 /** Human labels for the selector and the history. Presentation only; never sent. */
 export const IMPORT_ENTITY_LABELS: Readonly<Record<ImportEntity, string>> = {
-  CUSTOMER: "Customers",
-  PATIENT: "Patients",
+  CUSTOMER: "Clientes",
+  PATIENT: "Pacientes",
 };
 
 /** Every lifecycle value, in the order the machine moves through them. */
@@ -403,26 +404,56 @@ export function isImportAccessDenied(error: Error | null): boolean {
 }
 
 /**
+ * The es-PY rendering of each stable upload refusal the API sends, keyed by the
+ * API's exact sentence (`apps/api/src/imports/import-artefact.pipe.ts`).
+ *
+ * The API answers in English and every one of these refusals shares the code
+ * `VALIDATION_FAILED`, so the sentence is the only thing that says WHICH rule
+ * failed — the spreadsheet, the content type, the file count, the entity. The
+ * surface therefore keeps that explanation, in es-PY, instead of collapsing it
+ * into a generic refusal; it still does not restate the rule as a client-side
+ * check. An unknown sentence falls back to generic Spanish copy, never English.
+ */
+const UPLOAD_REFUSALS_ES: Readonly<Record<string, string>> = {
+  "Spreadsheet uploads are not supported: export the data as CSV. The accepted format is CSV (text/csv).":
+    "No se aceptan planillas de cálculo: exportá los datos como CSV. El formato aceptado es CSV (text/csv).",
+  "The import file must be CSV. The accepted content types are text/csv and application/csv.":
+    "El archivo debe ser CSV. Los tipos de contenido aceptados son text/csv y application/csv.",
+  "An import requires one uploaded file.": "La importación requiere un archivo.",
+  "An import accepts exactly one uploaded file.": "La importación acepta un solo archivo.",
+  "An import must be uploaded as a multipart/form-data request.":
+    "La importación debe enviarse como un formulario multipart/form-data.",
+  "The entity field is required and must be CUSTOMER or PATIENT.":
+    "Elegí qué importar: clientes o pacientes.",
+};
+
+/**
  * The sentence a surface shows for a failed read or a refused command.
  *
- * An upload's refusals — the spreadsheet, the wrong content type, the size cap,
- * the entity field — return the API's OWN message verbatim. That sentence is the
- * explanation ("Spreadsheet uploads are not supported: export the data as
- * CSV..."), so this surface must not paraphrase it into "Something went wrong",
- * and it must not restate the rule as a client-side check either: the accepted
- * format is stated next to the picker, and WHICH formats are accepted is the
- * server's answer.
+ * Copy only: the code that decides each branch is the API's, and the backend
+ * still enforces every rule. Server text is never shown, because it is English.
  */
 export function userFacingImportError(error: Error): string {
   if (!(error instanceof ImportRequestError)) {
-    return "The request could not reach the server. Check your connection and try again.";
+    return "No se pudo conectar con el servidor. Revisá tu conexión y volvé a intentar.";
   }
   switch (error.code) {
     case "UNAUTHENTICATED":
-      return "You must be signed in to work with imports.";
+      return "Tenés que iniciar sesión para trabajar con importaciones.";
     case "FORBIDDEN":
-      return "You do not have permission to work with imports.";
+      return "No tenés permiso para trabajar con importaciones.";
+    case "NOT_FOUND":
+      return "No encontramos la importación.";
+    case "CONFLICT":
+      return "La importación no está en un estado que permita esta acción.";
+    case "PAYLOAD_TOO_LARGE":
+      return "El archivo supera el tamaño máximo permitido.";
+    case "VALIDATION_FAILED":
+      return (
+        UPLOAD_REFUSALS_ES[error.message] ??
+        "La solicitud no es válida. Revisá los datos y volvé a intentar."
+      );
     default:
-      return error.message;
+      return "No se pudo completar la operación. Volvé a intentar.";
   }
 }

@@ -12,6 +12,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@newsaas/ui/components/ui/card";
+import { formatEsPyInstant } from "@/lib/es-py-format";
 import {
   fetchImports,
   IMPORT_ENTITIES,
@@ -31,6 +32,7 @@ import {
 import {
   IMPORTS_READ_PERMISSION,
   IMPORTS_RUN_PERMISSION,
+  importJobStateLabel,
   nextImportAction,
   permissionGranted,
 } from "./imports-display";
@@ -42,8 +44,8 @@ const controlClassName =
 type ImportCommand = "preview" | "commit";
 
 const COMMAND_LABELS: Readonly<Record<ImportCommand, string>> = {
-  preview: "Preview",
-  commit: "Commit",
+  preview: "Previsualizar",
+  commit: "Confirmar",
 };
 
 /**
@@ -154,11 +156,11 @@ export function ImportsIndex({ permissions }: ImportsIndexProps = {}): JSX.Eleme
   return (
     <div data-testid="imports-index" className="mx-auto max-w-5xl space-y-6">
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Imports</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Importaciones</h1>
         <p className="text-sm text-muted-foreground">
-          Upload a file, preview exactly what it will do, and read why each row did or did not
-          become a record. Every import runs in the background: this screen accepts the file and
-          tells you what it is waiting for.
+          Subí un archivo, previsualizá exactamente qué va a hacer y revisá por qué cada fila se
+          convirtió o no en un registro. Cada importación se procesa en segundo plano: esta pantalla
+          acepta el archivo y te indica qué está esperando.
         </p>
       </header>
 
@@ -168,17 +170,17 @@ export function ImportsIndex({ permissions }: ImportsIndexProps = {}): JSX.Eleme
       {canRun && (
         <Card data-testid="imports-upload">
           <CardHeader>
-            <CardTitle>Upload a file</CardTitle>
+            <CardTitle>Subir un archivo</CardTitle>
             <CardDescription>
-              The accepted format is CSV (one header row, then one record per row). The file is
-              validated by the server: its refusal, if any, is shown here in its own words.
+              El formato aceptado es CSV (una fila de encabezados y después un registro por fila).
+              El servidor valida el archivo: si lo rechaza, acá se muestra el motivo.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-wrap items-end gap-3">
               <div className="space-y-2">
                 <label htmlFor="import-entity" className="text-sm font-medium">
-                  Import entity
+                  Entidad a importar
                 </label>
                 <select
                   id="import-entity"
@@ -200,7 +202,7 @@ export function ImportsIndex({ permissions }: ImportsIndexProps = {}): JSX.Eleme
               </div>
               <div className="space-y-2">
                 <label htmlFor="import-file" className="text-sm font-medium">
-                  CSV file
+                  Archivo CSV
                 </label>
                 {/*
                   No `accept` attribute on purpose: pre-filtering the picker would
@@ -227,7 +229,7 @@ export function ImportsIndex({ permissions }: ImportsIndexProps = {}): JSX.Eleme
                   if (file !== null) upload.mutate({ entity: uploadEntity, file });
                 }}
               >
-                {upload.isPending ? "Uploading..." : "Upload"}
+                {upload.isPending ? "Subiendo…" : "Subir"}
               </Button>
             </div>
 
@@ -237,8 +239,8 @@ export function ImportsIndex({ permissions }: ImportsIndexProps = {}): JSX.Eleme
                 data-testid="imports-upload-error"
                 className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
               >
-                <p className="font-medium">The file was not accepted</p>
-                {/* The server's own sentence, verbatim: it names the accepted
+                <p className="font-medium">El archivo no fue aceptado</p>
+                {/* The server's own explanation, in es-PY: it names the accepted
                     format, the size cap or the spreadsheet refusal, and no
                     client-side copy of that rule could say it better. */}
                 <p>{userFacingImportError(upload.error)}</p>
@@ -251,17 +253,18 @@ export function ImportsIndex({ permissions }: ImportsIndexProps = {}): JSX.Eleme
                 data-testid="imports-upload-accepted"
                 className="space-y-1 rounded-lg border border-border bg-secondary p-4 text-sm text-secondary-foreground"
               >
-                <p className="font-medium">Import accepted</p>
+                <p className="font-medium">Importación aceptada</p>
                 <p>
-                  The file is stored and the import is <strong>{accepted.state}</strong>. Open it to
-                  preview what it will do.
+                  El archivo quedó guardado y la importación está{" "}
+                  <strong>{importJobStateLabel(accepted.state)}</strong>. Abrila para previsualizar
+                  qué va a hacer.
                 </p>
                 <Link
                   data-testid="imports-upload-accepted-link"
                   href={`/app/imports/${accepted.importId}`}
                   className="text-primary underline-offset-4 hover:underline"
                 >
-                  Open the import
+                  Abrir la importación
                 </Link>
               </div>
             )}
@@ -271,9 +274,9 @@ export function ImportsIndex({ permissions }: ImportsIndexProps = {}): JSX.Eleme
 
       <Card data-testid="imports-history">
         <CardHeader>
-          <CardTitle>Import history</CardTitle>
+          <CardTitle>Historial de importaciones</CardTitle>
           <CardDescription>
-            Newest first, as the API lists them. Counts are the ones the import itself recorded.
+            Las más recientes primero. Los conteos son los que registró cada importación.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -282,7 +285,7 @@ export function ImportsIndex({ permissions }: ImportsIndexProps = {}): JSX.Eleme
               <div className="flex flex-wrap items-end gap-3">
                 <div className="space-y-2">
                   <label htmlFor="import-entity-filter" className="text-sm font-medium">
-                    Filter by entity
+                    Filtrar por entidad
                   </label>
                   <select
                     id="import-entity-filter"
@@ -293,7 +296,7 @@ export function ImportsIndex({ permissions }: ImportsIndexProps = {}): JSX.Eleme
                       setEntityFilter(value === "CUSTOMER" || value === "PATIENT" ? value : "");
                     }}
                   >
-                    <option value="">All entities</option>
+                    <option value="">Todas las entidades</option>
                     {IMPORT_ENTITIES.map((entity) => (
                       <option key={entity} value={entity}>
                         {IMPORT_ENTITY_LABELS[entity]}
@@ -309,8 +312,8 @@ export function ImportsIndex({ permissions }: ImportsIndexProps = {}): JSX.Eleme
                   data-testid="imports-command-error"
                   className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
                 >
-                  <p className="font-medium">The import was not started</p>
-                  {/* The API's own refusal, verbatim: the lifecycle `409` says the
+                  <p className="font-medium">La importación no se inició</p>
+                  {/* The API's refusal, in es-PY: the lifecycle `409` says the
                       import is not in a state that allows the transition, and only
                       the API knows which state that is. */}
                   <p>{userFacingImportError(commandFailed)}</p>
@@ -319,7 +322,7 @@ export function ImportsIndex({ permissions }: ImportsIndexProps = {}): JSX.Eleme
 
               {history.isLoading && (
                 <p data-testid="imports-loading" className="text-sm text-muted-foreground">
-                  Loading imports...
+                  Cargando importaciones…
                 </p>
               )}
 
@@ -329,7 +332,9 @@ export function ImportsIndex({ permissions }: ImportsIndexProps = {}): JSX.Eleme
                   data-testid="imports-permission-denied"
                   className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
                 >
-                  <p className="font-medium">Imports are not available to this account</p>
+                  <p className="font-medium">
+                    Las importaciones no están disponibles para esta cuenta
+                  </p>
                   <p>{userFacingImportError(historyError)}</p>
                 </div>
               )}
@@ -340,7 +345,7 @@ export function ImportsIndex({ permissions }: ImportsIndexProps = {}): JSX.Eleme
                   data-testid="imports-error"
                   className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
                 >
-                  <p className="font-medium">The import history could not be loaded</p>
+                  <p className="font-medium">No se pudo cargar el historial de importaciones</p>
                   <p>{userFacingImportError(historyError)}</p>
                 </div>
               )}
@@ -348,8 +353,8 @@ export function ImportsIndex({ permissions }: ImportsIndexProps = {}): JSX.Eleme
               {history.data !== undefined && rows.length === 0 && historyError === null && (
                 <p data-testid="imports-empty" className="text-sm text-muted-foreground">
                   {entityFilter === ""
-                    ? "This tenant has not run an import yet."
-                    : `This tenant has not run an import for ${IMPORT_ENTITY_LABELS[entityFilter]}.`}
+                    ? "Esta organización todavía no hizo ninguna importación."
+                    : `Esta organización todavía no importó ${IMPORT_ENTITY_LABELS[entityFilter].toLowerCase()}.`}
                 </p>
               )}
 
@@ -359,25 +364,25 @@ export function ImportsIndex({ permissions }: ImportsIndexProps = {}): JSX.Eleme
                     <thead className="bg-secondary text-secondary-foreground">
                       <tr>
                         <th scope="col" className="px-3 py-2 text-left font-medium">
-                          Entity
+                          Entidad
                         </th>
                         <th scope="col" className="px-3 py-2 text-left font-medium">
-                          State
+                          Estado
                         </th>
                         <th scope="col" className="px-3 py-2 text-left font-medium">
-                          Created
+                          Creadas
                         </th>
                         <th scope="col" className="px-3 py-2 text-left font-medium">
-                          Failed
+                          Con error
                         </th>
                         <th scope="col" className="px-3 py-2 text-left font-medium">
-                          Suspected duplicates
+                          Posibles duplicados
                         </th>
                         <th scope="col" className="px-3 py-2 text-left font-medium">
-                          Imported at
+                          Importada el
                         </th>
                         <th scope="col" className="px-3 py-2 text-left font-medium">
-                          Next action
+                          Próxima acción
                         </th>
                       </tr>
                     </thead>
@@ -399,7 +404,7 @@ export function ImportsIndex({ permissions }: ImportsIndexProps = {}): JSX.Eleme
                               data-testid="imports-row-state"
                               className="whitespace-nowrap px-3 py-2 font-medium text-foreground"
                             >
-                              {state}
+                              {importJobStateLabel(state)}
                             </td>
                             <td
                               data-testid="imports-row-created"
@@ -420,7 +425,9 @@ export function ImportsIndex({ permissions }: ImportsIndexProps = {}): JSX.Eleme
                               {job.suspectedDuplicateCount}
                             </td>
                             <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
-                              <time dateTime={job.createdAt}>{job.createdAt}</time>
+                              <time dateTime={job.createdAt}>
+                                {formatEsPyInstant(job.createdAt)}
+                              </time>
                             </td>
                             <td className="whitespace-nowrap px-3 py-2">
                               <div className="flex items-center gap-3">
@@ -442,7 +449,7 @@ export function ImportsIndex({ permissions }: ImportsIndexProps = {}): JSX.Eleme
                                   href={`/app/imports/${job.id}`}
                                   className="text-primary underline-offset-4 hover:underline"
                                 >
-                                  Open
+                                  Abrir
                                 </Link>
                               </div>
                             </td>
@@ -460,8 +467,8 @@ export function ImportsIndex({ permissions }: ImportsIndexProps = {}): JSX.Eleme
               data-testid="imports-permission-denied"
               className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
             >
-              <p className="font-medium">Imports are not available to this account</p>
-              <p>Reading the import history requires the imports.read permission.</p>
+              <p className="font-medium">Las importaciones no están disponibles para esta cuenta</p>
+              <p>Ver el historial de importaciones requiere el permiso imports.read.</p>
             </div>
           )}
         </CardContent>

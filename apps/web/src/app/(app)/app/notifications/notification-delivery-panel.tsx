@@ -62,14 +62,16 @@ export function NotificationDeliveryListPanel({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Notification deliveries</CardTitle>
-        <CardDescription>The tenant&apos;s deliveries, newest first.</CardDescription>
+        <CardTitle>Entregas de notificaciones</CardTitle>
+        <CardDescription>
+          Las entregas de la organización, las más recientes primero.
+        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-2">
             <label htmlFor="notification-status-filter" className="text-sm font-medium">
-              Status
+              Estado
             </label>
             <select
               id="notification-status-filter"
@@ -79,7 +81,7 @@ export function NotificationDeliveryListPanel({
               }
               className={notificationInputClassName}
             >
-              <option value="ALL">All statuses</option>
+              <option value="ALL">Todos los estados</option>
               {NOTIFICATION_DELIVERY_STATUSES.map((status) => (
                 <option key={status} value={status}>
                   {NOTIFICATION_STATUS_LABELS[status]}
@@ -89,7 +91,7 @@ export function NotificationDeliveryListPanel({
           </div>
           <div className="space-y-2">
             <label htmlFor="notification-channel-filter" className="text-sm font-medium">
-              Channel
+              Canal
             </label>
             <select
               id="notification-channel-filter"
@@ -99,7 +101,7 @@ export function NotificationDeliveryListPanel({
               }
               className={notificationInputClassName}
             >
-              <option value="ALL">All channels</option>
+              <option value="ALL">Todos los canales</option>
               {NOTIFICATION_CHANNELS.map((channel) => (
                 <option key={channel} value={channel}>
                   {NOTIFICATION_CHANNEL_LABELS[channel] ?? channel}
@@ -111,11 +113,11 @@ export function NotificationDeliveryListPanel({
 
         {isLoading ? (
           <p data-testid="notification-list-loading" className="text-sm text-muted-foreground">
-            Loading deliveries...
+            Cargando entregas…
           </p>
         ) : permissionDenied ? (
           <p data-testid="notification-permission-denied" className="text-sm text-muted-foreground">
-            You do not have permission to read notification deliveries.
+            No tenés permiso para ver las entregas de notificaciones.
           </p>
         ) : errorMessage !== null ? (
           <p data-testid="notification-list-error" className="text-sm text-destructive">
@@ -123,7 +125,7 @@ export function NotificationDeliveryListPanel({
           </p>
         ) : deliveries.length === 0 ? (
           <p data-testid="notification-list-empty" className="text-sm text-muted-foreground">
-            No deliveries match these filters.
+            Ninguna entrega coincide con estos filtros.
           </p>
         ) : (
           <ul className="space-y-2">
@@ -142,7 +144,7 @@ export function NotificationDeliveryListPanel({
                       {`${NOTIFICATION_STATUS_LABELS[delivery.status as NotificationDeliveryStatus] ?? delivery.status} · ${NOTIFICATION_CHANNEL_LABELS[delivery.channel] ?? delivery.channel} · ${NOTIFICATION_SOURCE_LABELS[delivery.sourceType] ?? delivery.sourceType}`}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {`${formatTimestamp(delivery.scheduledAt)} · ${delivery.attemptCount} attempts${reason === null ? "" : ` · ${reason}`}`}
+                      {`${formatTimestamp(delivery.scheduledAt)} · ${delivery.attemptCount} ${delivery.attemptCount === 1 ? "intento" : "intentos"}${reason === null ? "" : ` · ${reason}`}`}
                     </p>
                   </div>
                   <button
@@ -151,7 +153,7 @@ export function NotificationDeliveryListPanel({
                     onClick={() => onSelectDelivery(delivery)}
                     className="rounded-md border border-input px-3 py-1 text-sm text-foreground hover:bg-accent"
                   >
-                    {selected ? "Selected" : "Details"}
+                    {selected ? "Seleccionada" : "Ver detalle"}
                   </button>
                 </li>
               );
@@ -188,20 +190,20 @@ export function NotificationDeliveryDetailPanel({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Delivery detail</CardTitle>
-        <CardDescription>What the platform recorded about this delivery.</CardDescription>
+        <CardTitle>Detalle de la entrega</CardTitle>
+        <CardDescription>Lo que la plataforma registró sobre esta entrega.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         {isLoading ? (
           <p data-testid="notification-detail-loading" className="text-sm text-muted-foreground">
-            Loading delivery...
+            Cargando entrega…
           </p>
         ) : permissionDenied ? (
           <p
             data-testid="notification-detail-permission-denied"
             className="text-sm text-muted-foreground"
           >
-            You do not have permission to read this delivery.
+            No tenés permiso para ver esta entrega.
           </p>
         ) : errorMessage !== null ? (
           <p data-testid="notification-detail-error" className="text-sm text-destructive">
@@ -209,50 +211,50 @@ export function NotificationDeliveryDetailPanel({
           </p>
         ) : delivery === null ? (
           <p data-testid="notification-detail-empty" className="text-sm text-muted-foreground">
-            Select a delivery to see its detail.
+            Seleccioná una entrega para ver su detalle.
           </p>
         ) : (
           <dl data-testid="notification-detail" className="grid gap-2 text-sm">
             <div className="flex justify-between gap-4">
-              <dt className="text-muted-foreground">Status</dt>
+              <dt className="text-muted-foreground">Estado</dt>
               <dd className="text-foreground">
                 {NOTIFICATION_STATUS_LABELS[delivery.status as NotificationDeliveryStatus] ??
                   delivery.status}
               </dd>
             </div>
             <div className="flex justify-between gap-4">
-              <dt className="text-muted-foreground">Channel</dt>
+              <dt className="text-muted-foreground">Canal</dt>
               <dd className="text-foreground">
                 {NOTIFICATION_CHANNEL_LABELS[delivery.channel] ?? delivery.channel}
               </dd>
             </div>
             <div className="flex justify-between gap-4">
-              <dt className="text-muted-foreground">Source</dt>
+              <dt className="text-muted-foreground">Origen</dt>
               <dd className="text-foreground">{`${NOTIFICATION_SOURCE_LABELS[delivery.sourceType] ?? delivery.sourceType} #${shortId(delivery.sourceId)}`}</dd>
             </div>
             <div className="flex justify-between gap-4">
-              <dt className="text-muted-foreground">Recipient</dt>
-              <dd className="text-foreground">{`Customer #${shortId(delivery.recipientId)}`}</dd>
+              <dt className="text-muted-foreground">Destinatario</dt>
+              <dd className="text-foreground">{`Cliente #${shortId(delivery.recipientId)}`}</dd>
             </div>
             <div className="flex justify-between gap-4">
-              <dt className="text-muted-foreground">Scheduled</dt>
+              <dt className="text-muted-foreground">Fecha programada</dt>
               <dd className="text-foreground">{formatTimestamp(delivery.scheduledAt)}</dd>
             </div>
             <div className="flex justify-between gap-4">
-              <dt className="text-muted-foreground">Attempts</dt>
+              <dt className="text-muted-foreground">Intentos</dt>
               <dd className="text-foreground">
-                {`${delivery.attemptCount}${delivery.lastAttemptAt === null ? "" : ` · last ${formatTimestamp(delivery.lastAttemptAt)}`}`}
+                {`${delivery.attemptCount}${delivery.lastAttemptAt === null ? "" : ` · último ${formatTimestamp(delivery.lastAttemptAt)}`}`}
               </dd>
             </div>
             {delivery.sentAt === null ? null : (
               <div className="flex justify-between gap-4">
-                <dt className="text-muted-foreground">Sent</dt>
+                <dt className="text-muted-foreground">Enviada</dt>
                 <dd className="text-foreground">{formatTimestamp(delivery.sentAt)}</dd>
               </div>
             )}
             {delivery.cancelledAt === null ? null : (
               <div className="flex justify-between gap-4">
-                <dt className="text-muted-foreground">Cancelled</dt>
+                <dt className="text-muted-foreground">Cancelada</dt>
                 <dd className="text-foreground">
                   {`${formatTimestamp(delivery.cancelledAt)}${delivery.cancellationReason === null ? "" : ` · ${delivery.cancellationReason}`}`}
                 </dd>
@@ -260,7 +262,7 @@ export function NotificationDeliveryDetailPanel({
             )}
             {deliveryFailureReason(delivery) === null ? null : (
               <div className="flex justify-between gap-4">
-                <dt className="text-muted-foreground">Reason</dt>
+                <dt className="text-muted-foreground">Motivo</dt>
                 <dd className="text-foreground">{deliveryFailureReason(delivery)}</dd>
               </div>
             )}
@@ -274,11 +276,11 @@ export function NotificationDeliveryDetailPanel({
                 className="space-y-1 border-t border-border pt-2"
                 data-testid="delivery-attempts"
               >
-                <p className="text-muted-foreground">Attempts</p>
+                <p className="text-muted-foreground">Intentos</p>
                 <ul className="space-y-1">
                   {delivery.attempts.map((attempt) => (
                     <li key={attempt.attemptNumber} className="text-foreground">
-                      {`#${attempt.attemptNumber} · ${attempt.outcome === "SENT" ? "Sent" : "Failed"} · ${formatTimestamp(attempt.occurredAt)}${attempt.reasonMessage === null ? "" : ` · ${attempt.reasonMessage}`}`}
+                      {`#${attempt.attemptNumber} · ${attempt.outcome === "SENT" ? "Enviado" : "Fallido"} · ${formatTimestamp(attempt.occurredAt)}${attempt.reasonMessage === null ? "" : ` · ${attempt.reasonMessage}`}`}
                     </li>
                   ))}
                 </ul>

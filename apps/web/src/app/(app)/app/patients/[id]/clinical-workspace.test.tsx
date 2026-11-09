@@ -493,8 +493,11 @@ describe("ClinicalWorkspace", () => {
     renderWorkspace();
 
     await waitFor(() => {
-      expect(screen.getByRole("alert")).toHaveTextContent("Boom");
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "No se pudo completar la operación. Volvé a intentar."
+      );
     });
+    expect(screen.getByRole("alert")).not.toHaveTextContent("Boom");
   });
 
   it("renders the permission-denied state on 403 FORBIDDEN", async () => {

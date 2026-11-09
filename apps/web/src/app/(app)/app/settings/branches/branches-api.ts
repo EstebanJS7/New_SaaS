@@ -129,18 +129,33 @@ export function isBranchesPermissionDenied(error: unknown): boolean {
 }
 
 /**
+ * True for a sentence the branches API authored in Spanish. Its domain messages
+ * are Spanish (`apps/api/src/branches/*.ts`), while the global filter's
+ * per-code defaults ("Request conflicts with current state.") are English.
+ */
+function isSpanishBranchMessage(message: string): boolean {
+  return /[áéíóúñ¿]|sucursal/i.test(message);
+}
+
+/**
  * The API answers CONFLICT and FEATURE_NOT_ENTITLED with a Spanish sentence a
  * person can act on (name taken, last active branch, pending turnos, plan
- * limit), shown as is. Validation and permission errors get a fixed sentence.
+ * limit), shown as is. An English default for those codes, validation and
+ * permission errors get a fixed Spanish sentence.
  */
 export function branchesErrorMessage(error: unknown, fallback: string): string {
   if (!(error instanceof BranchesApiError)) return fallback;
   switch (error.code) {
     case "CONFLICT":
+      return isSpanishBranchMessage(error.message)
+        ? error.message
+        : "Los datos de la sucursal cambiaron. Actualizá la lista y volvé a intentar.";
     case "FEATURE_NOT_ENTITLED":
-      return error.message;
+      return isSpanishBranchMessage(error.message)
+        ? error.message
+        : "Tu plan no incluye esta función de sucursales.";
     case "VALIDATION_FAILED":
-      return /[áéíóúñ¿]|sucursal/i.test(error.message)
+      return isSpanishBranchMessage(error.message)
         ? error.message
         : "Revisá los datos: algún campo no es válido.";
     case "FORBIDDEN":

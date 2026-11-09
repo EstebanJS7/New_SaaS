@@ -192,21 +192,34 @@ describe("ImportsDetail · the stored verdicts", () => {
 
     renderDetail();
 
-    expect(await screen.findByTestId("imports-state")).toHaveTextContent("PREVIEWED");
-    expect(screen.getByTestId("imports-entity")).toHaveTextContent("Customers");
+    expect(await screen.findByTestId("imports-state")).toHaveTextContent("Previsualizada");
+    expect(screen.getByTestId("imports-entity")).toHaveTextContent("Clientes");
     // The three counters are the import's own; a suspected duplicate is a SUBSET of
     // the created count and is never rendered as a fourth bucket.
     expect(screen.getByTestId("imports-created")).toHaveTextContent("3");
     expect(screen.getByTestId("imports-failed")).toHaveTextContent("1");
     expect(screen.getByTestId("imports-suspected")).toHaveTextContent("1");
-    expect(screen.getByTestId("imports-created-at")).toHaveTextContent(BASE_JOB.createdAt);
+    // Instants are shown in es-PY in the clinic's zone; the ISO stays on <time>.
+    const createdAt = screen.getByTestId("imports-created-at");
+    expect(createdAt).toHaveTextContent("22 oct. 2026, 06:59");
+    expect(createdAt).not.toHaveTextContent(BASE_JOB.createdAt);
+    expect(within(createdAt).getByText(/22 oct\. 2026/)).toHaveAttribute(
+      "dateTime",
+      BASE_JOB.createdAt
+    );
+    expect(screen.getByTestId("imports-artefact")).toHaveTextContent(
+      "El archivo subido se elimina después del 25 oct. 2026, 07:00"
+    );
+    expect(screen.getByTestId("imports-artefact")).not.toHaveTextContent(
+      BASE_JOB.artefactExpiresAt
+    );
 
     const rows = await screen.findAllByTestId("imports-outcome-row");
     expect(rows).toHaveLength(3);
 
     const failed = rows[2];
     expect(within(failed).getByTestId("imports-outcome-row-number")).toHaveTextContent("3");
-    expect(within(failed).getByTestId("imports-outcome-status")).toHaveTextContent("FAILED");
+    expect(within(failed).getByTestId("imports-outcome-status")).toHaveTextContent("Con error");
     expect(within(failed).getByTestId("imports-outcome-reason")).toHaveTextContent(
       "CUSTOMER_ROW_DOCUMENT_DUPLICATE"
     );
@@ -231,19 +244,19 @@ describe("ImportsDetail · the stored verdicts", () => {
 
     // A flagged row was still CREATED, and it says so twice: the status is the
     // server's `CREATE` and the warning column spells the warning out.
-    expect(within(flagged).getByTestId("imports-outcome-status")).toHaveTextContent("CREATE");
+    expect(within(flagged).getByTestId("imports-outcome-status")).toHaveTextContent("Se crea");
     expect(within(flagged).getByTestId("imports-outcome-warning")).toHaveTextContent(
-      "Suspected duplicate (warning)"
+      "Posible duplicado (advertencia)"
     );
-    expect(flagged).toHaveTextContent("Suspected duplicate");
+    expect(flagged).toHaveTextContent("Posible duplicado");
     // It is not an error, and it carries no reason.
-    expect(flagged).not.toHaveTextContent("FAILED");
+    expect(flagged).not.toHaveTextContent("Con error");
 
     // A failed row is a different fact: a verdict, a reason code and a message.
-    expect(within(failed).getByTestId("imports-outcome-status")).toHaveTextContent("FAILED");
+    expect(within(failed).getByTestId("imports-outcome-status")).toHaveTextContent("Con error");
     expect(failed).toHaveTextContent("CUSTOMER_ROW_DOCUMENT_DUPLICATE");
     // …and it is not a duplicate warning.
-    expect(failed).not.toHaveTextContent("Suspected duplicate");
+    expect(failed).not.toHaveTextContent("Posible duplicado");
 
     // An unflagged row reports neither fact.
     const plain = rows[1];
@@ -267,8 +280,10 @@ describe("ImportsDetail · the stored verdicts", () => {
     renderDetail();
 
     const reason = await screen.findByTestId("imports-failure-reason");
+    expect(reason).toHaveTextContent("La importación falló");
+    // The stored reason is the server's data and is printed as recorded.
     expect(reason).toHaveTextContent("The artifact could not be read.");
-    expect(screen.getByTestId("imports-state")).toHaveTextContent("FAILED");
+    expect(screen.getByTestId("imports-state")).toHaveTextContent("Fallida");
   });
 
   it("says an unpreviewed import has no stored outcomes yet", async () => {
@@ -287,7 +302,7 @@ describe("ImportsDetail · the stored verdicts", () => {
     renderDetail();
 
     expect(await screen.findByTestId("imports-summary-empty")).toHaveTextContent(
-      "the file has not been previewed"
+      "Todavía no hay resultados de filas guardados: el archivo no se previsualizó."
     );
     expect(screen.queryByTestId("imports-outcome-row")).not.toBeInTheDocument();
   });
@@ -329,7 +344,7 @@ describe("ImportsDetail · the bounded table", () => {
     expect(requestedUrls(fetchMock)).toContain(
       `/api/imports/${IMPORT_ID}/summary?limit=${IMPORT_SUMMARY_PAGE_SIZE}&offset=0`
     );
-    expect(screen.getByTestId("imports-summary-page")).toHaveTextContent("Rows 1–100 of 255");
+    expect(screen.getByTestId("imports-summary-page")).toHaveTextContent("Filas 1–100 de 255");
     expect(screen.getByTestId("imports-summary-previous")).toBeDisabled();
 
     fireEvent.click(screen.getByTestId("imports-summary-next"));
@@ -340,7 +355,7 @@ describe("ImportsDetail · the bounded table", () => {
       );
     });
     await waitFor(() => {
-      expect(screen.getByTestId("imports-summary-page")).toHaveTextContent("Rows 101–200 of 255");
+      expect(screen.getByTestId("imports-summary-page")).toHaveTextContent("Filas 101–200 de 255");
     });
     expect(screen.getAllByTestId("imports-outcome-row")).toHaveLength(IMPORT_SUMMARY_PAGE_SIZE);
     expect(screen.getByTestId("imports-summary-previous")).toBeEnabled();
@@ -367,7 +382,7 @@ describe("ImportsDetail · the bounded table", () => {
 
     await screen.findAllByTestId("imports-outcome-row");
     expect(screen.getByTestId("imports-summary-next")).toBeDisabled();
-    expect(screen.getByTestId("imports-summary-page")).toHaveTextContent("Rows 1–13 of 13");
+    expect(screen.getByTestId("imports-summary-page")).toHaveTextContent("Filas 1–13 de 13");
   });
 });
 
@@ -413,7 +428,7 @@ describe("ImportsDetail · polling", () => {
 
     // The live region states the phase and that the screen is watching.
     const polling = await screen.findByTestId("imports-polling");
-    expect(polling).toHaveTextContent("Previewing the file");
+    expect(polling).toHaveTextContent("Previsualizando el archivo");
 
     // It polls: more than the first read reaches the API.
     await waitFor(() => {
@@ -423,7 +438,7 @@ describe("ImportsDetail · polling", () => {
     // The worker's claim lands, and the next poll observes it.
     state = "PREVIEWED";
     await waitFor(() => {
-      expect(screen.getByTestId("imports-state")).toHaveTextContent("PREVIEWED");
+      expect(screen.getByTestId("imports-state")).toHaveTextContent("Previsualizada");
     });
     // The watch is over, and the screen says nothing about a phase any more.
     expect(screen.queryByTestId("imports-polling")).not.toBeInTheDocument();
@@ -462,7 +477,9 @@ describe("ImportsDetail · polling", () => {
 
     // The accepted phase is seeded from the API's own answer, so the screen is
     // already watching while the row itself still reads `UPLOADED` upstream.
-    expect(await screen.findByTestId("imports-polling")).toHaveTextContent("Previewing the file");
+    expect(await screen.findByTestId("imports-polling")).toHaveTextContent(
+      "Previsualizando el archivo"
+    );
     // …and the command that would replay it is gone.
     expect(screen.queryByTestId("imports-preview")).not.toBeInTheDocument();
 
@@ -504,7 +521,7 @@ describe("ImportsDetail · the commands", () => {
     });
 
     renderDetail();
-    expect(await screen.findByTestId("imports-preview")).toBeInTheDocument();
+    expect(await screen.findByTestId("imports-preview")).toHaveTextContent("Previsualizar");
     expect(screen.queryByTestId("imports-commit")).not.toBeInTheDocument();
   });
 
@@ -539,7 +556,7 @@ describe("ImportsDetail · the commands", () => {
     expect(screen.queryByTestId("imports-preview")).not.toBeInTheDocument();
   });
 
-  it("shows the API's own message when the command is refused", async () => {
+  it("explains a refused command in es-PY", async () => {
     installFetch((url, init) => {
       if (url === `/api/imports/${IMPORT_ID}/commit` && init?.method === "POST") {
         return jsonResponse(
@@ -560,17 +577,21 @@ describe("ImportsDetail · the commands", () => {
 
     renderDetail();
 
-    fireEvent.click(await screen.findByTestId("imports-commit"));
+    const commit = await screen.findByTestId("imports-commit");
+    expect(commit).toHaveTextContent("Confirmar");
+    fireEvent.click(commit);
 
     const alert = await screen.findByTestId("imports-command-error");
-    expect(alert).toHaveTextContent("The import is not in a state that allows this transition.");
+    expect(alert).toHaveTextContent("El comando fue rechazado");
+    expect(alert).toHaveTextContent("La importación no está en un estado que permita esta acción.");
+    expect(alert).not.toHaveTextContent("The import is not in a state");
     // Nothing is optimistically advanced on a command the API rejected.
-    expect(screen.getByTestId("imports-state")).toHaveTextContent("PREVIEWED");
+    expect(screen.getByTestId("imports-state")).toHaveTextContent("Previsualizada");
   });
 });
 
 describe("ImportsDetail · the read states", () => {
-  it("shows the API's own message when the import cannot be read", async () => {
+  it("says in es-PY that the import was not found", async () => {
     installFetch(() =>
       jsonResponse({ error: { code: "NOT_FOUND", message: "Import not found." } }, 404)
     );
@@ -578,7 +599,9 @@ describe("ImportsDetail · the read states", () => {
     renderDetail();
 
     const alert = await screen.findByTestId("imports-error");
-    expect(alert).toHaveTextContent("Import not found.");
+    expect(alert).toHaveTextContent("No se pudo cargar la importación");
+    expect(alert).toHaveTextContent("No encontramos la importación.");
+    expect(alert).not.toHaveTextContent("Import not found.");
   });
 
   it("shows a permission-denied panel when the API refuses the read", async () => {
@@ -591,7 +614,9 @@ describe("ImportsDetail · the read states", () => {
 
     renderDetail();
 
-    expect(await screen.findByTestId("imports-permission-denied")).toBeInTheDocument();
+    const denied = await screen.findByTestId("imports-permission-denied");
+    expect(denied).toHaveTextContent("Las importaciones no están disponibles para esta cuenta");
+    expect(denied).toHaveTextContent("No tenés permiso para trabajar con importaciones.");
     expect(screen.queryByTestId("imports-error")).not.toBeInTheDocument();
   });
 
@@ -600,11 +625,13 @@ describe("ImportsDetail · the read states", () => {
 
     renderDetail({ permissions: [] });
 
-    expect(await screen.findByTestId("imports-permission-denied")).toBeInTheDocument();
+    expect(await screen.findByTestId("imports-permission-denied")).toHaveTextContent(
+      "Ver una importación requiere el permiso imports.read."
+    );
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("shows the API's own message when the outcomes cannot be read", async () => {
+  it("shows a Spanish message when the outcomes cannot be read", async () => {
     installFetch((url) => {
       if (url.startsWith(`/api/imports/${IMPORT_ID}/summary`)) {
         return jsonResponse(
@@ -618,9 +645,11 @@ describe("ImportsDetail · the read states", () => {
     renderDetail();
 
     const alert = await screen.findByTestId("imports-summary-error");
-    expect(alert).toHaveTextContent("The summary could not be read.");
+    expect(alert).toHaveTextContent("No se pudieron cargar los resultados de filas");
+    expect(alert).toHaveTextContent("No se pudo completar la operación. Volvé a intentar.");
+    expect(alert).not.toHaveTextContent("The summary could not be read.");
     // The import's own card is still on screen: one failed read does not blank the
     // page it shares with a successful one.
-    expect(screen.getByTestId("imports-state")).toHaveTextContent("PREVIEWED");
+    expect(screen.getByTestId("imports-state")).toHaveTextContent("Previsualizada");
   });
 });

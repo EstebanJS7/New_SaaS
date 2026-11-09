@@ -688,14 +688,14 @@ export function classifySaleCompletionError(error: Error): SaleCompletionFailure
 /**
  * Maps the stable sale error contract to staff-facing UX copy.
  *
- * These messages are UX-only; the backend still enforces every gate. Every
- * unmapped code falls through to the server message — which the sale API keeps
- * value-free — instead of inventing a cause, and a bare transport failure gets
+ * These messages are UX-only; the backend still enforces every gate. The sale
+ * API answers in English, so the remaining codes get Spanish copy that names no
+ * value and asserts no cause beyond the code, and a bare transport failure gets
  * its own copy rather than a raw browser string.
  */
 export function userFacingSaleError(error: Error): string {
   if (!(error instanceof ApiRequestError)) {
-    return "No se pudo conectar con el servidor. Revisá tu conexión e intentá de nuevo.";
+    return "No se pudo conectar con el servidor. Revisá tu conexión y volvé a intentar.";
   }
   switch (error.code) {
     case "UNAUTHENTICATED":
@@ -706,8 +706,12 @@ export function userFacingSaleError(error: Error): string {
       return "La función de ventas no está habilitada para esta organización.";
     case "NOT_FOUND":
       return "No encontramos la venta.";
+    case "CONFLICT":
+      return "La venta cambió de estado. Actualizá los datos y revisalos antes de volver a intentar.";
+    case "VALIDATION_FAILED":
+      return "Revisá los datos de la venta e intentá de nuevo.";
     default:
-      return error.message;
+      return "No se pudo completar la operación. Volvé a intentar.";
   }
 }
 

@@ -226,20 +226,20 @@ test.describe("the staff imports surface", () => {
 
     // ---- upload -------------------------------------------------------------
 
-    await page.getByLabel("Import entity").selectOption("CUSTOMER");
+    await page.getByLabel("Entidad a importar").selectOption("CUSTOMER");
     await page.getByTestId("import-file").setInputFiles(csvPath);
-    await page.getByRole("button", { name: "Upload" }).click();
+    await page.getByRole("button", { name: "Subir" }).click();
 
     // The accepted notice is a live status region, and it states the phase the API
     // answered with rather than a summary the request cannot have yet.
     await expect(page.getByTestId("imports-upload-accepted")).toBeVisible();
-    await expect(page.getByTestId("imports-upload-accepted")).toContainText("UPLOADED");
+    await expect(page.getByTestId("imports-upload-accepted")).toContainText("Subida");
 
     // The history lists the import that was just accepted, with the command its
     // state allows. The row is what an operator sees without reloading.
     const historyRow = page.getByTestId("imports-row").first();
-    await expect(historyRow.getByTestId("imports-row-state")).toHaveText("UPLOADED");
-    await expect(historyRow.getByTestId("imports-row-action")).toHaveText("Preview");
+    await expect(historyRow.getByTestId("imports-row-state")).toHaveText("Subida");
+    await expect(historyRow.getByTestId("imports-row-action")).toHaveText("Previsualizar");
 
     await page.getByTestId("imports-upload-accepted-link").click();
     await expect(page).toHaveURL(/\/app\/imports\/[0-9a-f-]{36}$/);
@@ -248,7 +248,7 @@ test.describe("the staff imports surface", () => {
 
     // ---- preview ------------------------------------------------------------
 
-    await expect(page.getByTestId("imports-state")).toHaveText("UPLOADED");
+    await expect(page.getByTestId("imports-state")).toHaveText("Subida");
     // Nothing is stored before the preview runs, and the screen says that rather
     // than rendering an empty table.
     await expect(page.getByTestId("imports-summary-empty")).toBeVisible();
@@ -259,11 +259,11 @@ test.describe("the staff imports surface", () => {
     // API accepts the command, because the accepted phase is seeded from the
     // response, and it disappears at every state that is not in flight.
     await expect(page.getByTestId("imports-polling")).toBeVisible();
-    await expect(page.getByTestId("imports-polling")).toContainText("Previewing the file");
+    await expect(page.getByTestId("imports-polling")).toContainText("Previsualizando el archivo");
 
     // The state is written by the WORKER, so this is the round trip no component
     // test can produce: the browser learns it by polling.
-    await expect(page.getByTestId("imports-state")).toHaveText("PREVIEWED", {
+    await expect(page.getByTestId("imports-state")).toHaveText("Previsualizada", {
       timeout: PHASE_TIMEOUT_MS,
     });
     // The watch is over: the notice is gone, which is the STOP half of the polling
@@ -282,9 +282,9 @@ test.describe("the staff imports surface", () => {
     // second row is the refused one.
     const outcomes = page.getByTestId("imports-outcome-row");
     await expect(outcomes).toHaveCount(2);
-    await expect(outcomes.nth(0).getByTestId("imports-outcome-status")).toHaveText("CREATE");
+    await expect(outcomes.nth(0).getByTestId("imports-outcome-status")).toHaveText("Se crea");
     const failedRow = outcomes.nth(1);
-    await expect(failedRow.getByTestId("imports-outcome-status")).toHaveText("FAILED");
+    await expect(failedRow.getByTestId("imports-outcome-status")).toHaveText("Con error");
 
     // The reason the surface prints is the API's own, compared against the summary
     // read through this session: no sentence about a row is copied into this file,
@@ -310,13 +310,13 @@ test.describe("the staff imports surface", () => {
     );
     // An error and a suspected-duplicate WARNING are different facts, and this row
     // carries only the first — in text, not only in colour.
-    await expect(failedRow).not.toContainText("Suspected duplicate");
+    await expect(failedRow).not.toContainText("Posible duplicado");
 
     // ---- commit -------------------------------------------------------------
 
     await page.getByTestId("imports-commit").click();
 
-    await expect(page.getByTestId("imports-state")).toHaveText("COMMITTED", {
+    await expect(page.getByTestId("imports-state")).toHaveText("Confirmada", {
       timeout: PHASE_TIMEOUT_MS,
     });
     await expect(page.getByTestId("imports-polling")).toHaveCount(0);
@@ -334,10 +334,10 @@ test.describe("the staff imports surface", () => {
 
     // Everything below was re-read from the stored outcomes: the reload kept no
     // component state, and the artefact behind the import is gone by now.
-    await expect(page.getByTestId("imports-state")).toHaveText("COMMITTED");
+    await expect(page.getByTestId("imports-state")).toHaveText("Confirmada");
     await expect(page.getByTestId("imports-outcome-row")).toHaveCount(2);
     const reloadedFailure = page.getByTestId("imports-outcome-row").nth(1);
-    await expect(reloadedFailure.getByTestId("imports-outcome-status")).toHaveText("FAILED");
+    await expect(reloadedFailure.getByTestId("imports-outcome-status")).toHaveText("Con error");
     await expect(reloadedFailure.getByTestId("imports-outcome-reason")).toHaveText(
       requireString(storedFailure, "reasonCode")
     );
@@ -386,13 +386,13 @@ test.describe("the staff imports surface", () => {
     await page.getByRole("link", { name: "Importaciones" }).click();
     await expect(page.getByTestId("imports-index")).toBeVisible();
 
-    await page.getByLabel("Import entity").selectOption("CUSTOMER");
+    await page.getByLabel("Entidad a importar").selectOption("CUSTOMER");
     await page.getByTestId("import-file").setInputFiles(csvPath);
-    await page.getByRole("button", { name: "Upload" }).click();
+    await page.getByRole("button", { name: "Subir" }).click();
 
-    await expect(page.getByTestId("imports-upload-accepted")).toContainText("UPLOADED");
+    await expect(page.getByTestId("imports-upload-accepted")).toContainText("Subida");
     const historyRow = page.getByTestId("imports-row").first();
-    await expect(historyRow.getByTestId("imports-row-state")).toHaveText("UPLOADED");
+    await expect(historyRow.getByTestId("imports-row-state")).toHaveText("Subida");
 
     await page.getByTestId("imports-upload-accepted-link").click();
     // The navigation is awaited BEFORE the id is read: a click resolves as soon as the
@@ -402,13 +402,13 @@ test.describe("the staff imports surface", () => {
     expect(importId).toMatch(/^[0-9a-f-]{36}$/);
 
     await page.getByTestId("imports-preview").click();
-    await expect(page.getByTestId("imports-polling")).toContainText("Previewing the file");
+    await expect(page.getByTestId("imports-polling")).toContainText("Previsualizando el archivo");
 
     // The assertion that matters here: the state LEAVES UPLOADED. Only a consumer
     // takes the row out of it, so this is the queue, the claim and the worker's boot
     // proven from the browser. Whether the phase afterwards is PREVIEWED or FAILED is
     // the full-flow test above owns that half.
-    await expect(page.getByTestId("imports-state")).not.toHaveText("UPLOADED", {
+    await expect(page.getByTestId("imports-state")).not.toHaveText("Subida", {
       timeout: PHASE_TIMEOUT_MS,
     });
   });

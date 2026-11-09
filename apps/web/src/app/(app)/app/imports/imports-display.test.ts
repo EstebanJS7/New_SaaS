@@ -3,8 +3,10 @@ import { IMPORT_JOB_STATES, type ImportJobState, type ImportRowOutcome } from ".
 import {
   IMPORTS_READ_PERMISSION,
   IMPORTS_RUN_PERMISSION,
+  importJobStateLabel,
   importPhaseNotice,
   importRowMessageText,
+  importRowStatusLabel,
   importRowReasonText,
   importRowWarningText,
   isImportJobState,
@@ -82,11 +84,13 @@ describe("the polling contract", () => {
   });
 
   it("announces the two in-flight phases in words and announces nothing else", () => {
-    expect(importPhaseNotice("PREVIEWING")).toContain("Previewing");
-    expect(importPhaseNotice("COMMITTING")).toContain("Committing");
+    expect(importPhaseNotice("PREVIEWING")).toBe("Previsualizando el archivo. Revisando cambios…");
+    expect(importPhaseNotice("COMMITTING")).toBe(
+      "Confirmando las filas aceptadas. Revisando cambios…"
+    );
     // The notice names the watching, because the screen is deliberately not
     // blocking on the import.
-    expect(importPhaseNotice("PREVIEWING")).toContain("Watching for changes");
+    expect(importPhaseNotice("PREVIEWING")).toContain("Revisando cambios");
 
     for (const state of ["UPLOADED", "PREVIEWED", "COMMITTED", "FAILED", "EXPIRED"] as const) {
       expect(importPhaseNotice(state), state).toBeNull();
@@ -119,8 +123,8 @@ describe("how a row outcome reads", () => {
 
     // The Story's accessible-text requirement: the distinction from an error is in
     // the words, not only in the colour of a cell.
-    expect(warning).toBe("Suspected duplicate (warning)");
-    expect(warning).toContain("warning");
+    expect(warning).toBe("Posible duplicado (advertencia)");
+    expect(warning).toContain("advertencia");
     // An unflagged row says nothing at all rather than "no warning".
     expect(importRowWarningText(false)).toBe("");
   });
@@ -141,7 +145,7 @@ describe("how a row outcome reads", () => {
     // The two facts a row can carry are independent: accepted with a warning reads
     // as CREATE plus the warning sentence, which is not what FAILED plus a reason
     // reads like.
-    expect(importRowWarningText(accepted.suspectedDuplicate)).toContain("Suspected duplicate");
+    expect(importRowWarningText(accepted.suspectedDuplicate)).toContain("Posible duplicado");
   });
 });
 
@@ -160,8 +164,8 @@ describe("the paged summary", () => {
     const secondPage = { limit: 100, offset: 100 };
     const totals = { createdCount: 250, failedCount: 5, suspectedDuplicateCount: 1 };
 
-    expect(summaryPageLabel(firstPage, totals, 100)).toBe("Rows 1–100 of 255");
-    expect(summaryPageLabel(secondPage, totals, 100)).toBe("Rows 101–200 of 255");
+    expect(summaryPageLabel(firstPage, totals, 100)).toBe("Filas 1–100 de 255");
+    expect(summaryPageLabel(secondPage, totals, 100)).toBe("Filas 101–200 de 255");
     // A short last page reports the rows that are actually there, not the page
     // size it asked for.
     expect(
@@ -170,7 +174,7 @@ describe("the paged summary", () => {
         { createdCount: 120, failedCount: 0, suspectedDuplicateCount: 0 },
         20
       )
-    ).toBe("Rows 101–120 of 120");
+    ).toBe("Filas 101–120 de 120");
   });
 
   it("says an import has no outcomes instead of printing a backwards range", () => {
@@ -180,7 +184,26 @@ describe("the paged summary", () => {
         { createdCount: 0, failedCount: 0, suspectedDuplicateCount: 0 },
         0
       )
-    ).toBe("No row outcomes are stored for this import.");
+    ).toBe("No hay resultados de filas guardados para esta importación.");
+  });
+});
+
+describe("the es-PY labels of the API's tokens", () => {
+  it("names every lifecycle state in Spanish without changing the token", () => {
+    expect(IMPORT_JOB_STATES.map((state) => importJobStateLabel(state))).toEqual([
+      "Subida",
+      "Previsualizando",
+      "Previsualizada",
+      "Confirmando",
+      "Confirmada",
+      "Fallida",
+      "Vencida",
+    ]);
+  });
+
+  it("names both row verdicts in Spanish", () => {
+    expect(importRowStatusLabel("CREATE")).toBe("Se crea");
+    expect(importRowStatusLabel("FAILED")).toBe("Con error");
   });
 });
 
