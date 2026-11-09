@@ -110,7 +110,7 @@ interface PurchaseFormProps {
  * server's exact-decimal validation sees the user's own input.
  *
  * A `409` here is the non-`DRAFT` mutability rule — the purchase already moved
- * on — and is rendered as the API's stable, value-free conflict copy rather
+ * on — and is rendered as Spanish copy for that value-free conflict rather
  * than as a transient failure to retry blindly.
  */
 export function PurchaseForm({
@@ -168,23 +168,23 @@ export function PurchaseForm({
     event.preventDefault();
 
     if (supplierId.trim().length === 0) {
-      setLocalError("Select a supplier.");
+      setLocalError("Elegí un proveedor.");
       return;
     }
     if (mustChooseBranch && branchId.length === 0) {
-      setLocalError("Select the branch that receives the goods.");
+      setLocalError("Elegí la sucursal que recibe la mercadería.");
       return;
     }
     if (lines.length === 0) {
-      setLocalError("Add at least one line.");
+      setLocalError("Agregá al menos una línea.");
       return;
     }
     if (lines.some((line) => line.catalogItemId.trim().length === 0)) {
-      setLocalError("Select an item for every line.");
+      setLocalError("Elegí un artículo para cada línea.");
       return;
     }
     if (lines.some((line) => line.quantity.trim().length === 0)) {
-      setLocalError("Enter a quantity for every line.");
+      setLocalError("Ingresá una cantidad para cada línea.");
       return;
     }
 
@@ -195,11 +195,11 @@ export function PurchaseForm({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{isEdit ? "Edit draft purchase" : "New purchase"}</CardTitle>
+        <CardTitle>{isEdit ? "Editar borrador de compra" : "Nueva compra"}</CardTitle>
         <CardDescription>
           {isEdit
-            ? "Change the supplier or the line set. A line you remove is dropped from the draft."
-            : "Draft a purchase with a required supplier and at least one line."}
+            ? "Cambiá el proveedor o las líneas. Una línea que quites se elimina del borrador."
+            : "Registrá un borrador de compra con un proveedor y al menos una línea."}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -215,7 +215,7 @@ export function PurchaseForm({
             role="alert"
             className="mb-4 rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
           >
-            <p className="font-medium">Permission denied</p>
+            <p className="font-medium">Sin permiso</p>
             <p>{permissionError}</p>
           </div>
         ) : conflictError !== null ? (
@@ -223,7 +223,7 @@ export function PurchaseForm({
             role="alert"
             className="mb-4 rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
           >
-            <p className="font-medium">This purchase is no longer a draft</p>
+            <p className="font-medium">Esta compra ya no es un borrador</p>
             <p>{conflictError}</p>
           </div>
         ) : serverError !== null ? (
@@ -238,7 +238,7 @@ export function PurchaseForm({
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <label htmlFor="purchase-supplier" className="text-sm font-medium">
-              Supplier
+              Proveedor
             </label>
             <select
               id="purchase-supplier"
@@ -247,7 +247,7 @@ export function PurchaseForm({
               disabled={isPending}
               className={inputClassName}
             >
-              <option value="">Select a supplier</option>
+              <option value="">Elegí un proveedor</option>
               {suppliersQuery.data?.map((supplier) => (
                 <option key={supplier.id} value={supplier.id}>
                   {supplier.name}
@@ -255,20 +255,22 @@ export function PurchaseForm({
               ))}
             </select>
             {suppliersQuery.isLoading && (
-              <p className="text-xs text-muted-foreground">Loading suppliers...</p>
+              <p className="text-xs text-muted-foreground">Cargando proveedores…</p>
             )}
             {suppliersQuery.data?.length === 0 && (
-              <p className="text-xs text-muted-foreground">No suppliers are available yet.</p>
+              <p className="text-xs text-muted-foreground">
+                Todavía no hay proveedores disponibles.
+              </p>
             )}
             {suppliersQuery.error && (
-              <p className="text-xs text-destructive">Could not load suppliers.</p>
+              <p className="text-xs text-destructive">No pudimos cargar los proveedores.</p>
             )}
           </div>
 
           {mustChooseBranch && (
             <div className="space-y-2">
               <label htmlFor="purchase-branch" className="text-sm font-medium">
-                Branch
+                Sucursal
               </label>
               <select
                 id="purchase-branch"
@@ -277,7 +279,7 @@ export function PurchaseForm({
                 disabled={isPending}
                 className={inputClassName}
               >
-                <option value="">Select the receiving branch</option>
+                <option value="">Elegí la sucursal que recibe</option>
                 {workingBranches.branches.map((branch) => (
                   <option key={branch.id} value={branch.id}>
                     {branch.name}
@@ -285,14 +287,14 @@ export function PurchaseForm({
                 ))}
               </select>
               <p className="text-xs text-muted-foreground">
-                The stock enters this branch when the purchase is received.
+                El stock ingresa a esta sucursal cuando se recibe la compra.
               </p>
             </div>
           )}
 
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">Lines</span>
+              <span className="text-sm font-medium">Líneas</span>
               <Button
                 type="button"
                 variant="outline"
@@ -300,7 +302,7 @@ export function PurchaseForm({
                 onClick={addLine}
                 disabled={isPending}
               >
-                Add line
+                Agregar línea
               </Button>
             </div>
 
@@ -309,7 +311,7 @@ export function PurchaseForm({
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-2">
                     <label htmlFor={`${line.key}-item`} className="text-sm font-medium">
-                      Item {index + 1}
+                      Artículo {index + 1}
                     </label>
                     <select
                       id={`${line.key}-item`}
@@ -318,7 +320,7 @@ export function PurchaseForm({
                       disabled={isPending}
                       className={inputClassName}
                     >
-                      <option value="">Select an item</option>
+                      <option value="">Elegí un artículo</option>
                       {itemsQuery.data?.map((item) => (
                         <option key={item.id} value={item.id}>
                           {item.name}
@@ -330,7 +332,7 @@ export function PurchaseForm({
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-2">
                       <label htmlFor={`${line.key}-quantity`} className="text-sm font-medium">
-                        Quantity
+                        Cantidad
                       </label>
                       <input
                         id={`${line.key}-quantity`}
@@ -339,13 +341,13 @@ export function PurchaseForm({
                         value={line.quantity}
                         onChange={(event) => setLine(line.key, { quantity: event.target.value })}
                         disabled={isPending}
-                        placeholder="e.g. 2.000"
+                        placeholder="Ej.: 2"
                         className={inputClassName}
                       />
                     </div>
                     <div className="space-y-2">
                       <label htmlFor={`${line.key}-cost`} className="text-sm font-medium">
-                        Unit cost
+                        Costo unitario
                       </label>
                       <input
                         id={`${line.key}-cost`}
@@ -354,7 +356,7 @@ export function PurchaseForm({
                         value={line.unitCost}
                         onChange={(event) => setLine(line.key, { unitCost: event.target.value })}
                         disabled={isPending}
-                        placeholder="Optional"
+                        placeholder="Opcional"
                         className={inputClassName}
                       />
                     </div>
@@ -368,28 +370,32 @@ export function PurchaseForm({
                     onClick={() => removeLine(line.key)}
                     disabled={isPending || lines.length === 1}
                   >
-                    Remove line
+                    Quitar línea
                   </Button>
                 </div>
               </div>
             ))}
             {itemsQuery.isLoading && (
-              <p className="text-xs text-muted-foreground">Loading catalog items...</p>
+              <p className="text-xs text-muted-foreground">Cargando artículos del catálogo…</p>
             )}
             {itemsQuery.data?.length === 0 && (
-              <p className="text-xs text-muted-foreground">No catalog items are available yet.</p>
+              <p className="text-xs text-muted-foreground">
+                Todavía no hay artículos del catálogo disponibles.
+              </p>
             )}
-            {itemsQuery.error && <p className="text-xs text-destructive">Could not load items.</p>}
+            {itemsQuery.error && (
+              <p className="text-xs text-destructive">No pudimos cargar los artículos.</p>
+            )}
           </div>
 
           <p className="text-xs text-muted-foreground">
-            The line set you submit is authoritative: a line you remove is dropped from the draft.
-            Receiving is a separate, explicit action and is never changed by editing.
+            Las líneas que enviás reemplazan las del borrador: una línea que quites se elimina.
+            Recibir la compra es una acción aparte y editar nunca la cambia.
           </p>
 
           <div className="flex flex-wrap items-center gap-3 pt-4">
             <Button type="submit" disabled={isPending}>
-              {isPending ? "Saving..." : isEdit ? "Save changes" : "Create purchase"}
+              {isPending ? "Guardando…" : isEdit ? "Guardar cambios" : "Crear compra"}
             </Button>
             <Button
               type="button"
@@ -397,7 +403,7 @@ export function PurchaseForm({
               onClick={() => router.back()}
               disabled={isPending}
             >
-              Cancel
+              Cancelar
             </Button>
           </div>
         </form>

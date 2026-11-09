@@ -19,9 +19,9 @@ import {
   type Supplier,
 } from "../suppliers-api";
 
-/** An absent optional field is shown as "Not set"; no value is invented. */
+/** An absent optional field is shown as "Sin definir"; no value is invented. */
 function optionalFieldLabel(value: string | null): string {
-  return value ?? "Not set";
+  return value ?? "Sin definir";
 }
 
 function DetailRow({
@@ -65,7 +65,7 @@ export function SupplierDetail(): JSX.Element {
   });
 
   if (query.isLoading) {
-    return <p className="text-sm text-muted-foreground">Loading supplier...</p>;
+    return <p className="text-sm text-muted-foreground">Cargando proveedor…</p>;
   }
 
   if (query.error) {
@@ -74,9 +74,7 @@ export function SupplierDetail(): JSX.Element {
         role="alert"
         className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
       >
-        {isSupplierPermissionDenied(query.error) && (
-          <p className="font-medium">Permission denied</p>
-        )}
+        {isSupplierPermissionDenied(query.error) && <p className="font-medium">Sin permiso</p>}
         <p>{userFacingSupplierError(query.error)}</p>
       </div>
     );
@@ -84,7 +82,7 @@ export function SupplierDetail(): JSX.Element {
 
   const supplier: Supplier | undefined = query.data;
   if (!supplier) {
-    return <p className="text-sm text-muted-foreground">Supplier not found.</p>;
+    return <p className="text-sm text-muted-foreground">No encontramos el proveedor.</p>;
   }
 
   return (
@@ -95,12 +93,12 @@ export function SupplierDetail(): JSX.Element {
             <div className="min-w-0">
               <h1 className="truncate text-2xl font-semibold tracking-tight">{supplier.name}</h1>
               <p className="text-sm text-muted-foreground">
-                {supplier.isActive ? "Active supplier" : "Inactive supplier"}
+                {supplier.isActive ? "Proveedor activo" : "Proveedor inactivo"}
               </p>
             </div>
             <div className="flex shrink-0 gap-2">
               <Button type="button" variant="outline" asChild>
-                <Link href={`/app/suppliers/${supplier.id}/edit`}>Edit</Link>
+                <Link href={`/app/suppliers/${supplier.id}/edit`}>Editar</Link>
               </Button>
             </div>
           </div>
@@ -109,18 +107,19 @@ export function SupplierDetail(): JSX.Element {
 
       <Card>
         <CardHeader>
-          <CardTitle>Supplier details</CardTitle>
+          <CardTitle>Detalle del proveedor</CardTitle>
           <CardDescription>
-            Read-only view. Removal is a deactivation from the supplier list, never a delete.
+            Vista de solo lectura. Para quitar un proveedor, desactivalo desde la lista; nunca se
+            elimina.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
-          <DetailRow label="Legal name" value={optionalFieldLabel(supplier.legalName)} />
-          <DetailRow label="Tax identifier" value={optionalFieldLabel(supplier.taxId)} />
-          <DetailRow label="Email" value={optionalFieldLabel(supplier.email)} />
-          <DetailRow label="Phone" value={optionalFieldLabel(supplier.phone)} />
-          <DetailRow label="Address" value={optionalFieldLabel(supplier.address)} />
-          <DetailRow label="Status" value={supplier.isActive ? "Active" : "Inactive"} />
+          <DetailRow label="Razón social" value={optionalFieldLabel(supplier.legalName)} />
+          <DetailRow label="RUC" value={optionalFieldLabel(supplier.taxId)} />
+          <DetailRow label="Correo electrónico" value={optionalFieldLabel(supplier.email)} />
+          <DetailRow label="Teléfono" value={optionalFieldLabel(supplier.phone)} />
+          <DetailRow label="Dirección" value={optionalFieldLabel(supplier.address)} />
+          <DetailRow label="Estado" value={supplier.isActive ? "Activo" : "Inactivo"} />
         </CardContent>
       </Card>
     </div>

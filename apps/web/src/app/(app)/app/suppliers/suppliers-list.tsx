@@ -23,7 +23,7 @@ import {
 
 /** The tax identifier is CONFIDENTIAL: it is rendered or summarized, never logged. */
 function taxIdentifierLabel(supplier: Supplier): string {
-  return supplier.taxId === null ? "No tax identifier" : `Tax identifier ${supplier.taxId}`;
+  return supplier.taxId === null ? "Sin RUC" : `RUC ${supplier.taxId}`;
 }
 
 function SupplierCard({ supplier }: { readonly supplier: Supplier }): JSX.Element {
@@ -48,7 +48,7 @@ function SupplierCard({ supplier }: { readonly supplier: Supplier }): JSX.Elemen
           </Link>
           {!supplier.isActive && (
             <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-              Inactive
+              Inactivo
             </span>
           )}
         </div>
@@ -56,7 +56,7 @@ function SupplierCard({ supplier }: { readonly supplier: Supplier }): JSX.Elemen
         {mutation.error && (
           <div role="alert" className="text-xs text-destructive">
             {isSupplierPermissionDenied(mutation.error) && (
-              <p className="font-medium">Permission denied</p>
+              <p className="font-medium">Sin permiso</p>
             )}
             <p>{userFacingSupplierError(mutation.error)}</p>
           </div>
@@ -64,7 +64,7 @@ function SupplierCard({ supplier }: { readonly supplier: Supplier }): JSX.Elemen
       </div>
       <div className="flex shrink-0 gap-2">
         <Button type="button" variant="outline" size="sm" asChild>
-          <Link href={`/app/suppliers/${supplier.id}/edit`}>Edit</Link>
+          <Link href={`/app/suppliers/${supplier.id}/edit`}>Editar</Link>
         </Button>
         <Button
           type="button"
@@ -125,22 +125,22 @@ export function SupplierList(): JSX.Element {
       }),
   });
 
-  const emptyTitle = includeInactive ? "No suppliers yet" : "No active suppliers";
+  const emptyTitle = includeInactive ? "Todavía no hay proveedores" : "No hay proveedores activos";
   const emptyDescription = includeInactive
-    ? "Get started by registering the first supplier for this tenant."
-    : "Every supplier for this tenant is deactivated. Include deactivated suppliers to review them.";
+    ? "Empezá registrando el primer proveedor."
+    : "Todos los proveedores están desactivados. Incluí los desactivados para revisarlos.";
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Suppliers</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Proveedores</h1>
           <p className="text-sm text-muted-foreground">
-            Manage the suppliers this tenant purchases from.
+            Gestioná los proveedores a los que compra la organización.
           </p>
         </div>
         <Button type="button" asChild>
-          <Link href="/app/suppliers/new">New supplier</Link>
+          <Link href="/app/suppliers/new">Nuevo proveedor</Link>
         </Button>
       </div>
 
@@ -151,13 +151,13 @@ export function SupplierList(): JSX.Element {
           onChange={(event) => setIncludeInactive(event.target.checked)}
           className="h-4 w-4 rounded border-input"
         />
-        Include deactivated suppliers
+        Incluir proveedores desactivados
       </label>
 
       {query.isLoading ? (
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">Loading suppliers...</p>
+            <p className="text-sm text-muted-foreground">Cargando proveedores…</p>
           </CardContent>
         </Card>
       ) : query.error ? (
@@ -165,9 +165,7 @@ export function SupplierList(): JSX.Element {
           role="alert"
           className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
         >
-          {isSupplierPermissionDenied(query.error) && (
-            <p className="font-medium">Permission denied</p>
-          )}
+          {isSupplierPermissionDenied(query.error) && <p className="font-medium">Sin permiso</p>}
           <p>{userFacingSupplierError(query.error)}</p>
         </div>
       ) : query.data?.length === 0 ? (
@@ -178,7 +176,7 @@ export function SupplierList(): JSX.Element {
           </CardHeader>
           <CardContent>
             <Button type="button" asChild>
-              <Link href="/app/suppliers/new">Register supplier</Link>
+              <Link href="/app/suppliers/new">Registrar proveedor</Link>
             </Button>
           </CardContent>
         </Card>

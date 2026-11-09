@@ -176,7 +176,7 @@ describe("purchases-api transport contract", () => {
     expect((error as ApiRequestError).code).toBe("NOT_FOUND");
     expect((error as ApiRequestError).status).toBe(404);
     expect(isPurchaseNotFound(error as Error)).toBe(true);
-    expect(userFacingPurchaseError(error as Error)).toBe("Purchase not found.");
+    expect(userFacingPurchaseError(error as Error)).toBe("No encontramos la compra.");
   });
 
   it("classifies each receive conflict by its stable value-free message", async () => {
@@ -184,14 +184,17 @@ describe("purchases-api transport contract", () => {
       {
         message: PURCHASE_NOT_EDITABLE_MESSAGE,
         matches: isPurchaseNotEditableConflict,
+        copy: "Solo se puede modificar una compra en borrador.",
       },
       {
         message: PURCHASE_ITEM_INACTIVE_MESSAGE,
         matches: isPurchaseInactiveItemConflict,
+        copy: "Una línea usa un artículo del catálogo que está inactivo.",
       },
       {
         message: PURCHASE_ITEM_NOT_TRACKED_MESSAGE,
         matches: isPurchaseUntrackedItemConflict,
+        copy: "Una línea usa un artículo del catálogo que no controla stock.",
       },
     ] as const;
 
@@ -215,7 +218,9 @@ describe("purchases-api transport contract", () => {
       // The conflict copy never echoes a stored quantity, cost or id.
       expect(error.message).not.toContain("2.000");
       expect(error.message).not.toContain(ITEM_ID);
-      expect(userFacingPurchaseError(error)).toBe(testCase.message);
+      expect(userFacingPurchaseError(error)).toBe(testCase.copy);
+      // The API's English conflict text never reaches the staff surface.
+      expect(userFacingPurchaseError(error)).not.toBe(testCase.message);
     }
   });
 
@@ -275,23 +280,35 @@ describe("purchases-api transport contract", () => {
 
   it("maps permission, not-found and transport failures to distinct staff-facing copy", () => {
     expect(userFacingPurchaseError(new ApiRequestError("FORBIDDEN", "Access denied.", 403))).toBe(
-      "You do not have permission to manage purchases."
+      "No tenés permiso para gestionar compras."
     );
     expect(
       userFacingPurchaseError(new ApiRequestError("NOT_FOUND", "Resource was not found.", 404))
-    ).toBe("Purchase not found.");
+    ).toBe("No encontramos la compra.");
     expect(
       userFacingPurchaseError(
         new ApiRequestError("UNAUTHENTICATED", "Authentication required.", 401)
       )
-    ).toBe("You must be signed in to view purchases.");
+    ).toBe("Iniciá sesión para ver las compras.");
     expect(userFacingPurchaseError(new TypeError("Failed to fetch"))).toBe(
-      "The request could not reach the server. Check your connection and try again."
+      "No se pudo conectar con el servidor. Revisá tu conexión y volvé a intentar."
     );
-    // An unmapped code keeps the server message instead of inventing a cause.
     expect(
       userFacingPurchaseError(new ApiRequestError("VALIDATION_FAILED", "Bad body.", 400))
-    ).toBe("Bad body.");
+    ).toBe("Revisá los datos de la compra antes de guardar.");
+  });
+
+  it("never passes server English through: unknown codes and conflicts get Spanish copy", () => {
+    const unknown = userFacingPurchaseError(
+      new ApiRequestError("INTERNAL_ERROR", "Unexpected database failure.", 500)
+    );
+    expect(unknown).toBe(
+      "No pudimos completar la operación. Revisá los datos y el estado antes de volver a intentar."
+    );
+    expect(unknown).not.toContain("Unexpected");
+    expect(userFacingPurchaseError(new ApiRequestError("CONFLICT", "Something else.", 409))).toBe(
+      "La compra no admite este cambio. Revisá su estado actual antes de continuar."
+    );
   });
 
   it("never writes a purchase payload to the console on success or conflict", async () => {

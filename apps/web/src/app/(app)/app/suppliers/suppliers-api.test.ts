@@ -166,7 +166,11 @@ describe("suppliers-api transport contract", () => {
     expect(isSupplierConflict(error as Error)).toBe(true);
     // The conflict copy never echoes the submitted identifier.
     expect((error as ApiRequestError).message).not.toContain("80012345-6");
-    expect(userFacingSupplierError(error as Error)).toBe(CONFLICT_MESSAGE);
+    expect(userFacingSupplierError(error as Error)).toBe(
+      "Ya existe un proveedor con este RUC en la organización."
+    );
+    // The API's English conflict text never reaches the staff surface.
+    expect(userFacingSupplierError(error as Error)).not.toBe(CONFLICT_MESSAGE);
   });
 
   it("classifies only a CONFLICT as the identifier conflict", () => {
@@ -207,20 +211,39 @@ describe("suppliers-api transport contract", () => {
 
   it("maps permission and not-found codes to staff-facing copy", () => {
     expect(userFacingSupplierError(new ApiRequestError("FORBIDDEN", "Access denied.", 403))).toBe(
-      "You do not have permission to manage suppliers."
+      "No tenés permiso para gestionar proveedores."
     );
     expect(
       userFacingSupplierError(new ApiRequestError("NOT_FOUND", "Resource was not found.", 404))
-    ).toBe("Supplier not found.");
+    ).toBe("No encontramos el proveedor.");
     expect(
       userFacingSupplierError(
         new ApiRequestError("UNAUTHENTICATED", "Authentication required.", 401)
       )
-    ).toBe("You must be signed in to view suppliers.");
-    // An unmapped code keeps the server message instead of inventing a cause.
+    ).toBe("Iniciá sesión para ver los proveedores.");
     expect(
       userFacingSupplierError(new ApiRequestError("VALIDATION_FAILED", "Bad body.", 400))
-    ).toBe("Bad body.");
+    ).toBe("Revisá los datos del proveedor antes de guardar.");
+    expect(
+      userFacingSupplierError(
+        new ApiRequestError(
+          "CONFLICT",
+          "A supplier with this tax identifier already exists in this tenant.",
+          409
+        )
+      )
+    ).toBe("Ya existe un proveedor con este RUC en la organización.");
+  });
+
+  it("never passes server or browser English through", () => {
+    const unknown = userFacingSupplierError(
+      new ApiRequestError("INTERNAL_ERROR", "Unexpected database failure.", 500)
+    );
+    expect(unknown).toBe("No pudimos completar la operación. Revisá los datos y volvé a intentar.");
+    expect(unknown).not.toContain("Unexpected");
+    expect(userFacingSupplierError(new TypeError("Failed to fetch"))).toBe(
+      "No se pudo conectar con el servidor. Revisá tu conexión y volvé a intentar."
+    );
   });
 
   it("never writes a supplier payload to the console on success or conflict", async () => {

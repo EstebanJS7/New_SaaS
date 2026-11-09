@@ -271,27 +271,52 @@ export function isPurchaseTransportError(error: Error): boolean {
   return !(error instanceof ApiRequestError);
 }
 
+/** Shared es-PY sentence for a request that never reached the API. */
+const CONNECTION_ERROR_COPY =
+  "No se pudo conectar con el servidor. Revisá tu conexión y volvé a intentar.";
+
 /**
- * Maps the stable purchase error contract to staff-facing UX copy.
+ * Spanish copy for each value-free conflict the API emits. The API's English
+ * constants stay the classification keys; the staff surface never shows them.
+ */
+function conflictCopy(error: ApiRequestError): string {
+  if (error.message === PURCHASE_NOT_EDITABLE_MESSAGE) {
+    return "Solo se puede modificar una compra en borrador.";
+  }
+  if (error.message === PURCHASE_ITEM_INACTIVE_MESSAGE) {
+    return "Una línea usa un artículo del catálogo que está inactivo.";
+  }
+  if (error.message === PURCHASE_ITEM_NOT_TRACKED_MESSAGE) {
+    return "Una línea usa un artículo del catálogo que no controla stock.";
+  }
+  return "La compra no admite este cambio. Revisá su estado actual antes de continuar.";
+}
+
+/**
+ * Maps the stable purchase error contract to staff-facing es-PY copy.
  *
- * These messages are UX-only; the backend still enforces every gate. `CONFLICT`
- * deliberately keeps the API's own stable, value-free conflict copy — calling a
- * transition conflict "conflict" without inventing a cause — and any unmapped
- * code falls through to the server message. A bare transport failure gets its
- * own copy instead of a raw browser string.
+ * These messages are UX-only; the backend still enforces every gate. Each
+ * `CONFLICT` keeps its distinct, value-free condition in Spanish — never
+ * inventing a cause — and any unmapped code gets a generic Spanish sentence so
+ * the API's English text never reaches the staff surface. A bare transport
+ * failure gets the shared connection sentence instead of a raw browser string.
  */
 export function userFacingPurchaseError(error: Error): string {
   if (!(error instanceof ApiRequestError)) {
-    return "The request could not reach the server. Check your connection and try again.";
+    return CONNECTION_ERROR_COPY;
   }
   switch (error.code) {
     case "UNAUTHENTICATED":
-      return "You must be signed in to view purchases.";
+      return "Iniciá sesión para ver las compras.";
     case "FORBIDDEN":
-      return "You do not have permission to manage purchases.";
+      return "No tenés permiso para gestionar compras.";
     case "NOT_FOUND":
-      return "Purchase not found.";
+      return "No encontramos la compra.";
+    case "VALIDATION_FAILED":
+      return "Revisá los datos de la compra antes de guardar.";
+    case "CONFLICT":
+      return conflictCopy(error);
     default:
-      return error.message;
+      return "No pudimos completar la operación. Revisá los datos y el estado antes de volver a intentar.";
   }
 }

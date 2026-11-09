@@ -54,7 +54,9 @@ function resolveUrl(input: RequestInfo | URL): string {
 }
 
 function submitForm(): void {
-  const form = screen.getByRole("button", { name: /Create supplier|Save changes/ }).closest("form");
+  const form = screen
+    .getByRole("button", { name: /Crear proveedor|Guardar cambios/ })
+    .closest("form");
   fireEvent.submit(form!);
 }
 
@@ -87,8 +89,10 @@ describe("NewSupplierPage", () => {
 
     renderNewPage();
 
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Distribuidora Central" } });
-    fireEvent.change(screen.getByLabelText("Tax identifier"), { target: { value: "80012345-6" } });
+    fireEvent.change(screen.getByLabelText("Nombre"), {
+      target: { value: "Distribuidora Central" },
+    });
+    fireEvent.change(screen.getByLabelText("RUC"), { target: { value: "80012345-6" } });
     submitForm();
 
     await waitFor(() => {
@@ -110,11 +114,13 @@ describe("NewSupplierPage", () => {
 
     renderNewPage();
 
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Distribuidora Central" } });
+    fireEvent.change(screen.getByLabelText("Nombre"), {
+      target: { value: "Distribuidora Central" },
+    });
     submitForm();
 
-    expect(await screen.findByRole("button", { name: "Saving..." })).toBeDisabled();
-    expect(screen.getByLabelText("Name")).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "Guardando…" })).toBeDisabled();
+    expect(screen.getByLabelText("Nombre")).toBeDisabled();
     expect(pushMock).not.toHaveBeenCalled();
   });
 
@@ -127,11 +133,13 @@ describe("NewSupplierPage", () => {
 
     renderNewPage();
 
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Distribuidora Central" } });
+    fireEvent.change(screen.getByLabelText("Nombre"), {
+      target: { value: "Distribuidora Central" },
+    });
     submitForm();
 
     expect(
-      await screen.findByText("You do not have permission to manage suppliers.")
+      await screen.findByText("No tenés permiso para gestionar proveedores.")
     ).toBeInTheDocument();
     expect(pushMock).not.toHaveBeenCalled();
   });
@@ -148,10 +156,14 @@ describe("NewSupplierPage", () => {
 
     renderNewPage();
 
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Distribuidora Central" } });
+    fireEvent.change(screen.getByLabelText("Nombre"), {
+      target: { value: "Distribuidora Central" },
+    });
     submitForm();
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Invalid supplier create body.");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Revisá los datos del proveedor antes de guardar.");
+    expect(alert).not.toHaveTextContent("Invalid supplier create body.");
   });
 });
 
@@ -167,7 +179,7 @@ describe("EditSupplierPage", () => {
 
     renderEditPage();
 
-    expect(screen.getByText("Loading supplier...")).toBeInTheDocument();
+    expect(screen.getByText("Cargando proveedor…")).toBeInTheDocument();
   });
 
   it("renders the not-found state when the supplier is missing", async () => {
@@ -179,7 +191,7 @@ describe("EditSupplierPage", () => {
 
     renderEditPage();
 
-    expect(await screen.findByText("Supplier not found.")).toBeInTheDocument();
+    expect(await screen.findByText("No encontramos el proveedor.")).toBeInTheDocument();
   });
 
   it("renders a permission-denied state when the read is refused with 403", async () => {
@@ -192,8 +204,8 @@ describe("EditSupplierPage", () => {
     renderEditPage();
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("Permission denied");
-    expect(alert).toHaveTextContent("You do not have permission to manage suppliers.");
+    expect(alert).toHaveTextContent("Sin permiso");
+    expect(alert).toHaveTextContent("No tenés permiso para gestionar proveedores.");
   });
 
   it("updates the supplier and returns to the list on success", async () => {
@@ -207,7 +219,7 @@ describe("EditSupplierPage", () => {
 
     renderEditPage();
 
-    const name = await screen.findByLabelText("Name");
+    const name = await screen.findByLabelText("Nombre");
     fireEvent.change(name, { target: { value: "Distribuidora Central S.A." } });
     submitForm();
 
@@ -235,13 +247,14 @@ describe("EditSupplierPage", () => {
 
     renderEditPage();
 
-    const taxId = await screen.findByLabelText("Tax identifier");
+    const taxId = await screen.findByLabelText("RUC");
     fireEvent.change(taxId, { target: { value: "99999999-9" } });
     submitForm();
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("Tax identifier conflict");
-    expect(alert).toHaveTextContent(CONFLICT_MESSAGE);
+    expect(alert).toHaveTextContent("RUC duplicado");
+    expect(alert).toHaveTextContent("Ya existe un proveedor con este RUC en la organización.");
+    expect(alert).not.toHaveTextContent(CONFLICT_MESSAGE);
     expect(taxId).toHaveAttribute("aria-invalid", "true");
     // A refused write never navigates away from the form.
     expect(pushMock).not.toHaveBeenCalled();
@@ -252,9 +265,9 @@ describe("EditSupplierPage", () => {
 
     renderEditPage();
 
-    await screen.findByLabelText("Name");
+    await screen.findByLabelText("Nombre");
     expect(
-      screen.queryByRole("button", { name: /delete|remove|deactivate/i })
+      screen.queryByRole("button", { name: /eliminar|borrar|quitar|desactivar/i })
     ).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
   });

@@ -94,13 +94,13 @@ function wrapper(children: React.ReactNode): React.ReactElement {
 }
 
 function submitForm(): void {
-  const form = screen.getByRole("button", { name: /Create purchase|Save changes/ }).closest("form");
+  const form = screen.getByRole("button", { name: /Crear compra|Guardar cambios/ }).closest("form");
   fireEvent.submit(form!);
 }
 
 async function selectSupplier(): Promise<void> {
   await screen.findByRole("option", { name: "Distribuidora Central" });
-  fireEvent.change(screen.getByLabelText("Supplier"), { target: { value: SUPPLIER_ID } });
+  fireEvent.change(screen.getByLabelText("Proveedor"), { target: { value: SUPPLIER_ID } });
 }
 
 describe("PurchaseForm", () => {
@@ -116,8 +116,8 @@ describe("PurchaseForm", () => {
 
     await selectSupplier();
     await screen.findByRole("option", { name: "Gauze roll" });
-    fireEvent.change(screen.getByLabelText("Item 1"), { target: { value: ITEM_ID } });
-    fireEvent.change(screen.getByLabelText("Quantity"), { target: { value: "2.000" } });
+    fireEvent.change(screen.getByLabelText("Artículo 1"), { target: { value: ITEM_ID } });
+    fireEvent.change(screen.getByLabelText("Cantidad"), { target: { value: "2.000" } });
     submitForm();
 
     expect(onSubmit).toHaveBeenCalledWith({
@@ -137,14 +137,14 @@ describe("PurchaseForm", () => {
 
     await selectSupplier();
     await screen.findByRole("option", { name: "Gauze roll" });
-    fireEvent.change(screen.getByLabelText("Item 1"), { target: { value: ITEM_ID } });
-    fireEvent.change(screen.getByLabelText("Quantity"), { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText("Artículo 1"), { target: { value: ITEM_ID } });
+    fireEvent.change(screen.getByLabelText("Cantidad"), { target: { value: "1" } });
     await screen.findByRole("option", { name: "Norte" });
     submitForm();
     expect(onSubmit).not.toHaveBeenCalled();
-    expect(screen.getByRole("alert").textContent).toContain("branch");
+    expect(screen.getByRole("alert").textContent).toContain("sucursal");
 
-    fireEvent.change(screen.getByLabelText("Branch"), { target: { value: NORTE_ID } });
+    fireEvent.change(screen.getByLabelText("Sucursal"), { target: { value: NORTE_ID } });
     submitForm();
     expect(onSubmit).toHaveBeenCalledWith({
       supplierId: SUPPLIER_ID,
@@ -164,7 +164,7 @@ describe("PurchaseForm", () => {
       )
     );
     await screen.findByRole("option", { name: "Distribuidora Central" });
-    expect(screen.queryByLabelText("Branch")).toBeNull();
+    expect(screen.queryByLabelText("Sucursal")).toBeNull();
   });
 
   it("sends the unit cost as the exact decimal string the user typed", async () => {
@@ -175,9 +175,9 @@ describe("PurchaseForm", () => {
 
     await selectSupplier();
     await screen.findByRole("option", { name: "Gauze roll" });
-    fireEvent.change(screen.getByLabelText("Item 1"), { target: { value: ITEM_ID } });
-    fireEvent.change(screen.getByLabelText("Quantity"), { target: { value: "2.500" } });
-    fireEvent.change(screen.getByLabelText("Unit cost"), { target: { value: "1500.00" } });
+    fireEvent.change(screen.getByLabelText("Artículo 1"), { target: { value: ITEM_ID } });
+    fireEvent.change(screen.getByLabelText("Cantidad"), { target: { value: "2.500" } });
+    fireEvent.change(screen.getByLabelText("Costo unitario"), { target: { value: "1500.00" } });
     submitForm();
 
     const body = onSubmit.mock.calls[0]?.[0] as { lines: Record<string, unknown>[] };
@@ -193,12 +193,12 @@ describe("PurchaseForm", () => {
 
     await selectSupplier();
     await screen.findByRole("option", { name: "Bandage" });
-    fireEvent.change(screen.getByLabelText("Item 1"), { target: { value: ITEM_ID } });
-    fireEvent.change(screen.getByLabelText("Quantity"), { target: { value: "2.000" } });
+    fireEvent.change(screen.getByLabelText("Artículo 1"), { target: { value: ITEM_ID } });
+    fireEvent.change(screen.getByLabelText("Cantidad"), { target: { value: "2.000" } });
 
-    fireEvent.click(screen.getByRole("button", { name: "Add line" }));
-    fireEvent.change(screen.getByLabelText("Item 2"), { target: { value: OTHER_ITEM_ID } });
-    fireEvent.change(screen.getAllByLabelText("Quantity")[1], { target: { value: "1.000" } });
+    fireEvent.click(screen.getByRole("button", { name: "Agregar línea" }));
+    fireEvent.change(screen.getByLabelText("Artículo 2"), { target: { value: OTHER_ITEM_ID } });
+    fireEvent.change(screen.getAllByLabelText("Cantidad")[1], { target: { value: "1.000" } });
     submitForm();
 
     expect(onSubmit).toHaveBeenCalledWith({
@@ -221,9 +221,9 @@ describe("PurchaseForm", () => {
     );
 
     await screen.findByRole("option", { name: "Distribuidora Central" });
-    expect(screen.getAllByLabelText("Quantity")).toHaveLength(2);
+    expect(screen.getAllByLabelText("Cantidad")).toHaveLength(2);
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Remove line" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Quitar línea" })[0]);
     submitForm();
 
     const body = onSubmit.mock.calls[0]?.[0] as { lines: Record<string, unknown>[] };
@@ -236,7 +236,7 @@ describe("PurchaseForm", () => {
     render(wrapper(<PurchaseForm onSubmit={vi.fn()} isPending={false} error={null} />));
 
     await selectSupplier();
-    expect(screen.getByRole("button", { name: "Remove line" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Quitar línea" })).toBeDisabled();
   });
 
   it("pre-fills the edit form and sends the full desired line set", async () => {
@@ -250,12 +250,12 @@ describe("PurchaseForm", () => {
     );
 
     await screen.findByRole("option", { name: "Distribuidora Central" });
-    expect(screen.getByLabelText("Supplier")).toHaveValue(SUPPLIER_ID);
-    expect(screen.getByLabelText("Item 1")).toHaveValue(ITEM_ID);
-    expect(screen.getAllByLabelText("Quantity")[0]).toHaveValue("2.000");
-    expect(screen.getAllByLabelText("Unit cost")[0]).toHaveValue("1500.00");
+    expect(screen.getByLabelText("Proveedor")).toHaveValue(SUPPLIER_ID);
+    expect(screen.getByLabelText("Artículo 1")).toHaveValue(ITEM_ID);
+    expect(screen.getAllByLabelText("Cantidad")[0]).toHaveValue("2.000");
+    expect(screen.getAllByLabelText("Costo unitario")[0]).toHaveValue("1500.00");
 
-    fireEvent.change(screen.getAllByLabelText("Quantity")[0], { target: { value: "3.000" } });
+    fireEvent.change(screen.getAllByLabelText("Cantidad")[0], { target: { value: "3.000" } });
     submitForm();
 
     const body = onSubmit.mock.calls[0]?.[0] as { supplierId: string; lines: unknown[] };
@@ -275,7 +275,7 @@ describe("PurchaseForm", () => {
     await screen.findByRole("option", { name: "Gauze roll" });
     submitForm();
 
-    expect(screen.getByRole("alert")).toHaveTextContent("Select a supplier.");
+    expect(screen.getByRole("alert")).toHaveTextContent("Elegí un proveedor.");
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
@@ -286,16 +286,16 @@ describe("PurchaseForm", () => {
     render(wrapper(<PurchaseForm onSubmit={onSubmit} isPending={false} error={null} />));
 
     await selectSupplier();
-    fireEvent.change(screen.getByLabelText("Quantity"), { target: { value: "1.000" } });
+    fireEvent.change(screen.getByLabelText("Cantidad"), { target: { value: "1.000" } });
     submitForm();
-    expect(screen.getByRole("alert")).toHaveTextContent("Select an item for every line.");
+    expect(screen.getByRole("alert")).toHaveTextContent("Elegí un artículo para cada línea.");
     expect(onSubmit).not.toHaveBeenCalled();
 
     await screen.findByRole("option", { name: "Gauze roll" });
-    fireEvent.change(screen.getByLabelText("Item 1"), { target: { value: ITEM_ID } });
-    fireEvent.change(screen.getByLabelText("Quantity"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Artículo 1"), { target: { value: ITEM_ID } });
+    fireEvent.change(screen.getByLabelText("Cantidad"), { target: { value: "" } });
     submitForm();
-    expect(screen.getByRole("alert")).toHaveTextContent("Enter a quantity for every line.");
+    expect(screen.getByRole("alert")).toHaveTextContent("Ingresá una cantidad para cada línea.");
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
@@ -314,8 +314,9 @@ describe("PurchaseForm", () => {
     );
 
     const alert = screen.getByRole("alert");
-    expect(alert).toHaveTextContent("This purchase is no longer a draft");
-    expect(alert).toHaveTextContent(PURCHASE_NOT_EDITABLE_MESSAGE);
+    expect(alert).toHaveTextContent("Esta compra ya no es un borrador");
+    expect(alert).toHaveTextContent("Solo se puede modificar una compra en borrador.");
+    expect(alert).not.toHaveTextContent(PURCHASE_NOT_EDITABLE_MESSAGE);
   });
 
   it("surfaces a 403 permission error truthfully", () => {
@@ -331,9 +332,7 @@ describe("PurchaseForm", () => {
       )
     );
 
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "You do not have permission to manage purchases."
-    );
+    expect(screen.getByRole("alert")).toHaveTextContent("No tenés permiso para gestionar compras.");
   });
 
   it("offers no status control and no delete affordance", async () => {
@@ -347,7 +346,7 @@ describe("PurchaseForm", () => {
 
     await screen.findByRole("option", { name: "Distribuidora Central" });
     expect(
-      screen.queryByRole("button", { name: /delete|receive|cancel purchase/i })
+      screen.queryByRole("button", { name: /eliminar|recibir|cancelar compra/i })
     ).not.toBeInTheDocument();
     expect(container.querySelector('[name="status"]')).toBeNull();
   });
@@ -357,9 +356,9 @@ describe("PurchaseForm", () => {
 
     render(wrapper(<PurchaseForm onSubmit={vi.fn()} isPending error={null} />));
 
-    expect(screen.getByRole("button", { name: "Saving..." })).toBeDisabled();
-    expect(screen.getByLabelText("Supplier")).toBeDisabled();
-    expect(screen.getByLabelText("Quantity")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Guardando…" })).toBeDisabled();
+    expect(screen.getByLabelText("Proveedor")).toBeDisabled();
+    expect(screen.getByLabelText("Cantidad")).toBeDisabled();
   });
 
   it("shows a loading hint while the reference lists are pending", () => {
@@ -367,8 +366,8 @@ describe("PurchaseForm", () => {
 
     render(wrapper(<PurchaseForm onSubmit={vi.fn()} isPending={false} error={null} />));
 
-    expect(screen.getByText("Loading suppliers...")).toBeInTheDocument();
-    expect(screen.getByText("Loading catalog items...")).toBeInTheDocument();
+    expect(screen.getByText("Cargando proveedores…")).toBeInTheDocument();
+    expect(screen.getByText("Cargando artículos del catálogo…")).toBeInTheDocument();
   });
 
   it("shows an empty hint when no suppliers or items exist", async () => {
@@ -376,7 +375,9 @@ describe("PurchaseForm", () => {
 
     render(wrapper(<PurchaseForm onSubmit={vi.fn()} isPending={false} error={null} />));
 
-    expect(await screen.findByText("No suppliers are available yet.")).toBeInTheDocument();
-    expect(screen.getByText("No catalog items are available yet.")).toBeInTheDocument();
+    expect(await screen.findByText("Todavía no hay proveedores disponibles.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Todavía no hay artículos del catálogo disponibles.")
+    ).toBeInTheDocument();
   });
 });

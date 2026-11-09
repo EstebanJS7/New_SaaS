@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { formatEsPyDateOnly } from "@/lib/es-py-format";
 import { PurchaseDetail } from "./purchase-detail";
 
 const SUPPLIER_ID = "11111111-1111-4111-8111-111111111111";
@@ -131,7 +132,7 @@ function renderDetail(): void {
 }
 
 async function openReceiveConfirmation(): Promise<HTMLElement> {
-  fireEvent.click(await screen.findByRole("button", { name: "Receive purchase" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Recibir compra" }));
   return screen.findByRole("dialog", { name: "Recibir compra" });
 }
 
@@ -174,7 +175,7 @@ describe("PurchaseDetail", () => {
 
     renderDetail();
 
-    expect(screen.getByText("Loading purchase...")).toBeInTheDocument();
+    expect(screen.getByText("Cargando compra…")).toBeInTheDocument();
   });
 
   it("renders a permission-denied state when the read is refused with 403", async () => {
@@ -185,8 +186,8 @@ describe("PurchaseDetail", () => {
     renderDetail();
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("Permission denied");
-    expect(alert).toHaveTextContent("You do not have permission to manage purchases.");
+    expect(alert).toHaveTextContent("Sin permiso");
+    expect(alert).toHaveTextContent("No tenés permiso para gestionar compras.");
   });
 
   it("renders a not-found state when the read is refused with 404", async () => {
@@ -198,8 +199,8 @@ describe("PurchaseDetail", () => {
     renderDetail();
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("Not found");
-    expect(alert).toHaveTextContent("Purchase not found.");
+    expect(alert).toHaveTextContent("No encontrada");
+    expect(alert).toHaveTextContent("No encontramos la compra.");
   });
 
   it("renders the purchase, its lines and resolved display names", async () => {
@@ -207,12 +208,19 @@ describe("PurchaseDetail", () => {
 
     renderDetail();
 
-    expect(await screen.findByRole("heading", { name: "Purchase #22222222" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Compra #22222222" })).toBeInTheDocument();
     expect(screen.getByText("Distribuidora Central")).toBeInTheDocument();
     expect(screen.getByText("Gauze roll")).toBeInTheDocument();
-    expect(screen.getByText("Qty 2.000")).toBeInTheDocument();
-    expect(screen.getByText("Unit cost 1500.00")).toBeInTheDocument();
-    expect(screen.getByText("No unit cost")).toBeInTheDocument();
+    // Quantities and costs use es-PY grouping and drop zero-only decimals.
+    expect(screen.getByText("Cant. 2")).toBeInTheDocument();
+    expect(screen.getByText("Costo unitario 1.500")).toBeInTheDocument();
+    expect(screen.getByText("Cant. 1")).toBeInTheDocument();
+    expect(screen.getByText("Sin costo unitario")).toBeInTheDocument();
+    expect(screen.queryByText(/1500\.00|2\.000/)).not.toBeInTheDocument();
+    // Created and updated dates use the es-PY calendar format, not the ISO prefix.
+    expect(screen.getAllByText(formatEsPyDateOnly("2026-09-26"))).toHaveLength(2);
+    expect(screen.getAllByText("26 sept. 2026")).toHaveLength(2);
+    expect(screen.queryByText("2026-09-26")).not.toBeInTheDocument();
   });
 
   it("degrades to short id fragments when a referenced record is not readable", async () => {
@@ -257,15 +265,15 @@ describe("PurchaseDetail", () => {
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Recibir compra" }));
 
-    expect(await screen.findByText("Purchase received")).toBeInTheDocument();
-    expect(screen.getByText(/Stock has been written for every line/)).toBeInTheDocument();
-    expect(await screen.findByText("Received purchase")).toBeInTheDocument();
+    expect(await screen.findByText("Recepción registrada")).toBeInTheDocument();
+    expect(screen.getByText(/Se registró el stock de todas las líneas/)).toBeInTheDocument();
+    expect(await screen.findByText("Compra recibida")).toBeInTheDocument();
 
     const receiveCalls = callsTo(fetchMock, "/receive");
     expect(receiveCalls).toHaveLength(1);
     expect(receiveCalls[0]?.[1]?.method).toBe("POST");
     // The receive button is gone once the purchase is no longer a draft.
-    expect(screen.queryByRole("button", { name: "Receive purchase" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Recibir compra" })).not.toBeInTheDocument();
   });
 
   it("renders a non-draft 409 as a terminal conflict, not a transient failure", async () => {
@@ -281,11 +289,13 @@ describe("PurchaseDetail", () => {
     renderDetail();
     const alert = await clickReceive();
 
-    expect(alert).toHaveTextContent("This purchase is no longer a draft");
-    expect(alert).toHaveTextContent("Only a draft purchase can be changed.");
-    expect(alert).toHaveTextContent(/retrying the same receive will not change it/);
+    expect(alert).toHaveTextContent("Esta compra ya no es un borrador");
+    expect(alert).toHaveTextContent("Solo se puede modificar una compra en borrador.");
+    expect(alert).toHaveTextContent(/repetir la recepción no la va a cambiar/);
     // No blind retry control is offered for a conflict.
-    expect(screen.queryByRole("button", { name: /retry|try again/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /reintentar|volver a intentar/i })
+    ).not.toBeInTheDocument();
   });
 
   it("renders an inactive-item 409 as its own distinct outcome", async () => {
@@ -301,8 +311,8 @@ describe("PurchaseDetail", () => {
     renderDetail();
     const alert = await clickReceive();
 
-    expect(alert).toHaveTextContent("A line's catalog item is inactive");
-    expect(alert).toHaveTextContent("The catalog item is inactive.");
+    expect(alert).toHaveTextContent("El artículo de una línea está inactivo");
+    expect(alert).toHaveTextContent("Una línea usa un artículo del catálogo que está inactivo.");
   });
 
   it("renders an untracked-item 409 as its own distinct outcome", async () => {
@@ -318,8 +328,10 @@ describe("PurchaseDetail", () => {
     renderDetail();
     const alert = await clickReceive();
 
-    expect(alert).toHaveTextContent("A line's catalog item does not track stock");
-    expect(alert).toHaveTextContent("The catalog item does not track stock.");
+    expect(alert).toHaveTextContent("El artículo de una línea no controla stock");
+    expect(alert).toHaveTextContent(
+      "Una línea usa un artículo del catálogo que no controla stock."
+    );
   });
 
   it("renders a permission denial when the receive is refused with 403", async () => {
@@ -331,8 +343,8 @@ describe("PurchaseDetail", () => {
     renderDetail();
     const alert = await clickReceive();
 
-    expect(alert).toHaveTextContent("Permission denied");
-    expect(alert).toHaveTextContent("You do not have permission to manage purchases.");
+    expect(alert).toHaveTextContent("Sin permiso");
+    expect(alert).toHaveTextContent("No tenés permiso para gestionar compras.");
   });
 
   it("renders a not-found state when the receive is refused with 404", async () => {
@@ -345,8 +357,8 @@ describe("PurchaseDetail", () => {
     renderDetail();
     const alert = await clickReceive();
 
-    expect(alert).toHaveTextContent("Purchase not found");
-    expect(alert).toHaveTextContent("Purchase not found.");
+    expect(alert).toHaveTextContent("No encontramos la compra");
+    expect(alert).toHaveTextContent("No encontramos la compra.");
   });
 
   it("renders a transport error when the receive never reaches the API", async () => {
@@ -358,8 +370,10 @@ describe("PurchaseDetail", () => {
     renderDetail();
     const alert = await clickReceive();
 
-    expect(alert).toHaveTextContent("Could not reach the server");
-    expect(alert).toHaveTextContent(/could not reach the server/);
+    expect(alert).toHaveTextContent("No se pudo conectar con el servidor");
+    expect(alert).toHaveTextContent(
+      "No se pudo conectar con el servidor. Revisá tu conexión y volvé a intentar."
+    );
   });
 
   it("never retries a failed receive silently", async () => {
@@ -385,13 +399,13 @@ describe("PurchaseDetail", () => {
 
     renderDetail();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Cancel purchase" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Cancelar compra" }));
     const dialog = await screen.findByRole("dialog", { name: "Cancelar borrador de compra" });
     // Opening the confirmation alone never sends the command.
     expect(callsTo(fetchMock, "/cancel")).toHaveLength(0);
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancelar compra" }));
 
-    expect(await screen.findByText("Cancelled purchase")).toBeInTheDocument();
+    expect(await screen.findByText("Compra cancelada")).toBeInTheDocument();
     const cancelCalls = callsTo(fetchMock, "/cancel");
     expect(cancelCalls).toHaveLength(1);
     expect(cancelCalls[0]?.[1]?.method).toBe("POST");
@@ -402,9 +416,11 @@ describe("PurchaseDetail", () => {
 
     renderDetail();
 
-    await screen.findByRole("heading", { name: "Purchase #22222222" });
-    expect(screen.queryByRole("button", { name: /delete|remove/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /delete|remove/i })).not.toBeInTheDocument();
+    await screen.findByRole("heading", { name: "Compra #22222222" });
+    expect(
+      screen.queryByRole("button", { name: /eliminar|borrar|quitar/i })
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /eliminar|borrar|quitar/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
 
     for (const call of fetchMock.mock.calls) {
@@ -419,9 +435,9 @@ describe("PurchaseDetail", () => {
 
     renderDetail();
 
-    await screen.findByText("Received purchase");
-    expect(screen.queryByRole("button", { name: "Receive purchase" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Cancel purchase" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Edit" })).not.toBeInTheDocument();
+    await screen.findByText("Compra recibida");
+    expect(screen.queryByRole("button", { name: "Recibir compra" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancelar compra" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Editar" })).not.toBeInTheDocument();
   });
 });

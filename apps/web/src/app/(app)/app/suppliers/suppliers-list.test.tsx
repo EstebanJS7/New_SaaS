@@ -114,10 +114,10 @@ describe("SupplierList", () => {
 
     renderList();
 
-    expect(await screen.findByText("Permission denied")).toBeInTheDocument();
-    expect(screen.getByText("You do not have permission to manage suppliers.")).toBeInTheDocument();
+    expect(await screen.findByText("Sin permiso")).toBeInTheDocument();
+    expect(screen.getByText("No tenés permiso para gestionar proveedores.")).toBeInTheDocument();
     // A refusal is never rendered as an empty list.
-    expect(screen.queryByText("No active suppliers")).not.toBeInTheDocument();
+    expect(screen.queryByText("No hay proveedores activos")).not.toBeInTheDocument();
   });
 
   it("renders an unauthenticated UX message when the API returns 401", async () => {
@@ -131,8 +131,8 @@ describe("SupplierList", () => {
 
     renderList();
 
-    expect(await screen.findByText("You must be signed in to view suppliers.")).toBeInTheDocument();
-    expect(screen.queryByText("Permission denied")).not.toBeInTheDocument();
+    expect(await screen.findByText("Iniciá sesión para ver los proveedores.")).toBeInTheDocument();
+    expect(screen.queryByText("Sin permiso")).not.toBeInTheDocument();
   });
 
   it("renders an explicit loading state while the list is pending", () => {
@@ -140,7 +140,7 @@ describe("SupplierList", () => {
 
     renderList();
 
-    expect(screen.getByText("Loading suppliers...")).toBeInTheDocument();
+    expect(screen.getByText("Cargando proveedores…")).toBeInTheDocument();
   });
 
   it("renders the active-only empty state when the tenant has no active suppliers", async () => {
@@ -148,7 +148,7 @@ describe("SupplierList", () => {
 
     renderList();
 
-    expect(await screen.findByText("No active suppliers")).toBeInTheDocument();
+    expect(await screen.findByText("No hay proveedores activos")).toBeInTheDocument();
   });
 
   it("renders the first-run empty state when deactivated suppliers are included", async () => {
@@ -156,10 +156,10 @@ describe("SupplierList", () => {
 
     renderList();
 
-    await screen.findByText("No active suppliers");
-    fireEvent.click(screen.getByLabelText("Include deactivated suppliers"));
+    await screen.findByText("No hay proveedores activos");
+    fireEvent.click(screen.getByLabelText("Incluir proveedores desactivados"));
 
-    expect(await screen.findByText("No suppliers yet")).toBeInTheDocument();
+    expect(await screen.findByText("Todavía no hay proveedores")).toBeInTheDocument();
   });
 
   it("links the supplier name to the read-only detail route and Edit to the edit route", async () => {
@@ -171,10 +171,11 @@ describe("SupplierList", () => {
       "href",
       `/app/suppliers/${SUPPLIER.id}`
     );
-    expect(screen.getByRole("link", { name: "Edit" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Editar" })).toHaveAttribute(
       "href",
       `/app/suppliers/${SUPPLIER.id}/edit`
     );
+    expect(screen.getByText("RUC 80012345-6")).toBeInTheDocument();
   });
 
   it("defaults the status filter to active and includes deactivated suppliers on request", async () => {
@@ -185,7 +186,7 @@ describe("SupplierList", () => {
     await screen.findByText("Distribuidora Central");
     expect(listRequestUrls(fetchMock).some((url) => url.includes("isActive=true"))).toBe(true);
 
-    fireEvent.click(screen.getByLabelText("Include deactivated suppliers"));
+    fireEvent.click(screen.getByLabelText("Incluir proveedores desactivados"));
 
     await waitFor(() => {
       expect(listRequestUrls(fetchMock).some((url) => url === "/api/suppliers")).toBe(true);
@@ -232,11 +233,11 @@ describe("SupplierList", () => {
     renderList();
 
     await screen.findByText("Distribuidora Central");
-    expect(screen.queryByText("Inactive")).not.toBeInTheDocument();
+    expect(screen.queryByText("Inactivo")).not.toBeInTheDocument();
 
     await confirmDeactivation();
 
-    expect(await screen.findByText("Inactive")).toBeInTheDocument();
+    expect(await screen.findByText("Inactivo")).toBeInTheDocument();
   });
 
   it("does not offer deactivation for an already inactive supplier", async () => {
@@ -245,7 +246,7 @@ describe("SupplierList", () => {
     renderList();
 
     await screen.findByText("Distribuidora Central");
-    expect(screen.getByText("Inactive")).toBeInTheDocument();
+    expect(screen.getByText("Inactivo")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Desactivar" })).toBeDisabled();
   });
 
@@ -262,10 +263,10 @@ describe("SupplierList", () => {
     await confirmDeactivation();
 
     // The card keeps the distinct permission-denied outcome beside the dialog's own error copy.
-    const alert = (await screen.findByText("Permission denied")).closest('[role="alert"]');
+    const alert = (await screen.findByText("Sin permiso")).closest('[role="alert"]');
     expect(alert).not.toBeNull();
-    expect(alert).toHaveTextContent("Permission denied");
-    expect(alert).toHaveTextContent("You do not have permission to manage suppliers.");
+    expect(alert).toHaveTextContent("Sin permiso");
+    expect(alert).toHaveTextContent("No tenés permiso para gestionar proveedores.");
   });
 
   it("offers no delete affordance and never sends a DELETE or PATCH request", async () => {
@@ -274,8 +275,10 @@ describe("SupplierList", () => {
     renderList();
 
     await screen.findByText("Distribuidora Central");
-    expect(screen.queryByRole("button", { name: /delete|remove/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /delete|remove/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /eliminar|borrar|quitar/i })
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /eliminar|borrar|quitar/i })).not.toBeInTheDocument();
 
     for (const call of fetchMock.mock.calls) {
       const init = call[1] as RequestInit | undefined;
