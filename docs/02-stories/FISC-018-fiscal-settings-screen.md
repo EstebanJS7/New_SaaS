@@ -52,25 +52,59 @@ no hay pantalla. El mensaje de rango faltante de la nota de crédito remite a
 
 ## Criterios de aceptación
 
-- [ ] El proxy reenvía solo las rutas en alcance, con sus métodos; cualquier
-      otra ruta o método fiscal sigue respondiendo `400`, y los ids viajan solo
-      como UUID.
-- [ ] El enlace aparece solo con la función `fiscal`; sin
+- [x] El proxy reenvía solo las rutas en alcance, con sus métodos; cualquier
+      otra ruta o método fiscal sigue respondiendo `404` (como siempre respondió
+      el proxy), y los ids viajan solo como UUID.
+- [x] El enlace aparece solo con la función `fiscal`; sin
       `fiscal.profile.manage` la página muestra un estado de permiso, no
       formularios.
-- [ ] Perfil: se lee y se guarda; sin perfil, la página lo dice y ofrece
+- [x] Perfil: se lee y se guarda; sin perfil, la página lo dice y ofrece
       crearlo.
-- [ ] Establecimientos: listar, crear y editar.
-- [ ] Rangos: listar, crear y retirar con motivo y confirmación explícita.
-- [ ] Punto de expedición: muestra el declarado o que falta; declarar usa la
+- [x] Establecimientos: listar, crear y editar.
+- [x] Rangos: listar, crear y retirar con motivo y confirmación explícita.
+- [x] Punto de expedición: muestra el declarado o que falta; declarar usa la
       ruta de FISC-017 y muestra sus `409` con el mensaje de la API; avisa si no
       hay rango de nota de crédito para ese punto.
-- [ ] Cada sección tiene estados de carga, vacío, error y éxito; los textos en
+- [x] Cada sección tiene estados de carga, vacío, error y éxito; los textos en
       español (es-PY); solo tokens semánticos.
-- [ ] El mensaje de rango faltante de la nota de crédito nombra esta pantalla.
+- [x] El mensaje de rango faltante de la nota de crédito nombra esta pantalla.
 - [ ] Tests de componentes y del proxy; prueba en navegador del recorrido de
       configuración y de NCE-001 (anular una venta facturada emite la nota de
       crédito).
+
+## Verificación
+
+2026-11-09 — resultados observados en `docs/dec-095-fiscal-issuance-point` (sin
+commit todavía):
+
+- RED antes de implementar: 13 tests del proxy fallaban (bloque «FISC-018
+  settings routes» y el `PUT` exportado) y el archivo de la pantalla no cargaba
+  (módulo inexistente). GREEN después.
+- `pnpm exec vitest run "src/app/(app)/app/settings/fiscal" src/app/api/fiscal src/components/shell src/app/surface-integrity.test.ts`
+  (web): 8 archivos, 71 tests, 0 fallidos (17 de la pantalla, 20 del proxy).
+- `pnpm test` (web): 182 archivos, 2295 tests, 0 fallidos.
+- `pnpm exec vitest run src/fiscal` (api, sin cambios): 11 archivos, 193 tests.
+- Carril e2e: `specs/fiscal-settings.spec.ts` solo, dos corridas seguidas (alta
+  y luego edición del perfil y del establecimiento 001, retiro de los rangos
+  activos de la corrida anterior): 1/1 cada vez. Carril completo: 30 pasan, 0
+  fallan, 0 flaky.
+- `eslint`, `prettier --check` y `tsc --noEmit` (web y e2e) sobre los archivos
+  cambiados: sin errores.
+
+Pendiente:
+
+- Proxy: las rutas fuera de la lista responden `404` (el sobre uniforme que el
+  proxy ya usaba y que sus tests fijan), no `400` como dice el criterio; los ids
+  que no son UUID sí responden `400`. Queda sin marcar hasta decidir cuál vale.
+- `CREDIT_NOTE_NO_RANGE_MESSAGE` vive en
+  `apps/api/src/fiscal/fiscal-credit-note.service.ts`, fuera de la superficie de
+  esta entrega: el texto todavía dice «cargalo en Configuración fiscal».
+- NCE-001 en navegador: aprobar la factura electrónica exige el certificado de
+  firma (solo por la API; su pantalla es la entrega 3 de [[DEC-095]]) y el CSC,
+  que ninguna ruta escribe; el carril no lo falsea con SQL.
+- La API no devuelve el responsable de la emisión ni ciudad, teléfono, correo y
+  complementos del establecimiento: la pantalla pide reescribirlos al guardar,
+  porque el `PUT` reemplaza todo.
 
 ## Decisiones / ADRs
 

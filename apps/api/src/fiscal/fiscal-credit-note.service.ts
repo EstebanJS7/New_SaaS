@@ -45,9 +45,9 @@ export const CREDIT_NOTE_INVOICE_NOT_APPROVED_MESSAGE =
 export const CREDIT_NOTE_INVOICE_CANCELLING_MESSAGE =
   "La factura electrónica tiene una cancelación en curso: esperá su resultado.";
 export const CREDIT_NOTE_NO_ISSUANCE_POINT_MESSAGE =
-  "El perfil fiscal no declara un establecimiento y punto de expedición: no se puede emitir la nota de crédito.";
+  "El perfil fiscal no declara un establecimiento y punto de expedición: declaralo en Configuración › Configuración fiscal para emitir la nota de crédito.";
 export const CREDIT_NOTE_NO_RANGE_MESSAGE =
-  "No hay un timbrado activo para notas de crédito en el punto de expedición declarado: cargalo en Configuración fiscal.";
+  "No hay un timbrado activo para notas de crédito en el punto de expedición declarado: cargalo en Configuración › Configuración fiscal.";
 export const CREDIT_NOTE_AMBIGUOUS_RANGE_MESSAGE =
   "Hay más de un timbrado activo para notas de crédito en el punto de expedición declarado.";
 export const CREDIT_NOTE_ALREADY_ISSUED_MESSAGE = "La factura ya tiene una nota de crédito.";

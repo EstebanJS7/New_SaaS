@@ -33,10 +33,11 @@ describe("NavSidebar", () => {
       "Personal",
       "Sucursales",
       "Marca",
+      "Configuración fiscal",
     ]) {
       expect(within(nav).getByRole("link", { name: label })).toBeInTheDocument();
     }
-    expect(within(nav).getAllByRole("link")).toHaveLength(18);
+    expect(within(nav).getAllByRole("link")).toHaveLength(19);
     expect(within(nav).queryByRole("button")).not.toBeInTheDocument();
     expect(screen.queryByText(/Section one|Section two|Section three/)).not.toBeInTheDocument();
     expect(screen.getByText("Example workspace")).toBeInTheDocument();
@@ -56,7 +57,7 @@ describe("NavSidebar", () => {
 
   it("retains ungated modules while hiding known unentitled destinations", () => {
     render(<NavSidebar entitlements={[]} />);
-    for (const label of ["POS", "Caja", "Facturación", "Fiscal"])
+    for (const label of ["POS", "Caja", "Facturación", "Fiscal", "Configuración fiscal"])
       expect(screen.queryByRole("link", { name: label })).not.toBeInTheDocument();
     for (const label of [
       "Clientes",
@@ -77,11 +78,24 @@ describe("NavSidebar", () => {
   ])("keeps the %s feature gate independent", (feature, label) => {
     render(<NavSidebar entitlements={[feature]} />);
     expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
-    expect(
-      visibleNavLinks(NAV_LINKS, [feature])
-        .filter((link) => link.requiredFeature)
-        .map((link) => link.requiredFeature)
-    ).toEqual([feature]);
+    const gated = visibleNavLinks(NAV_LINKS, [feature]).filter((link) => link.requiredFeature);
+    expect(gated.length).toBeGreaterThan(0);
+    expect(gated.every((link) => link.requiredFeature === feature)).toBe(true);
+  });
+
+  it("shows «Configuración fiscal» in «Configuración» only with the fiscal feature (FISC-018)", () => {
+    const link = NAV_LINKS.find((candidate) => candidate.href === "/app/settings/fiscal");
+    expect(link).toMatchObject({ section: "Configuración", requiredFeature: "fiscal" });
+    render(<NavSidebar entitlements={["fiscal"]} />);
+    expect(screen.getByRole("link", { name: "Configuración fiscal" })).toHaveAttribute(
+      "href",
+      "/app/settings/fiscal"
+    );
+  });
+
+  it("hides «Configuración fiscal» without the fiscal feature (FISC-018)", () => {
+    render(<NavSidebar entitlements={["sales", "cash", "billing"]} />);
+    expect(screen.queryByRole("link", { name: "Configuración fiscal" })).not.toBeInTheDocument();
   });
 
   it("notifies the mobile shell after a navigation choice", () => {

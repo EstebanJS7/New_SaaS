@@ -552,6 +552,20 @@ runtime status mirror because the API's status union is server-side only, and it
 renders an API `409` verbatim rather than replacing it with an invented local
 rule.
 
+`/app/settings/fiscal` («Configuración › Configuración fiscal», [[FISC-018]])
+configures the emitter profile, the establishments (add, edit), the timbrado
+ranges (add, retire with a reason after a confirmation) and the issuance point,
+chosen among the ACTIVE ranges and declared through FISC-017's route; it warns
+when the declared point has no ACTIVE credit-note range. Its navigation entry
+also declares `requiredFeature: "fiscal"`; a `403` renders a permission state
+with no form. For it the proxy additionally allowlists
+`GET`/`PUT emitter-profile`, `PUT emitter-profile/issuance-point`,
+`GET`/`POST establishments`, `PUT establishments/:id`,
+`GET`/`POST timbrado-ranges` and `POST timbrado-ranges/:id/retire`, forwarded
+under the API's `/fiscal` prefix, with ids accepted only as UUIDs (`400`
+otherwise) and top-level body keys limited to each route's contract. The range
+void and the signing material stay API-only (`404` at the proxy).
+
 ## Does Not Own
 
 - **The SIFEN certification itself.** The provider, the assembly and signing of
@@ -702,9 +716,10 @@ because they are deployment concerns rather than tenant behavior.
 - **The worker's assembly needs the tenant's declared fiscal identity**: a
   tenant that has not declared its timbrado, its activity and its default
   issuance point cannot issue ([[DEC-057]]). The point is declared through
-  `PUT /fiscal/emitter-profile/issuance-point` ([[FISC-017]]); the web proxy
-  does not forward it yet — the «Configuración fiscal» screen is [[DEC-095]]
-  delivery 2.
+  `PUT /fiscal/emitter-profile/issuance-point` ([[FISC-017]]), from the
+  «Configuración fiscal» screen ([[FISC-018]]). The signing certificate has no
+  screen yet ([[DEC-095]] delivery 3) and no route writes the CSC, so a tenant
+  still cannot reach an APPROVED DE from the app alone.
 - **The AFE and the NRE render their header, their items and their CDC, and name
   the rest**: their own blocks are `gDtipDE` members the assembly does not emit,
   so §13.2's content rule forbids printing them.
