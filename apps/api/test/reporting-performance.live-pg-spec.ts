@@ -180,6 +180,16 @@ async function seedPerformanceDataset(): Promise<void> {
     "HARD-006 performance tenant"
   );
 
+  // MB-002 (DEC-094): every sale belongs to a branch (`sale.branch_id` NOT NULL),
+  // so the tenant gets its first branch exactly as provisioning creates it.
+  const branchId = randomUUID();
+  await prisma.$executeRawUnsafe(
+    `INSERT INTO "branch" ("id", "tenant_id", "name", "updated_at")
+     VALUES ($1::uuid, $2::uuid, 'Casa central', now())`,
+    branchId,
+    tenantId
+  );
+
   // One tax rate from the reference seed backs the frozen line rate code.
   const taxRate = await prisma.taxRate.findFirst({ select: { id: true, code: true } });
   if (taxRate === null) {
@@ -205,8 +215,8 @@ async function seedPerformanceDataset(): Promise<void> {
   await prisma.$executeRawUnsafe(
     `WITH series AS (SELECT generate_series(0, $4::int - 1) AS i),
           inside AS (
-            INSERT INTO "sale" ("tenant_id", "currency", "status", "completed_at", "created_at", "updated_at")
-            SELECT $1::uuid, 'PYG', 'COMPLETED',
+            INSERT INTO "sale" ("tenant_id", "branch_id", "currency", "status", "completed_at", "created_at", "updated_at")
+            SELECT $1::uuid, $7::uuid, 'PYG', 'COMPLETED',
                    $2::timestamptz + (i * ($3::timestamptz - $2::timestamptz) / $4::numeric),
                    $2::timestamptz + (i * ($3::timestamptz - $2::timestamptz) / $4::numeric),
                    $2::timestamptz + (i * ($3::timestamptz - $2::timestamptz) / $4::numeric)
@@ -226,21 +236,23 @@ async function seedPerformanceDataset(): Promise<void> {
     WINDOW_END.toISOString(),
     SALES_IN_WINDOW,
     taxRate.code,
-    LINES_PER_SALE
+    LINES_PER_SALE,
+    branchId
   );
 
   // OUTSIDE the window: before its start, so any dropped range predicate includes
   // them and the plan changes with it.
   await prisma.$executeRawUnsafe(
-    `INSERT INTO "sale" ("tenant_id", "currency", "status", "completed_at", "created_at", "updated_at")
-     SELECT $1::uuid, 'PYG', 'COMPLETED',
+    `INSERT INTO "sale" ("tenant_id", "branch_id", "currency", "status", "completed_at", "created_at", "updated_at")
+     SELECT $1::uuid, $4::uuid, 'PYG', 'COMPLETED',
             $2::timestamptz - (i || ' days')::interval,
             $2::timestamptz - (i || ' days')::interval,
             $2::timestamptz - (i || ' days')::interval
      FROM generate_series(1, $3::int) AS i`,
     tenantId,
     WINDOW_START.toISOString(),
-    SALES_OUTSIDE_WINDOW
+    SALES_OUTSIDE_WINDOW,
+    branchId
   );
 
   // The planner needs statistics that reflect the seeded distribution; without

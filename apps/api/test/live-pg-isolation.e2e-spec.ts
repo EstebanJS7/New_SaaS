@@ -1416,6 +1416,19 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     },
   };
 
+  /**
+   * MB-002 (DEC-094 §6): like provisioning, a clinic has a first branch and its
+   * member works there, so registers, sales and turnos have somewhere to belong.
+   * Returns the branch id.
+   */
+  const provisionFirstBranch = async (tenantId: string, membershipId: string): Promise<string> => {
+    const branch = await prisma.branch.create({ data: { tenantId, name: "Casa central" } });
+    await prisma.membershipBranch.create({
+      data: { tenantId, membershipId, branchId: branch.id },
+    });
+    return branch.id;
+  };
+
   beforeAll(async () => {
     previousDatabaseUrl = process.env.DATABASE_URL;
     baseDatabaseUrl = process.env.DATABASE_URL_TEST ?? "";
@@ -1502,17 +1515,9 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         status: "ACTIVE",
       },
     });
-    // MB-002 (DEC-094 §6): like provisioning, each clinic has a first branch and
-    // its owner works there, so registers and sales have somewhere to belong.
-    for (const [tenantId, membershipId] of [
-      [tenantA.id, membershipA.id],
-      [tenantB.id, membershipB.id],
-    ] as const) {
-      const branch = await prisma.branch.create({ data: { tenantId, name: "Casa central" } });
-      await prisma.membershipBranch.create({
-        data: { tenantId, membershipId, branchId: branch.id },
-      });
-    }
+    // MB-002 (DEC-094 §6): each clinic has a first branch and its owner works there.
+    await provisionFirstBranch(tenantA.id, membershipA.id);
+    await provisionFirstBranch(tenantB.id, membershipB.id);
 
     const sessionService = app.get(SessionService);
     const sessionA = await sessionService.issue(ownerA.id);
@@ -2863,6 +2868,15 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         },
       });
       scheduleProfessionalMembershipId = professional.id;
+      // MB-001/MB-002 (DEC-094): a turno is booked only at a branch where the
+      // professional works.
+      await prisma.membershipBranch.create({
+        data: {
+          tenantId: tenantAId,
+          membershipId: professional.id,
+          branchId: scheduleBranchId,
+        },
+      });
 
       scheduleContext = app.get(RequestContextService);
       scheduleService = new AppointmentService(
@@ -3481,7 +3495,14 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       if (!veterinarianRole) {
         throw new Error("Reference seed did not create the VETERINARIAN role");
       }
-      const createVeterinarian = async (tenantId: string, email: string): Promise<string> => {
+      // MB-001/MB-002 (DEC-094): a turno is booked only at a branch where the
+      // professional works, so each veterinarian is assigned to its tenant's
+      // WU5 branch.
+      const createVeterinarian = async (
+        tenantId: string,
+        email: string,
+        worksAtBranchId: string
+      ): Promise<string> => {
         const profile = await prisma.userProfile.create({
           data: { email, displayName: email, status: "active" },
         });
@@ -3493,19 +3514,25 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
             status: "ACTIVE",
           },
         });
+        await prisma.membershipBranch.create({
+          data: { tenantId, membershipId: membership.id, branchId: worksAtBranchId },
+        });
         return membership.id;
       };
       approvalProfessionalMembershipId = await createVeterinarian(
         tenantAId,
-        "wu5-vet-approval@live.test"
+        "wu5-vet-approval@live.test",
+        branchId
       );
       rescheduleProfessionalMembershipId = await createVeterinarian(
         tenantAId,
-        "wu5-vet-reschedule@live.test"
+        "wu5-vet-reschedule@live.test",
+        branchId
       );
       foreignProfessionalMembershipId = await createVeterinarian(
         tenantBId,
-        "wu5-vet-foreign@live.test"
+        "wu5-vet-foreign@live.test",
+        foreignBranchId
       );
 
       const access = await prisma.customerPortalAccess.create({
@@ -6591,9 +6618,10 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     it("asserts the applied PURCHASE enum value and rejects a raw delete of a PURCHASE movement", async () => {
       // The APPLIED enum: `PURCHASE` was added ADDITIVELY, so `ADJUSTMENT`
       // keeps its original sort position and the new value follows it.
-      // EPIC-12 POS-003 appended `SALE` the same way, so the effective set is
-      // ADJUSTMENT, PURCHASE, SALE; the reserved TRANSFER_* and *_REVERSAL
-      // compensations stay absent.
+      // EPIC-12 POS-003 appended `SALE` the same way, then MB-003 appended
+      // `SALE_REVERSAL` (20261103000001_sale_reversal) and MB-002 appended
+      // `TRANSFER_OUT`, `TRANSFER_IN` (20261108000001_branch_stock), so the
+      // effective set keeps every earlier value at its original position.
       const enumRows = await prisma.$queryRaw<{ enumlabel: string }[]>`
         SELECT e.enumlabel
         FROM pg_enum AS e
@@ -6601,7 +6629,14 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         WHERE t.typname = 'stock_movement_type'
         ORDER BY e.enumsortorder ASC
       `;
-      expect(enumRows.map((row) => row.enumlabel)).toEqual(["ADJUSTMENT", "PURCHASE", "SALE"]);
+      expect(enumRows.map((row) => row.enumlabel)).toEqual([
+        "ADJUSTMENT",
+        "PURCHASE",
+        "SALE",
+        "SALE_REVERSAL",
+        "TRANSFER_OUT",
+        "TRANSFER_IN",
+      ]);
 
       // A real `PURCHASE` movement, written by the real command.
       const itemId = await createItem(ownerACookie, "Live Receiving Immutable Item");
@@ -7153,7 +7188,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       expect(await prisma.auditLog.count()).toBe(auditsBefore);
     }, 30_000);
 
-    it("proves the composite ownership keys, the six RESTRICT foreign keys and the status index against the applied schema", async () => {
+    it("proves the composite ownership keys, the seven RESTRICT foreign keys and the status index against the applied schema", async () => {
       const salesBefore = await prisma.sale.count();
       const linesBefore = await prisma.saleLine.count();
 
@@ -7167,8 +7202,9 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       `;
       expect(enumRows.map((row) => row.enumlabel)).toEqual(["DRAFT", "COMPLETED", "CANCELLED"]);
 
-      // The six APPLIED foreign keys, every one RESTRICT on delete AND update,
-      // exactly on the tables the migration declares.
+      // The seven APPLIED foreign keys, every one RESTRICT on delete AND update,
+      // exactly on the tables the migrations declare; MB-002 added
+      // `sale_branch_fkey` (20261107000001_branch_cash_sales).
       const fkRows = await prisma.$queryRaw<
         {
           conname: string;
@@ -7202,6 +7238,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
           "sale_line_tenant_id_catalog_item_id_fkey:sale_line->catalog_item:rr",
           "sale_line_tenant_id_fkey:sale_line->tenant:rr",
           "sale_line_tenant_id_sale_id_fkey:sale_line->sale:rr",
+          "sale_branch_fkey:sale->branch:rr",
           "sale_tenant_id_customer_id_fkey:sale->customer:rr",
           "sale_tenant_id_fkey:sale->tenant:rr",
         ].sort()
@@ -8518,12 +8555,14 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       expect(await prisma.auditLog.count()).toBe(auditsBefore + 1);
     }, 60_000);
 
-    it("proves the seven composite RESTRICT ownership keys and rejects cross-tenant register, opener and session references", async () => {
+    it("proves the nine composite RESTRICT ownership keys and rejects cross-tenant register, opener and session references", async () => {
       const sessionsBefore = await prisma.cashSession.count();
       const movementsBefore = await prisma.cashMovement.count();
 
-      // The seven APPLIED foreign keys across the three cash tables, every one
-      // RESTRICT on delete AND update (`rr`).
+      // The nine APPLIED foreign keys across the three cash tables, every one
+      // RESTRICT on delete AND update (`rr`). MB-003 added
+      // `cash_movement_tenant_id_sale_id_fkey` (20261103000001_sale_reversal) and
+      // MB-002 added `cash_register_branch_fkey` (20261107000001_branch_cash_sales).
       const fkRows = await prisma.$queryRaw<
         {
           conname: string;
@@ -8557,6 +8596,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
           "cash_movement_tenant_id_fkey:cash_movement->tenant:rr",
           "cash_movement_tenant_id_register_id_fkey:cash_movement->cash_register:rr",
           "cash_movement_tenant_id_session_id_fkey:cash_movement->cash_session:rr",
+          "cash_movement_tenant_id_sale_id_fkey:cash_movement->sale:rr",
+          "cash_register_branch_fkey:cash_register->branch:rr",
           "cash_register_tenant_id_fkey:cash_register->tenant:rr",
           "cash_session_tenant_id_fkey:cash_session->tenant:rr",
           "cash_session_tenant_id_opened_by_membership_id_fkey:cash_session->tenant_membership:rr",
@@ -9403,7 +9444,12 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       return id;
     };
 
-    /** Raw payment row at the migration's exact shape; returns the id. */
+    /**
+     * Raw payment row at the migrations' exact shape; returns the id. Since
+     * PAY-DET-001 (20261105000001_payment_fiscal_detail) a new CARD row must
+     * carry its type and brand (`payment_fiscal_detail_required_trigger`), so a
+     * CARD row gets a valid pair and any other method leaves them NULL.
+     */
     const insertRawPayment = async (
       tx: Prisma.TransactionClient,
       tenantId: string,
@@ -9413,10 +9459,12 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     ): Promise<string> => {
       const id = randomUUID();
       await tx.$executeRaw`
-        INSERT INTO "payment" ("id", "tenant_id", "sale_id", "method", "amount")
+        INSERT INTO "payment" ("id", "tenant_id", "sale_id", "method", "amount", "card_type", "card_brand")
         VALUES (
           ${id}::uuid, ${tenantId}::uuid, ${saleId}::uuid,
-          ${method}::payment_method, ${amount}::decimal
+          ${method}::payment_method, ${amount}::decimal,
+          CASE WHEN ${method} = 'CARD' THEN 'DEBIT'::payment_card_type END,
+          CASE WHEN ${method} = 'CARD' THEN 'VISA'::payment_card_brand END
         )
       `;
       return id;
@@ -9577,7 +9625,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
           status: "active",
         },
       });
-      await prisma.tenantMembership.create({
+      const completionMembership = await prisma.tenantMembership.create({
         data: {
           tenantId: completionTenant.id,
           userProfileId: completionOwner.id,
@@ -9585,6 +9633,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
           status: "ACTIVE",
         },
       });
+      // MB-002 (DEC-094): sales and registers need the owner to work at a branch.
+      await provisionFirstBranch(completionTenant.id, completionMembership.id);
       const session = await app.get(SessionService).issue(completionOwner.id);
       completionCookie = `${STAFF_SESSION_COOKIE}=${session.token}`;
 
@@ -10335,8 +10385,9 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
 
       // The EFFECTIVE `stock_movement_type` label set: POS-003 appended `SALE`
       // ADDITIVELY after ADJUSTMENT and PURCHASE, so both keep their original
-      // sort positions; the reserved TRANSFER_* and *_REVERSAL compensations
-      // stay absent.
+      // sort positions; `SALE_REVERSAL` (20261103000001_sale_reversal) and
+      // `TRANSFER_OUT`, `TRANSFER_IN` (20261108000001_branch_stock) were appended
+      // the same way.
       const movementEnum = await prisma.$queryRaw<{ enumlabel: string }[]>`
         SELECT e.enumlabel
         FROM pg_enum AS e
@@ -10344,7 +10395,14 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         WHERE t.typname = 'stock_movement_type'
         ORDER BY e.enumsortorder ASC
       `;
-      expect(movementEnum.map((row) => row.enumlabel)).toEqual(["ADJUSTMENT", "PURCHASE", "SALE"]);
+      expect(movementEnum.map((row) => row.enumlabel)).toEqual([
+        "ADJUSTMENT",
+        "PURCHASE",
+        "SALE",
+        "SALE_REVERSAL",
+        "TRANSFER_OUT",
+        "TRANSFER_IN",
+      ]);
 
       // The APPLIED `payment_method` labels: exactly the six PRD §19 values, in
       // the migration's order.
@@ -10364,14 +10422,28 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         "OTHER",
       ]);
 
-      // The `payment` table carries exactly the ONE positive-amount CHECK.
+      // The `payment` table carries exactly the positive-amount CHECK plus the
+      // nine PAY-DET-001 method-detail CHECKs (20261105000001_payment_fiscal_detail).
       const checkRows = await prisma.$queryRaw<{ conname: string }[]>`
         SELECT c.conname
         FROM pg_constraint AS c
         JOIN pg_class AS t ON t.oid = c.conrelid
         WHERE t.relname = 'payment' AND c.contype = 'c'
       `;
-      expect(checkRows.map((row) => row.conname)).toEqual(["payment_amount_positive"]);
+      expect(checkRows.map((row) => row.conname).sort()).toEqual(
+        [
+          "payment_amount_positive",
+          "payment_card_detail_only_for_card",
+          "payment_card_brand_name_iff_other",
+          "payment_card_brand_name_length",
+          "payment_qr_detail_only_for_qr",
+          "payment_check_detail_only_for_check",
+          "payment_check_number_tNumCheq",
+          "payment_check_bank_length",
+          "payment_other_detail_only_for_other",
+          "payment_other_description_length",
+        ].sort()
+      );
 
       // A zero and a negative amount are both rejected by that CHECK from raw
       // SQL, so the application is never the first line of defence.
@@ -10385,8 +10457,10 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         });
       }
 
-      // The two APPLIED triggers: a `BEFORE DELETE ROW` and a `BEFORE UPDATE
-      // ROW` trigger, each on its OWN event, and no third trigger on the table.
+      // The three APPLIED triggers: a `BEFORE DELETE ROW` and a `BEFORE UPDATE
+      // ROW` trigger, each on its OWN event, plus PAY-DET-001's `BEFORE INSERT
+      // ROW` detail guard (20261105000001_payment_fiscal_detail), and no fourth
+      // trigger on the table.
       const triggers = await prisma.$queryRaw<{ tgname: string; tgtype: number }[]>`
         SELECT t.tgname, t.tgtype::int AS tgtype
         FROM pg_trigger AS t
@@ -10395,6 +10469,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       `;
       expect(triggers.map((row) => row.tgname).sort()).toEqual(
         [
+          "payment_fiscal_detail_required_trigger",
           "payment_no_delete_when_completed_or_cancelled_trigger",
           "payment_no_update_when_completed_or_cancelled_trigger",
         ].sort()
@@ -10417,6 +10492,11 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       expect(updateTrigger.tgtype & 2).toBe(2); // BEFORE
       expect(updateTrigger.tgtype & 8).toBe(0); // NOT DELETE
       expect(updateTrigger.tgtype & 16).toBe(16); // UPDATE
+      const detailTrigger = triggerByName.get("payment_fiscal_detail_required_trigger");
+      if (!detailTrigger) {
+        throw new Error("The payment detail insert trigger is missing");
+      }
+      expect(detailTrigger.tgtype & 0b11111).toBe(1 | 2 | 4); // ROW, BEFORE, INSERT only
 
       // The trigger FUNCTIONS carry the CONDITIONAL predicate: each reads its
       // OWNING sale's status in the same tenant and raises `restrict_violation`
@@ -10963,6 +11043,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         },
       });
       movementMembershipId = membership.id;
+      // MB-002 (DEC-094): opening a session needs the owner to work at a branch.
+      await provisionFirstBranch(movementTenant.id, membership.id);
       const session = await app.get(SessionService).issue(movementOwner.id);
       movementCookie = `${STAFF_SESSION_COOKIE}=${session.token}`;
 
@@ -12101,6 +12183,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         },
       });
       closeMembershipId = membership.id;
+      // MB-002 (DEC-094): opening a session needs the owner to work at a branch.
+      await provisionFirstBranch(closeTenant.id, membership.id);
       const session = await app.get(SessionService).issue(closeOwner.id);
       closeCookie = `${STAFF_SESSION_COOKIE}=${session.token}`;
 
@@ -14441,7 +14525,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       const profile = await prisma.userProfile.create({
         data: { email, displayName: email, status: "active" },
       });
-      await prisma.tenantMembership.create({
+      const membership = await prisma.tenantMembership.create({
         data: {
           tenantId: tenant.id,
           userProfileId: profile.id,
@@ -14449,6 +14533,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
           status: "ACTIVE",
         },
       });
+      // MB-002 (DEC-094): every sale belongs to a branch where its owner works.
+      await provisionFirstBranch(tenant.id, membership.id);
       if (options.entitled) {
         const feature = await prisma.featureCode.upsert({
           where: { code: "billing" },
@@ -15189,7 +15275,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       const profile = await prisma.userProfile.create({
         data: { email, displayName: email, status: "active" },
       });
-      await prisma.tenantMembership.create({
+      const membership = await prisma.tenantMembership.create({
         data: {
           tenantId: tenant.id,
           userProfileId: profile.id,
@@ -15197,6 +15283,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
           status: "ACTIVE",
         },
       });
+      // MB-002 (DEC-094): every sale belongs to a branch where its owner works.
+      await provisionFirstBranch(tenant.id, membership.id);
       if (options.entitled) {
         const feature = await prisma.featureCode.upsert({
           where: { code: "billing" },
@@ -16549,11 +16637,14 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         "next_query_at",
         // TD-033 item 5 appended the cancellation's lease the same way.
         "cancel_pending_since",
+        // MB-003 appended the credit note it may carry the same way
+        // (20261104000001_credit_note).
+        "credit_note_id",
       ]);
       const types = new Map(
         rows.map((row) => [row.column_name, `${row.data_type}:${row.udt_name}`])
       );
-      for (const column of ["id", "tenant_id", "invoice_id"])
+      for (const column of ["id", "tenant_id", "invoice_id", "credit_note_id"])
         expect(types.get(column)).toBe("uuid:uuid");
       for (const column of [
         "external_id",
@@ -16831,10 +16922,14 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       );
       expect(partial).toMatchObject({ is_unique: true, key_1: "tenant_id", key_2: "invoice_id" });
       expect(partial?.predicate).not.toBeNull();
-      expect(normalizeIndexPredicate(partial!.predicate!)).toBe("status<>'CANCELLED'");
+      // MB-003 (20261104000001_credit_note) narrowed the live-invoice key to the
+      // invoice's own document; a credit note's document has its own key.
+      expect(normalizeIndexPredicate(partial!.predicate!)).toBe(
+        "(status<>'CANCELLED')AND(credit_note_idISNULL)"
+      );
     }, 30_000);
 
-    it("proves all six structural triggers fire BEFORE their expected events", async () => {
+    it("proves all seven structural triggers fire BEFORE their expected events", async () => {
       const rows = await prisma.$queryRaw<{ tgname: string; timing: string; event: string }[]>`
         SELECT tg.tgname,
           CASE WHEN (tg.tgtype & 2) = 2 THEN 'BEFORE' ELSE 'OTHER' END AS timing,
@@ -16849,6 +16944,9 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
         ["fiscal_document_provider_refs_write_once_trigger", "UPDATE"],
         ["fiscal_document_attempts_monotonic_trigger", "UPDATE"],
         ["fiscal_document_transition_guard_trigger", "UPDATE"],
+        // MB-003 (20261104000001_credit_note): BEFORE INSERT OR UPDATE, which this
+        // probe's event bit reads as UPDATE.
+        ["fiscal_document_credit_note_guard_trigger", "UPDATE"],
       ];
       expect(rows.map((row) => [row.tgname, row.event]).sort()).toEqual(expected.sort());
       expect(rows.every((row) => row.timing === "BEFORE")).toBe(true);
@@ -16999,14 +17097,27 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
     }, 30_000);
 
     it.each([
-      ["tenant_id", () => tenantBId, "uuid"],
-      ["id", () => randomUUID(), "uuid"],
-      ["invoice_id", () => randomUUID(), "uuid"],
-      ["provider", () => "FAKE", "fiscal_provider"],
-      ["created_at", () => new Date(0), "timestamptz"],
+      ["tenant_id", () => tenantBId, "uuid", "a fiscal document tenant_id cannot be changed"],
+      ["id", () => randomUUID(), "uuid", "a fiscal document id cannot be changed"],
+      // MB-003 (20261104000001_credit_note): `invoice_id` is also guarded by
+      // `fiscal_document_credit_note_guard_trigger`, which PostgreSQL fires first
+      // (BEFORE triggers run in name order), so its sentence is the one raised.
+      [
+        "invoice_id",
+        () => randomUUID(),
+        "uuid",
+        "a fiscal document cannot change the document it carries",
+      ],
+      ["provider", () => "FAKE", "fiscal_provider", "a fiscal document provider cannot be changed"],
+      [
+        "created_at",
+        () => new Date(0),
+        "timestamptz",
+        "a fiscal document created_at cannot be changed",
+      ],
     ])(
       "rejects changing immutable identity field %s",
-      async (column, value, cast) => {
+      async (column, value, cast, rejection) => {
         await inRolledBackTransaction(async (tx) => {
           const next = value();
           // The cast is required: a parameter reaches PostgreSQL as text, and
@@ -17019,7 +17130,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
               fiscalDocumentAId
             )
           );
-          expect(message).toBe(`a fiscal document ${column} cannot be changed`);
+          expect(message).toBe(rejection);
         });
       },
       30_000
@@ -18691,7 +18802,7 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       const profile = await prisma.userProfile.create({
         data: { email: `${slug}@live.test`, displayName: slug, status: "active" },
       });
-      await prisma.tenantMembership.create({
+      const membership = await prisma.tenantMembership.create({
         data: {
           tenantId: tenant.id,
           userProfileId: profile.id,
@@ -18699,6 +18810,8 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
           status: "ACTIVE",
         },
       });
+      // MB-002 (DEC-094): every sale belongs to a branch where its owner works.
+      await provisionFirstBranch(tenant.id, membership.id);
       const feature = await prisma.featureCode.upsert({
         where: { code: "billing" },
         create: { code: "billing" },
