@@ -56,7 +56,9 @@ efectivo de la caja, sin editar nada de lo que ya se registró. Resuelve
 - [x] El efectivo exige una caja abierta y única.
 - [x] Auditoría `sale.reversed` sin el texto del motivo.
 - [x] Prueba contra PostgreSQL real del recorrido completo (suite live-pg).
-- [ ] Prueba en navegador.
+- [x] Prueba en navegador (`apps/e2e/specs/sale-reversal.spec.ts`: anulación
+      desde el detalle con motivo, devolución en efectivo, stock y caja leídos
+      por la API, persiste tras recargar).
 
 ## API
 
@@ -110,7 +112,8 @@ No se pudo correr: suites que necesitan el motor de consultas de Prisma
     misma clave: 409; nueva anulación: 409 "La venta ya fue anulada."
   venta de otro tenant: 404 en anular y en leer la anulación, sin escrituras
   pnpm test:live-pg completo: 276/276
-Pendiente: prueba en navegador y concurrencia real (dos anulaciones simultáneas).
+Pendiente: concurrencia real (dos anulaciones simultáneas). Navegador cubierto
+  el 2026-11-09 por specs/sale-reversal.spec.ts.
 ```
 
 ## Tests agregados
