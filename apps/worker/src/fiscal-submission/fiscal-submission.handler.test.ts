@@ -286,6 +286,25 @@ function setup(
   };
 }
 
+describe("a provider that needs no signed document", () => {
+  it("advances SIGNING to SENDING before the result write, so the outcome is not dropped", async () => {
+    const { handler, updates } = setup("PENDING", "APPROVED");
+
+    await handler.handle(job);
+
+    // The result write only matches SENDING rows; without this transition the
+    // APPROVED outcome would update nothing and the document would stay SIGNING.
+    const advance = updates.findIndex(
+      (update) =>
+        JSON.stringify(update.where).includes('"status":"SIGNING"') &&
+        update.data.status === "SENDING"
+    );
+    const resultWrite = updates.findIndex((update) => update.data.status === "APPROVED");
+    expect(advance).toBeGreaterThanOrEqual(0);
+    expect(resultWrite).toBeGreaterThan(advance);
+  });
+});
+
 describe("FiscalApproved publication (DEC-059)", () => {
   it("publishes once for an approved document, after the transaction", async () => {
     const { handler, approved } = setup("PENDING", "APPROVED");
@@ -338,7 +357,7 @@ describe("FiscalSubmissionHandler", () => {
     if (outcome === "TRANSIENT_FAILURE")
       await expect(handler.handle(job)).rejects.toThrow("Provider reason");
     else await handler.handle(job);
-    const finalData = updates[1]?.data;
+    const finalData = updates.at(-1)?.data;
     expect(finalData).toMatchObject({
       status,
       requestSnapshot: { provider: "FAKE", secret: "[redacted]" },
@@ -374,7 +393,7 @@ describe("FiscalSubmissionHandler", () => {
     // rethrown for BullMQ to retry. A second send of a document the provider
     // already holds is the duplicate submission its own rules punish.
     await expect(handler.handle(job)).resolves.toBeUndefined();
-    const finalData = updates[1]?.data;
+    const finalData = updates.at(-1)?.data;
     // Guardrail 3: the handle lands in the SAME update that enters the state, so
     // a crash between the provider's answer and the next sweep cannot lose it.
     // The CDC and the document reference land with it when the answer carries
@@ -394,7 +413,7 @@ describe("FiscalSubmissionHandler", () => {
     expect(finalData?.resolvedAt).toBeUndefined();
     // The result write stays a conditional update on the claim it is resolving,
     // so a stolen or recovered claim cannot be overwritten by a stale answer.
-    expect(updates[1]?.where).toMatchObject({ status: { in: ["SENDING"] } });
+    expect(updates.at(-1)?.where).toMatchObject({ status: { in: ["SENDING"] } });
   });
 
   it("stamps the query marker one poll interval after the hand-over", async () => {
@@ -404,8 +423,8 @@ describe("FiscalSubmissionHandler", () => {
     // sweep's own 60-second cadence become the provider's (FISC-012 WU-F).
     const { handler, updates } = setup("PENDING", "SUBMITTED");
     await handler.handle(job);
-    const submittedAt = updates[1]?.data.submittedAt as Date;
-    const nextQueryAt = updates[1]?.data.nextQueryAt as Date;
+    const submittedAt = updates.at(-1)?.data.submittedAt as Date;
+    const nextQueryAt = updates.at(-1)?.data.nextQueryAt as Date;
     expect(nextQueryAt).toBeInstanceOf(Date);
     expect(nextQueryAt.getTime() - submittedAt.getTime()).toBe(SIFEN_BATCH_POLL_INTERVAL_MS);
   });
@@ -419,7 +438,7 @@ describe("FiscalSubmissionHandler", () => {
       externalId: null,
     });
     await handler.handle(job);
-    const finalData = updates[1]?.data;
+    const finalData = updates.at(-1)?.data;
     expect(finalData?.status).toBe("SUBMITTED");
     expect(finalData?.providerReference).toBe("operation-1");
     expect(finalData?.submittedAt).toBeInstanceOf(Date);
@@ -436,7 +455,7 @@ describe("FiscalSubmissionHandler", () => {
       null
     );
     await handler.handle(job);
-    const finalData = updates[1]?.data;
+    const finalData = updates.at(-1)?.data;
     expect(finalData?.status).toBe("SUBMITTED");
     expect(finalData?.submittedAt).toBeInstanceOf(Date);
     // Absent, not null: a `null` write is a clearing attempt the transition
@@ -458,7 +477,7 @@ describe("FiscalSubmissionHandler", () => {
       null
     );
     await handler.handle(job);
-    expect(updates[1]?.data).not.toHaveProperty("providerReference");
+    expect(updates.at(-1)?.data).not.toHaveProperty("providerReference");
   });
 
   it("keeps a SUBMITTED document off the claimable set after the hand-over", async () => {
@@ -473,7 +492,7 @@ describe("FiscalSubmissionHandler", () => {
   it("persists ERROR before rethrowing TRANSIENT_FAILURE", async () => {
     const { handler, updates } = setup("PENDING", "TRANSIENT_FAILURE");
     await expect(handler.handle(job)).rejects.toThrow("Provider reason");
-    expect(updates[1]?.data).toMatchObject({ status: "ERROR" });
+    expect(updates.at(-1)?.data).toMatchObject({ status: "ERROR" });
   });
 
   it.each(["APPROVED", "REJECTED", "CANCELLED", "SIGNING", "SENDING", "SUBMITTED"] as const)(
