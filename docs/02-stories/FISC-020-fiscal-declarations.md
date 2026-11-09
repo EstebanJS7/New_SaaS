@@ -17,11 +17,15 @@ updated: 2026-11-09
 
 ## Objetivo y autorización
 
-DEC-096, opción A elegida por el usuario: «Completar las declaraciones faltantes».
-Agregar «API, proxy y formularios mínimos para declarar el tipo de operación fiscal del cliente y la clasificación tributaria del IVA del tenant, con permisos, aislamiento y pruebas. Después ejecutar NCE-001 sin SQL ni aprobaciones fabricadas.»
+DEC-096, opción A elegida por el usuario: «Completar las declaraciones
+faltantes». Agregar «API, proxy y formularios mínimos para declarar el tipo de
+operación fiscal del cliente y la clasificación tributaria del IVA del tenant,
+con permisos, aislamiento y pruebas. Después ejecutar NCE-001 sin SQL ni
+aprobaciones fabricadas.»
 
 No cambiar el PRD, inferir valores predeterminados, modificar el protocolo SIFEN
-ni agregar permisos, proveedores o migraciones para campos/tablas que ya existen.
+ni agregar permisos, proveedores o migraciones para campos/tablas que ya
+existen.
 
 ## Criterios de aceptación
 
@@ -29,7 +33,8 @@ ni agregar permisos, proveedores o migraciones para campos/tablas que ya existen
 
 - [ ] Crear/editar un cliente admite su `fiscalOperationType` explícito con los
       valores ya definidos por DEC-057 y el esquema. Ausente o null no inventa
-      una declaración; una edición que omite el campo preserva la declaración previa.
+      una declaración; una edición que omite el campo preserva la declaración
+      previa.
 - [ ] Las respuestas de detalle y el formulario de cliente permiten ver y editar
       la declaración. El proxy reenvía solo la superficie autorizada existente.
 - [ ] Se mantienen autenticación, permisos actuales de clientes, aislamiento
@@ -47,10 +52,22 @@ ni agregar permisos, proveedores o migraciones para campos/tablas que ya existen
       proporcionalidad que exige el modelo existente.
 - [ ] Cada lectura/escritura se limita al tenant autenticado y las escrituras
       quedan auditadas. No se confía en tenantId enviado por el cliente.
-- [ ] Sección mínima con estados de carga, vacío, error, éxito y permiso;
-      textos es-PY y tokens semánticos, sin rediseñar la pantalla.
+- [ ] Sección mínima con estados de carga, vacío, error, éxito y permiso; textos
+      es-PY y tokens semánticos, sin rediseñar la pantalla.
 - [ ] Pruebas de validación, permisos, aislamiento, lectura/escritura y
       preservación de rutas anteriores; typecheck/lint aplicables.
+
+### Unidad de medida del catálogo (unidad T9, [[DEC-097]])
+
+- [ ] Alta y edición de artículos aceptan `unitOfMeasureCode` opcional, validado
+      contra el catálogo SIFEN de unidades ya implementado; ausente no inventa
+      unidad y una edición que omite el campo preserva la anterior; `null`
+      explícito la quita.
+- [ ] El detalle de artículo y el formulario de catálogo muestran y editan la
+      unidad con un selector mínimo; textos es-PY.
+- [ ] Se mantienen permisos de catálogo, aislamiento tenant y auditoría vigente.
+- [ ] Pruebas de validación, persistencia/lectura por API, preservación del
+      comportamiento anterior y del formulario.
 
 ### Integración (unidad T3)
 
@@ -67,11 +84,12 @@ agregan datos personales ni valores predeterminados o políticas de retención.
 
 ## Implementación
 
-Cliente implementado por T6: paquete 18, API 58 y web 62 pruebas pasan; typecheck,
-lint y formato focalizados pasan. Preserva omisión/null y la auditoría vigente.
-Clasificación implementada por T7: GET/PUT `/fiscal/tax-classifications`, proxy
-y sección mínima; 6 pruebas del servicio y 51 combinadas de configuración/proxy
-pasan, junto con typechecks y lint focalizados. Sin nuevas migraciones.
+Cliente implementado por T6: paquete 18, API 58 y web 62 pruebas pasan;
+typecheck, lint y formato focalizados pasan. Preserva omisión/null y la
+auditoría vigente. Clasificación implementada por T7: GET/PUT
+`/fiscal/tax-classifications`, proxy y sección mínima; 6 pruebas del servicio y
+51 combinadas de configuración/proxy pasan, junto con typechecks y lint
+focalizados. Sin nuevas migraciones.
 
 Pendientes: diferencial base/candidato, integración HTTP/live-pg de las nuevas
 declaraciones, suites completas sobre el candidato final y verificación
