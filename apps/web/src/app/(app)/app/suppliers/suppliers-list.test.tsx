@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SupplierList } from "./suppliers-list";
 
@@ -68,7 +68,40 @@ function renderList(): void {
   );
 }
 
+/** Opens the native confirmation and confirms the explicit deactivation command. */
+async function confirmDeactivation(): Promise<void> {
+  fireEvent.click(screen.getByRole("button", { name: "Desactivar" }));
+  fireEvent.click(
+    within(await screen.findByRole("dialog", { name: "Desactivar proveedor" })).getByRole(
+      "button",
+      { name: "Desactivar proveedor" }
+    )
+  );
+}
+
+function deactivateCalls(fetchMock: ReturnType<typeof vi.fn>): unknown[][] {
+  return fetchMock.mock.calls.filter((call) =>
+    resolveUrl(call[0] as RequestInfo | URL).includes("/deactivate")
+  );
+}
+
 describe("SupplierList", () => {
+  beforeEach(() => {
+    // jsdom does not implement the native modal API the confirmation dialog uses.
+    Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+      configurable: true,
+      value: function (this: HTMLDialogElement) {
+        this.setAttribute("open", "");
+      },
+    });
+    Object.defineProperty(HTMLDialogElement.prototype, "close", {
+      configurable: true,
+      value: function (this: HTMLDialogElement) {
+        this.removeAttribute("open");
+      },
+    });
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -161,17 +194,23 @@ describe("SupplierList", () => {
 
   it("deactivates a supplier only through the explicit command after confirmation", async () => {
     const fetchMock = mockSuppliersFetch({ listHandler: () => jsonResponse([SUPPLIER]) });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
 
     renderList();
 
     await screen.findByText("Distribuidora Central");
-    fireEvent.click(screen.getByRole("button", { name: "Deactivate" }));
+    fireEvent.click(screen.getByRole("button", { name: "Desactivar" }));
+    await screen.findByRole("dialog", { name: "Desactivar proveedor" });
+    // Opening the confirmation alone never sends the command.
+    expect(deactivateCalls(fetchMock)).toHaveLength(0);
+
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "Desactivar proveedor" })).getByRole("button", {
+        name: "Desactivar proveedor",
+      })
+    );
 
     await waitFor(() => {
-      const deactivateCall = fetchMock.mock.calls.find((call) =>
-        resolveUrl(call[0] as RequestInfo | URL).includes("/deactivate")
-      );
+      const deactivateCall = deactivateCalls(fetchMock)[0];
       expect(deactivateCall).toBeDefined();
       expect(resolveUrl(deactivateCall?.[0] as RequestInfo | URL)).toBe(
         `/api/suppliers/${SUPPLIER.id}/deactivate`
@@ -189,14 +228,13 @@ describe("SupplierList", () => {
         return jsonResponse({ ...SUPPLIER, isActive: false });
       },
     });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
 
     renderList();
 
     await screen.findByText("Distribuidora Central");
     expect(screen.queryByText("Inactive")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Deactivate" }));
+    await confirmDeactivation();
 
     expect(await screen.findByText("Inactive")).toBeInTheDocument();
   });
@@ -208,7 +246,7 @@ describe("SupplierList", () => {
 
     await screen.findByText("Distribuidora Central");
     expect(screen.getByText("Inactive")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Deactivate" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Desactivar" })).toBeDisabled();
   });
 
   it("renders a permission-denied state when a deactivation is refused with 403", async () => {
@@ -217,21 +255,21 @@ describe("SupplierList", () => {
       deactivateHandler: () =>
         jsonResponse({ error: { code: "FORBIDDEN", message: "Access denied" } }, 403),
     });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
 
     renderList();
 
     await screen.findByText("Distribuidora Central");
-    fireEvent.click(screen.getByRole("button", { name: "Deactivate" }));
+    await confirmDeactivation();
 
-    const alert = await screen.findByRole("alert");
+    // The card keeps the distinct permission-denied outcome beside the dialog's own error copy.
+    const alert = (await screen.findByText("Permission denied")).closest('[role="alert"]');
+    expect(alert).not.toBeNull();
     expect(alert).toHaveTextContent("Permission denied");
     expect(alert).toHaveTextContent("You do not have permission to manage suppliers.");
   });
 
   it("offers no delete affordance and never sends a DELETE or PATCH request", async () => {
     const fetchMock = mockSuppliersFetch({ listHandler: () => jsonResponse([SUPPLIER]) });
-    vi.spyOn(window, "confirm").mockReturnValue(false);
 
     renderList();
 

@@ -299,7 +299,7 @@ describe("Dashboard · one aggregation path", () => {
       requestedUrls(fetchMock).filter((url) => url.includes("/api/reports/low-stock"))
     ).toEqual(["/api/reports/low-stock"]);
 
-    fireEvent.change(screen.getByLabelText("Period"), { target: { value: "last7Days" } });
+    fireEvent.change(screen.getByLabelText("Período"), { target: { value: "last7Days" } });
 
     await waitFor(() => {
       expect(requestedUrls(fetchMock)).toContain(
@@ -325,12 +325,14 @@ describe("Dashboard · the cards render the API's own values", () => {
     renderDashboard();
 
     const gross = await screen.findByTestId("dashboard-card-gross-value");
-    // `"1234.50"` is the value. `Number()` here would print `1234.5`, a different
-    // number at a scale the report never chose.
-    expect(within(gross).getByText("1234.50")).toBeInTheDocument();
+    // `"1234.50"` is the value, grouped for es-PY reading without a Number round
+    // trip. `Number()` here would print `1234.5`, a different number at a scale the
+    // report never chose.
+    expect(within(gross).getByText("Gs. 1.234,50")).toBeInTheDocument();
     expect(screen.queryByText("1234.5")).not.toBeInTheDocument();
-    // The currency comes from the same response, so the figure is unambiguous.
-    expect(gross).toHaveTextContent("PYG");
+    expect(screen.queryByText("Gs. 1.234,5")).not.toBeInTheDocument();
+    // The currency comes from the same response (PYG), so the figure is unambiguous.
+    expect(gross).toHaveTextContent("Gs.");
   });
 
   it("prints the sale count as a number from the same response the gross total came from", async () => {
@@ -348,8 +350,9 @@ describe("Dashboard · the cards render the API's own values", () => {
     const difference = await screen.findByTestId("dashboard-card-cash-difference-value");
     // A drawer that closed SHORT: dropping the minus sign would turn a shortfall
     // into an overage, which is the opposite fact.
-    expect(within(difference).getByText("-250.00")).toBeInTheDocument();
-    expect(within(difference).queryByText("250.00")).not.toBeInTheDocument();
+    // The API's "-250.00" is grouped for es-PY reading, which drops an all-zero fraction.
+    expect(within(difference).getByText("-250")).toBeInTheDocument();
+    expect(within(difference).queryByText("250")).not.toBeInTheDocument();
   });
 
   it("counts the low-stock rows the API returned when thresholds ARE configured", async () => {
@@ -358,7 +361,7 @@ describe("Dashboard · the cards render the API's own values", () => {
 
     const lowStock = await screen.findByTestId("dashboard-card-low-stock-value");
     expect(within(lowStock).getByText("2")).toBeInTheDocument();
-    expect(lowStock).toHaveTextContent("items are at or below their own threshold");
+    expect(lowStock).toHaveTextContent("Artículos en su umbral mínimo o por debajo.");
   });
 
   it("links every card to its report's route", async () => {
@@ -394,7 +397,7 @@ describe("Dashboard · the honest first-run low-stock answer", () => {
     await screen.findByTestId("dashboard-card-low-stock-not-configured");
     const card = screen.getByTestId("dashboard-card-low-stock");
     expect(screen.getByTestId("dashboard-card-low-stock-not-configured")).toHaveTextContent(
-      "No item has a low-stock threshold yet"
+      "Aún no hay artículos con umbral de stock bajo"
     );
     // The missing fact is entered there, and it is the same destination the
     // report workspace's empty state points at.
@@ -418,7 +421,7 @@ describe("Dashboard · every state", () => {
       "dashboard-card-cash-difference",
       "dashboard-card-low-stock",
     ]) {
-      expect(screen.getByTestId(`${testId}-loading`)).toHaveTextContent("Loading");
+      expect(screen.getByTestId(`${testId}-loading`)).toHaveTextContent("Cargando…");
     }
   });
 
