@@ -103,6 +103,6 @@ pnpm --filter @newsaas/api exec vitest run src/patients/patient-search.integrati
 pnpm --filter @newsaas/web exec vitest run 'src/app/(app)/app/patients/patients-list.test.tsx' 'src/app/api/patients/[[...path]]/route.test.ts' 'src/app/(app)/app/agenda/patient-selector.test.tsx'
 ```
 
-Runtime smoke after restart: API health 200, web health proxy 200, worker connected
-to Redis, and POST /patients/search without a session returned 401. No browser,
-credentials, patient data or mutating command was used for this check.
+Runtime smoke after restart: API health 200, web health proxy 200, worker
+connected to Redis, and POST /patients/search without a session returned 401. No
+browser, credentials, patient data or mutating command was used for this check.

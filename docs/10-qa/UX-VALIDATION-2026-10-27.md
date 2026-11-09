@@ -350,6 +350,6 @@ Final web production build and build-output verifier passed. Existing
 informational Next TypeScript-reference and ESLint-plugin warnings remain; no
 new blocker.
 
-Runtime smoke after restart: API health 200, web health proxy 200, worker connected
-to Redis, and POST /patients/search without a session returned 401. No browser,
-credentials, patient data or mutating command was used for this check.
+Runtime smoke after restart: API health 200, web health proxy 200, worker
+connected to Redis, and POST /patients/search without a session returned 401. No
+browser, credentials, patient data or mutating command was used for this check.

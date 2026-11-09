@@ -21,6 +21,22 @@ const IDENTITY_SQL = findMigration(MIGRATIONS, "_staff_identity").sql;
  */
 const SHARED_PK_MODELS = new Set(["UserCredential", "PortalCredential"]);
 
+/**
+ * Models whose UUID is supplied by the caller so a retried create converges on
+ * one row (DEC-087: `INSERT ... ON CONFLICT (id) DO NOTHING`); a database
+ * default would defeat that idempotency.
+ */
+const CALLER_KEYED_MODELS = new Set(["ClinicalWorkingDraft"]);
+
+/**
+ * Models keyed by their idempotency scope instead of a surrogate UUID. UX-019's
+ * creation receipt is unique per (tenant, patient, kind, key) by design, so its
+ * composite `@@id` IS the scope; each entry pins the exact declaration.
+ */
+const SCOPED_PK_MODELS = new Map([
+  ["ClinicalCreationReceipt", "@@id([tenantId, patientId, kind, key])"],
+]);
+
 interface ModelBlock {
   readonly name: string;
   readonly body: string;
@@ -73,12 +89,18 @@ describe("schema conventions (design D2)", () => {
   it("uses UUID primary keys defaulted by gen_random_uuid() (shared-PK credential excepted)", () => {
     for (const block of modelBlocks(SCHEMA)) {
       const idLines = scalarFields(block.body).filter((field) => /@id\b/.test(field.line));
+      const scopedId = SCOPED_PK_MODELS.get(block.name);
+      if (scopedId !== undefined) {
+        expect(idLines, `${block.name} is keyed by its scope, not an @id field`).toHaveLength(0);
+        expect(block.body, `${block.name} must declare ${scopedId}`).toContain(scopedId);
+        continue;
+      }
       expect(idLines.length, `${block.name} must declare exactly one @id field`).toBe(1);
       expect(idLines[0].line).toContain("@db.Uuid");
 
       // Shared-PK credentials (user/staff and portal) by design decision: the
       // value is the parent's UUID, so no independent default exists.
-      if (!SHARED_PK_MODELS.has(block.name)) {
+      if (!SHARED_PK_MODELS.has(block.name) && !CALLER_KEYED_MODELS.has(block.name)) {
         expect(idLines[0].line, `${block.name}.id needs gen_random_uuid()`).toContain(
           '@default(dbgenerated("gen_random_uuid()"))'
         );

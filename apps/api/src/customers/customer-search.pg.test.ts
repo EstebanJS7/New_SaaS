@@ -9,6 +9,7 @@ import { customerSearchBody } from "./customer-search.dto.js";
 
 const url = process.env.CUSTOMER_SEARCH_TEST_URL;
 describe.skipIf(!url)("Customer search — disposable real PostgreSQL", () => {
+  if (!url) return;
   const prisma = new PrismaService({ datasources: { db: { url } } });
   const context = new RequestContextService();
   const tenant = randomUUID(),

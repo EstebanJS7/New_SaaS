@@ -26,9 +26,8 @@ expedición. Segunda entrega de [[DEC-094]] (§9); en este punto reemplaza a
 - **Base de datos** (`20261107000001_branch_cash_sales`):
   - `cash_register.branch_id` y `sale.branch_id`, `NOT NULL`, con FK compuesta
     por clínica.
-  - Relleno: los datos existentes van a la sucursal más antigua de cada
-    clínica. Una clínica con cajas o ventas y sin sucursal recibe «Casa
-    central».
+  - Relleno: los datos existentes van a la sucursal más antigua de cada clínica.
+    Una clínica con cajas o ventas y sin sucursal recibe «Casa central».
   - `branch.fiscal_establishment_id` + `branch.expedition_point`: los dos o
     ninguno, punto de tres dígitos, FK al establecimiento de la misma clínica, y
     un solo punto por sucursal (índice único parcial).
@@ -38,10 +37,9 @@ expedición. Segunda entrega de [[DEC-094]] (§9); en este punto reemplaza a
   - Abrir una caja exige trabajar en su sucursal y que esté activa.
   - `POST /sales` acepta `branchId` opcional con la misma regla. Al cobrar se
     exige trabajar en la sucursal de la venta.
-  - El efectivo de una venta (y su devolución al anularla) va a la única
-    sesión abierta de una caja **de la sucursal de la venta**. Los mensajes de
-    «sin sesión» y «más de una sesión» se mantienen y ahora hablan de esa
-    sucursal.
+  - El efectivo de una venta (y su devolución al anularla) va a la única sesión
+    abierta de una caja **de la sucursal de la venta**. Los mensajes de «sin
+    sesión» y «más de una sesión» se mantienen y ahora hablan de esa sucursal.
   - La numeración fiscal (factura y nota de crédito) usa el establecimiento y
     punto de la sucursal de la venta cuando los declara; si no, el punto por
     defecto del perfil fiscal.
@@ -70,13 +68,13 @@ expedición. Segunda entrega de [[DEC-094]] (§9); en este punto reemplaza a
 
 - API:
   - Venta: elige sucursal, pide elegir si hay varias y rechaza una ajena.
-  - Una sesión abierta en otra sucursal no recibe el efectivo; la de la
-    sucursal de la venta sí.
+  - Una sesión abierta en otra sucursal no recibe el efectivo; la de la sucursal
+    de la venta sí.
   - Cobrar una venta de una sucursal ajena se rechaza.
-  - Caja: se crea en la sucursal de quien la crea y se rechaza en una ajena;
-    no se abre en una sucursal donde no se trabaja.
-  - Numeración desde el punto de la sucursal, o el del perfil si la sucursal
-    no declara uno.
+  - Caja: se crea en la sucursal de quien la crea y se rechaza en una ajena; no
+    se abre en una sucursal donde no se trabaja.
+  - Numeración desde el punto de la sucursal, o el del perfil si la sucursal no
+    declara uno.
   - Establecimiento ajeno o punto ya usado: rechazados.
   - `me/branches` declarado como solo autenticado en el probe de rutas.
 - Web:
@@ -90,12 +88,13 @@ expedición. Segunda entrega de [[DEC-094]] (§9); en este punto reemplaza a
     sucursal.
 - **Pendiente:**
   - `live-pg-isolation.e2e-spec.ts` se adaptó (sucursal y asignación del
-    propietario, `branch_id` en los inserts directos) pero no se pudo correr acá.
+    propietario, `branch_id` en los inserts directos) pero no se pudo correr
+    acá.
   - Prueba en navegador.
 
 ## Cambio de la prueba en memoria
 
 La base en memoria de las pruebas ahora imita el alta real. Cada clínica nace
-con «Casa central», y cada miembro creado trabaja en las sucursales activas
-que existan en ese momento. Una caja o venta sembrada sin `branchId` va a la
-primera sucursal.
+con «Casa central», y cada miembro creado trabaja en las sucursales activas que
+existan en ese momento. Una caja o venta sembrada sin `branchId` va a la primera
+sucursal.

@@ -302,7 +302,7 @@ describe("ReportWorkspace · every state", () => {
     renderWorkspace("sales-by-period");
 
     const denied = await screen.findByTestId("report-permission-denied");
-    expect(denied).toHaveTextContent("You do not have permission to read reports.");
+    expect(denied).toHaveTextContent("No tenés permiso para ver los informes.");
     expect(screen.queryByTestId("report-error")).not.toBeInTheDocument();
   });
 

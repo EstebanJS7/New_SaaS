@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PurchaseDetail } from "./purchase-detail";
 
@@ -130,12 +130,41 @@ function renderDetail(): void {
   );
 }
 
-async function clickReceive(): Promise<HTMLElement> {
+async function openReceiveConfirmation(): Promise<HTMLElement> {
   fireEvent.click(await screen.findByRole("button", { name: "Receive purchase" }));
-  return screen.findByRole("alert");
+  return screen.findByRole("dialog", { name: "Recibir compra" });
+}
+
+/** Confirms the receive and returns the page-level outcome, not the dialog's own error copy. */
+async function clickReceive(): Promise<HTMLElement> {
+  const dialog = await openReceiveConfirmation();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Recibir compra" }));
+  return waitFor(() => {
+    const alert = screen
+      .getAllByRole("alert")
+      .find((element) => element.closest("dialog") === null);
+    if (alert === undefined) throw new Error("No page-level alert rendered yet");
+    return alert;
+  });
 }
 
 describe("PurchaseDetail", () => {
+  beforeEach(() => {
+    // jsdom does not implement the native modal API the confirmation dialog uses.
+    Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+      configurable: true,
+      value: function (this: HTMLDialogElement) {
+        this.setAttribute("open", "");
+      },
+    });
+    Object.defineProperty(HTMLDialogElement.prototype, "close", {
+      configurable: true,
+      value: function (this: HTMLDialogElement) {
+        this.removeAttribute("open");
+      },
+    });
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -203,22 +232,30 @@ describe("PurchaseDetail", () => {
 
   it("does not receive when the confirmation is declined", async () => {
     const fetchMock = installFetch({ read: () => jsonResponse(DRAFT_PURCHASE) });
-    vi.spyOn(window, "confirm").mockReturnValue(false);
 
     renderDetail();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Receive purchase" }));
+    const dialog = await openReceiveConfirmation();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Volver" }));
 
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Recibir compra" })).not.toBeInTheDocument();
+    });
     expect(callsTo(fetchMock, "/receive")).toHaveLength(0);
   });
 
   it("receives after confirmation, showing success and the RECEIVED status", async () => {
     const fetchMock = installFetch({ read: () => jsonResponse(DRAFT_PURCHASE) });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
 
     renderDetail();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Receive purchase" }));
+    const dialog = await openReceiveConfirmation();
+    // The confirmation states the stock effect before the command runs.
+    expect(dialog).toHaveAccessibleDescription(/Se registrará el ingreso de stock/);
+    expect(dialog).toHaveAccessibleDescription(/La compra recibida no se puede modificar/);
+    expect(callsTo(fetchMock, "/receive")).toHaveLength(0);
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Recibir compra" }));
 
     expect(await screen.findByText("Purchase received")).toBeInTheDocument();
     expect(screen.getByText(/Stock has been written for every line/)).toBeInTheDocument();
@@ -227,9 +264,6 @@ describe("PurchaseDetail", () => {
     const receiveCalls = callsTo(fetchMock, "/receive");
     expect(receiveCalls).toHaveLength(1);
     expect(receiveCalls[0]?.[1]?.method).toBe("POST");
-    // The confirmation stated the stock effect before the command ran.
-    expect(confirmSpy.mock.calls[0]?.[0]).toMatch(/writes the purchase into stock/);
-    expect(confirmSpy.mock.calls[0]?.[0]).toMatch(/cannot be undone by editing/);
     // The receive button is gone once the purchase is no longer a draft.
     expect(screen.queryByRole("button", { name: "Receive purchase" })).not.toBeInTheDocument();
   });
@@ -243,7 +277,6 @@ describe("PurchaseDetail", () => {
           409
         ),
     });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
 
     renderDetail();
     const alert = await clickReceive();
@@ -264,7 +297,6 @@ describe("PurchaseDetail", () => {
           409
         ),
     });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
 
     renderDetail();
     const alert = await clickReceive();
@@ -282,7 +314,6 @@ describe("PurchaseDetail", () => {
           409
         ),
     });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
 
     renderDetail();
     const alert = await clickReceive();
@@ -296,7 +327,6 @@ describe("PurchaseDetail", () => {
       read: () => jsonResponse(DRAFT_PURCHASE),
       receive: () => jsonResponse({ error: { code: "FORBIDDEN", message: "Access denied." } }, 403),
     });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
 
     renderDetail();
     const alert = await clickReceive();
@@ -311,7 +341,6 @@ describe("PurchaseDetail", () => {
       receive: () =>
         jsonResponse({ error: { code: "NOT_FOUND", message: "Purchase was not found." } }, 404),
     });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
 
     renderDetail();
     const alert = await clickReceive();
@@ -325,7 +354,6 @@ describe("PurchaseDetail", () => {
       read: () => jsonResponse(DRAFT_PURCHASE),
       receive: () => Promise.reject(new TypeError("Failed to fetch")),
     });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
 
     renderDetail();
     const alert = await clickReceive();
@@ -343,7 +371,6 @@ describe("PurchaseDetail", () => {
           409
         ),
     });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
 
     renderDetail();
     await clickReceive();
@@ -355,11 +382,14 @@ describe("PurchaseDetail", () => {
 
   it("cancels a draft only through the explicit command after confirmation", async () => {
     const fetchMock = installFetch({ read: () => jsonResponse(DRAFT_PURCHASE) });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
 
     renderDetail();
 
     fireEvent.click(await screen.findByRole("button", { name: "Cancel purchase" }));
+    const dialog = await screen.findByRole("dialog", { name: "Cancelar borrador de compra" });
+    // Opening the confirmation alone never sends the command.
+    expect(callsTo(fetchMock, "/cancel")).toHaveLength(0);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancelar compra" }));
 
     expect(await screen.findByText("Cancelled purchase")).toBeInTheDocument();
     const cancelCalls = callsTo(fetchMock, "/cancel");

@@ -77,7 +77,7 @@ test.describe("password recovery", () => {
   }) => {
     await page.goto("/forgot-password");
     await page.fill("#forgot-email", RECOVERABLE_EMAIL);
-    await page.getByRole("button", { name: "Send the link" }).click();
+    await page.getByRole("button", { name: "Enviar enlace" }).click();
     await expect(page.getByTestId("forgot-sent")).toBeVisible();
 
     const body = await nextMessage();
@@ -87,14 +87,14 @@ test.describe("password recovery", () => {
     await page.goto(link);
     await page.fill("#reset-password", DEMO.recoveredPassword);
     await page.fill("#reset-confirmation", DEMO.recoveredPassword);
-    await page.getByRole("button", { name: "Change password" }).click();
+    await page.getByRole("button", { name: "Actualizar contraseña" }).click();
     await expect(page.getByTestId("reset-done")).toBeVisible();
 
     // The new password signs in — the assertion that the reset changed something.
     await page.goto("/login");
     await page.fill("#login-email", RECOVERABLE_EMAIL);
     await page.fill("#login-password", DEMO.recoveredPassword);
-    await page.getByRole("button", { name: "Sign in" }).click();
+    await page.getByRole("button", { name: "Iniciar sesión" }).click();
     await expect(page).toHaveURL(/\/app$/);
 
     // And the OLD one does not, in a fresh context so the session above is out of the way.
@@ -103,14 +103,14 @@ test.describe("password recovery", () => {
     await otherPage.goto("/login");
     await otherPage.fill("#login-email", RECOVERABLE_EMAIL);
     await otherPage.fill("#login-password", DEMO.recoverablePassword);
-    await otherPage.getByRole("button", { name: "Sign in" }).click();
+    await otherPage.getByRole("button", { name: "Iniciar sesión" }).click();
     await expect(otherPage.getByTestId("login-problem")).toBeVisible();
 
     // Single use, and refused as invalid rather than as "already used".
     await otherPage.goto(link);
     await otherPage.fill("#reset-password", "another-password-entirely");
     await otherPage.fill("#reset-confirmation", "another-password-entirely");
-    await otherPage.getByRole("button", { name: "Change password" }).click();
+    await otherPage.getByRole("button", { name: "Actualizar contraseña" }).click();
     await expect(otherPage.getByTestId("reset-problem")).toBeVisible();
 
     await other.close();

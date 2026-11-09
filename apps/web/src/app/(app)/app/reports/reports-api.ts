@@ -524,13 +524,13 @@ export function isReportAccessDenied(error: Error | null): boolean {
  */
 export function userFacingReportError(error: Error): string {
   if (!(error instanceof ReportRequestError)) {
-    return "The request could not reach the server. Check your connection and try again.";
+    return "No se pudo conectar con el servidor. Revisá tu conexión y volvé a intentar.";
   }
   switch (error.code) {
     case "UNAUTHENTICATED":
-      return "You must be signed in to read reports.";
+      return "Tenés que iniciar sesión para ver los informes.";
     case "FORBIDDEN":
-      return "You do not have permission to read reports.";
+      return "No tenés permiso para ver los informes.";
     default:
       return error.message;
   }

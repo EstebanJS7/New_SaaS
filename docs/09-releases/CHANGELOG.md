@@ -10,35 +10,35 @@ All notable product changes will be documented here.
   reenvíos automáticos o cancelación implícita. Fechas/horas es-PY en la zona
   fija v1; wire y ledger intactos. Límites de durabilidad y evidencia en QA.
 
-- **UX-033: formularios y mensajes de Caja.** Español, entrada es-PY exacta
-  y revisión explícita de apertura, movimiento y cierre. Errores privados
+- **UX-033: formularios y mensajes de Caja.** Español, entrada es-PY exacta y
+  revisión explícita de apertura, movimiento y cierre. Errores privados
   sanitizados, cancelación sin comando y clave de movimiento conservada tras
   rechazo. Wire, cálculos y ledger intactos. Paneles por sesión con identidad
   React propia. Evidencia dirigida y límites en QA UX-033.
 
-- **UX-032: importes de lectura de Caja en es-PY.**
-  Agrupación y coma decimal exactas, signos de faltante/sobrante preservados y
-  descripción de diferencia en español. Sin cambio de input, wire o comandos.
+- **UX-032: importes de lectura de Caja en es-PY.** Agrupación y coma decimal
+  exactas, signos de faltante/sobrante preservados y descripción de diferencia
+  en español. Sin cambio de input, wire o comandos.
 
-- **UX-031: protección del carrito POS.** Creación incierta
-  bloquea edición/reenvío y conserva la copia local. Salida por enlace requiere
+- **UX-031: protección del carrito POS.** Creación incierta bloquea
+  edición/reenvío y conserva la copia local. Salida por enlace requiere
   confirmación y se bloquea durante comando pendiente; beforeunload advierte.
   Sin cancelación backend, nueva idempotencia o recuperación tras recarga.
 
-- **UX-030: contexto y retorno de atención.** POS verifica cita/paciente,
-  ofrece volver a la consulta exacta con o sin cita y recupera lecturas fallidas
+- **UX-030: contexto y retorno de atención.** POS verifica cita/paciente, ofrece
+  volver a la consulta exacta con o sin cita y recupera lecturas fallidas
   mediante GET explícito. Acciones bloqueadas durante revalidación; sugerencia
   exige servicio activo actual y clic. Navegación sin efectos y vínculos
-  explícitos preservados. 406 pruebas (Agenda con runtime actualizado ya instalado) y lane real 8/8;
-  límites y TD-071/072 en QA.
+  explícitos preservados. 406 pruebas (Agenda con runtime actualizado ya
+  instalado) y lane real 8/8; límites y TD-071/072 en QA.
 
 - **UX-029: experiencia staff de Catálogo.** Alta, edición y detalle en español,
   errores accesibles, foco y protección de salida. Precio y umbral con entrada
-  es-PY y precisión exacta, conservando moneda y omisión/null; comandos inciertos
-  o denegados bloqueados sin reenvío automático. Guardar sin cambios conserva el
-  registro y su auditoría en lugar de devolver un falso 404. Sin cálculos o
-  movimientos nuevos. Pruebas legadas de consumidores alineadas con su UI
-  existente (TD-070); evidencia y límites en QA UX-029.
+  es-PY y precisión exacta, conservando moneda y omisión/null; comandos
+  inciertos o denegados bloqueados sin reenvío automático. Guardar sin cambios
+  conserva el registro y su auditoría en lugar de devolver un falso 404. Sin
+  cálculos o movimientos nuevos. Pruebas legadas de consumidores alineadas con
+  su UI existente (TD-070); evidencia y límites en QA UX-029.
 
 - **UX-028: identidad staff de Pacientes.** Alta/edición en español, validación
   accesible y salida con confirmación. Catálogo/clientes con estados claros;

@@ -40,7 +40,6 @@ modificaron servicios, componentes o cálculos de esos dominios. El caso de fall
 de lectura de Catálogo exige mensaje seguro y conserva la distinción frente a
 vacío. Resultado y fallos intermedios en QA UX-029.
 
-
 ### Ampliación de evidencia UX-030
 
 La ejecución de toda Agenda detectó otros tres títulos legados en

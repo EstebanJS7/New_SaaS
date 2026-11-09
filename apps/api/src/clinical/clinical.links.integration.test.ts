@@ -16,6 +16,7 @@ import { REQUIRE_PERMISSIONS_KEY } from "../rbac/require-permissions.decorator.j
 
 const url = process.env.CLINICAL_LINKS_TEST_URL;
 describe.skipIf(!url)("Clinical journey links — live PostgreSQL", () => {
+  if (!url) return;
   const prisma = new PrismaService({ datasources: { db: { url } } });
   const context = new RequestContextService();
   const allPermissions = [
@@ -29,7 +30,9 @@ describe.skipIf(!url)("Clinical journey links — live PostgreSQL", () => {
   const resolver = {
     resolveForActiveRequest: vi.fn(() => Promise.resolve(permissions)),
   } as unknown as PermissionResolver;
-  const entitlements = { has: vi.fn(() => Promise.resolve(entitled)) } as unknown as EntitlementsService;
+  const entitlements = {
+    has: vi.fn(() => Promise.resolve(entitled)),
+  } as unknown as EntitlementsService;
   const audit = new AuditWriter(
     prisma as unknown as { auditLog: AuditAppendTx["auditLog"] },
     context
@@ -138,13 +141,16 @@ describe.skipIf(!url)("Clinical journey links — live PostgreSQL", () => {
       })
     ).id;
     // MB-002: every sale belongs to a branch of its tenant.
-    saleBranch = (await prisma.branch.create({ data: { tenantId: tenant, name: "Synthetic sales" } }))
-      .id;
+    saleBranch = (
+      await prisma.branch.create({ data: { tenantId: tenant, name: "Synthetic sales" } })
+    ).id;
     const foreignSaleBranch = await prisma.branch.create({
       data: { tenantId: foreignTenant, name: "Synthetic sales" },
     });
     sale = (
-      await prisma.sale.create({ data: { tenantId: tenant, currency: "PYG", branchId: saleBranch } })
+      await prisma.sale.create({
+        data: { tenantId: tenant, currency: "PYG", branchId: saleBranch },
+      })
     ).id;
     foreignSale = (
       await prisma.sale.create({
@@ -162,10 +168,17 @@ describe.skipIf(!url)("Clinical journey links — live PostgreSQL", () => {
     ).toBe(false);
     expect(clinicalSaleLinkBody.safeParse({ saleId: "invalid" }).success).toBe(false);
     expect(
-      Reflect.getMetadata(REQUIRE_PERMISSIONS_KEY, Object.getOwnPropertyDescriptor(ClinicalLinksController.prototype, "appointment")?.value as object)
+      Reflect.getMetadata(
+        REQUIRE_PERMISSIONS_KEY,
+        Object.getOwnPropertyDescriptor(ClinicalLinksController.prototype, "appointment")
+          ?.value as object
+      )
     ).toEqual(["vet.clinical.read", "vet.clinical.update", "scheduling.appointment.read"]);
     expect(
-      Reflect.getMetadata(REQUIRE_PERMISSIONS_KEY, Object.getOwnPropertyDescriptor(ClinicalLinksController.prototype, "sale")?.value as object)
+      Reflect.getMetadata(
+        REQUIRE_PERMISSIONS_KEY,
+        Object.getOwnPropertyDescriptor(ClinicalLinksController.prototype, "sale")?.value as object
+      )
     ).toEqual(["vet.clinical.read", "vet.clinical.update", "sales.read"]);
   });
   it("denies missing permissions and entitlement before writes", async () => {
@@ -213,13 +226,35 @@ describe.skipIf(!url)("Clinical journey links — live PostgreSQL", () => {
     ).toBe(await failure(randomUUID(), randomUUID(), { appointmentId: randomUUID() }));
     expect(await prisma.clinicalSaleLink.count()).toBe(0);
   });
-  it("same-tenant wrong patient cannot be attached to a consultation", async()=>{
-    const p = await prisma.patient.findUniqueOrThrow({where:{id:patient}});
-    const other = await prisma.patient.create({data:{tenantId:tenant,name:"Other synthetic",speciesId:p.speciesId,sex:"UNKNOWN",isActive:false}});
-    const origin = await prisma.appointment.findUniqueOrThrow({where:{id:appointment}});
-    const wrong = await prisma.appointment.create({data:{tenantId:tenant,patientId:other.id,branchId:origin.branchId,professionalMembershipId:origin.professionalMembershipId,status:"CONFIRMED",startAt:new Date("2030-03-01T12:00:00Z"),endAt:new Date("2030-03-01T12:30:00Z")}});
-    await expect(run(()=>service.link(patient,encounter,{appointmentId:wrong.id}))).rejects.toMatchObject({code:"NOT_FOUND"});
-    await expect(run(()=>service.forAppointment(patient,wrong.id))).rejects.toMatchObject({code:"NOT_FOUND"});
+  it("same-tenant wrong patient cannot be attached to a consultation", async () => {
+    const p = await prisma.patient.findUniqueOrThrow({ where: { id: patient } });
+    const other = await prisma.patient.create({
+      data: {
+        tenantId: tenant,
+        name: "Other synthetic",
+        speciesId: p.speciesId,
+        sex: "UNKNOWN",
+        isActive: false,
+      },
+    });
+    const origin = await prisma.appointment.findUniqueOrThrow({ where: { id: appointment } });
+    const wrong = await prisma.appointment.create({
+      data: {
+        tenantId: tenant,
+        patientId: other.id,
+        branchId: origin.branchId,
+        professionalMembershipId: origin.professionalMembershipId,
+        status: "CONFIRMED",
+        startAt: new Date("2030-03-01T12:00:00Z"),
+        endAt: new Date("2030-03-01T12:30:00Z"),
+      },
+    });
+    await expect(
+      run(() => service.link(patient, encounter, { appointmentId: wrong.id }))
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(run(() => service.forAppointment(patient, wrong.id))).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
   });
   it("same link concurrent retries produce one link and one co-committed audit", async () => {
     await Promise.all([

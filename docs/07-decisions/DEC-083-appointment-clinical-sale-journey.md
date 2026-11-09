@@ -60,18 +60,18 @@ La etapa inicial UX-005 implementó únicamente navegación. La etapa persistent
 se aprobó posteriormente y se implementa en UX-006, con actualización explícita
 del PRD §13.1. Las transiciones de negocio permanecen independientes.
 
-
 ## Aprobación — 2026-10-28
 
-El usuario aprobó las reglas propuestas: varias consultas por cita, consultas sin
-cita, varias ventas por atención y ventas independientes. Vinculación explícita;
-servicio sugerido desde catálogo vigente y cliente seleccionado por el operador.
-Cierre clínico, completar turno y cobro son acciones independientes.
+El usuario aprobó las reglas propuestas: varias consultas por cita, consultas
+sin cita, varias ventas por atención y ventas independientes. Vinculación
+explícita; servicio sugerido desde catálogo vigente y cliente seleccionado por
+el operador. Cierre clínico, completar turno y cobro son acciones
+independientes.
 
-Implementación mínima: registros tipados de asociación en Veterinary. Una consulta
-tiene como máximo una cita de origen; una venta pertenece como máximo a una
-consulta. No se modifica una asociación existente en esta etapa: se rechaza un
-vínculo distinto y se conserva el historial. La corrección/revinculación requiere
-operación futura con motivo/auditoría. El profesional de agenda no se convierte
-en autor clínico. Los vínculos son CONFIDENTIAL y staff-only. No se copian notas,
-precios ni responsable de facturación desde la cita.
+Implementación mínima: registros tipados de asociación en Veterinary. Una
+consulta tiene como máximo una cita de origen; una venta pertenece como máximo a
+una consulta. No se modifica una asociación existente en esta etapa: se rechaza
+un vínculo distinto y se conserva el historial. La corrección/revinculación
+requiere operación futura con motivo/auditoría. El profesional de agenda no se
+convierte en autor clínico. Los vínculos son CONFIDENTIAL y staff-only. No se
+copian notas, precios ni responsable de facturación desde la cita.

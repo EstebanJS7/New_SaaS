@@ -26,14 +26,14 @@ updated: 2026-11-05
 > issuance point per branch) are done; stock (MB-003) and report filters
 > (MB-004) follow. This debt closes with MB-004.
 >
-> **2026-11-04:** MB-003 (stock per branch, purchases received into a branch
-> and transfers between branches) is done. Only MB-004 remains.
+> **2026-11-04:** MB-003 (stock per branch, purchases received into a branch and
+> transfers between branches) is done. Only MB-004 remains.
 >
-> **2026-11-05 — resolved.** MB-004 is done: the commercial, cash, purchase
-> and inventory reports (and their CSV exports) take an optional `branchId`,
-> «Todas» by default. Sales, cash registers, purchases and stock movements all
-> carry a branch now, so the dimension described below exists. The rest of
-> this note is kept as the history of why it was missing.
+> **2026-11-05 — resolved.** MB-004 is done: the commercial, cash, purchase and
+> inventory reports (and their CSV exports) take an optional `branchId`, «Todas»
+> by default. Sales, cash registers, purchases and stock movements all carry a
+> branch now, so the dimension described below exists. The rest of this note is
+> kept as the history of why it was missing.
 
 ## What does not exist
 

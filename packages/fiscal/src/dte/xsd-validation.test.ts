@@ -277,6 +277,8 @@ describe.skipIf(skipped)(
             },
           ],
           receptor: validFacturaElectronicaRequest().gDatGralOpe.gDatRec,
+          // PAY-DET-001 (rule 1550): a cash factura describes its payments in gCamCond.
+          payments: [{ iTiPago: 1, amount: "110" }],
         },
         profile: {
           emitter: validFacturaElectronicaRequest().gDatGralOpe.gEmis,

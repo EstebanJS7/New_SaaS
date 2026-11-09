@@ -191,21 +191,20 @@ statuses, reasons and the opener reference are INTERNAL.
   composite foreign keys or the CHECK constraints, so those are proven against
   real PostgreSQL; the workspace has no browser/E2E coverage.
 
-
 ## Presentación de importes — UX-032
 
-Verificado (2026-11-01): importes de lectura y diferencias con signo usan el formateador
-es-PY existente, sin Number, redondeo, cálculo o conversión de moneda. Signos y
-clasificación SHORT/OVER/BALANCED intactos; cero se muestra0 sin signo. Parte
-fraccionaria no nula conserva escala exacta. Mensajes Faltante/Sobrante/Sin
-diferencia en español; literales inválidos conservan fallback. Comandos, input
-editable, permisos, idempotencia y ledger no cambian. Fechas UTC, estados y
-traducción integral siguen pendientes. No nueva verificación visual/PG/build
-para este cambio acotado; pruebas/lint/tipos en QA UX-032.
+Verificado (2026-11-01): importes de lectura y diferencias con signo usan el
+formateador es-PY existente, sin Number, redondeo, cálculo o conversión de
+moneda. Signos y clasificación SHORT/OVER/BALANCED intactos; cero se muestra0
+sin signo. Parte fraccionaria no nula conserva escala exacta. Mensajes
+Faltante/Sobrante/Sin diferencia en español; literales inválidos conservan
+fallback. Comandos, input editable, permisos, idempotencia y ledger no cambian.
+Fechas UTC, estados y traducción integral siguen pendientes. No nueva
+verificación visual/PG/build para este cambio acotado; pruebas/lint/tipos en QA
+UX-032.
 
 190 pruebas distintas de Caja/BFF/helper, lint/tipos/formato y diff-check
 aprobados. No nueva revisión visual/PG/build. [[UX-032-VALIDATION-2026-11-01]].
-
 
 ## Formularios y revisión — UX-033, 2026-11-02
 
@@ -227,7 +226,6 @@ verificación real PG/navegador/visual/build; [[UX-033-VALIDATION-2026-11-02]].
 Fechas y continuidad tras navegación/documento pendiente ([[TD-073]]) no se
 resuelven por esta etapa. Backend, ledger, auditoría y permisos sin cambios.
 
-
 ## Intentos sin confirmar y fechas v1 — UX-034
 
 Pendiente/incierto bloquea comandos, edición, filtro y selección de sesión.
@@ -235,12 +233,12 @@ Guardia síncrona y estado de envío propio activan bloqueo/aviso de recarga des
 el comienzo. Enlaces salientes advierten; pendiente impide confirmar salida,
 incierto requiere descarte explícito sin cancelar ni confirmar backend.
 
-Movimiento incierto conserva body y clave en CashSurface y permite replay
-manual exacto; incluso recuperación rechazada mantiene intento. Solo recibo
-válido lo confirma, limpia copia resuelta y permite otro comando. Cierre sin
-respuesta conserva ID: GET autorizado de sesiones verifica esa fila. CLOSED
-muestra resultado, OPEN permite revisión manual con conteo conservado; ausencia
-o error no habilitan comandos. Sin POST por GET o inferencia por importes.
+Movimiento incierto conserva body y clave en CashSurface y permite replay manual
+exacto; incluso recuperación rechazada mantiene intento. Solo recibo válido lo
+confirma, limpia copia resuelta y permite otro comando. Cierre sin respuesta
+conserva ID: GET autorizado de sesiones verifica esa fila. CLOSED muestra
+resultado, OPEN permite revisión manual con conteo conservado; ausencia o error
+no habilitan comandos. Sin POST por GET o inferencia por importes.
 Apertura/creación sin ID confirmado no se reenvían ni buscan coincidencias.
 
 Caja muestra fechas y horas es-PY en America/Asuncion, la zona fija v1 de
@@ -251,6 +249,6 @@ evolucionar esa base explícitamente.
 
 211 pruebas distintas, lint/tipos/formato aprobados, sin nuevos PG/browser/build
 o revisión visual; [[UX-034-VALIDATION-2026-11-02]]. TD-073 sigue parcialmente
-abierta por recarga/Back/Forward SPA/cierre forzado sin recuperación durable.
-La copia solo vive en componente; salir no cancela operaciones. Backend, ledger,
+abierta por recarga/Back/Forward SPA/cierre forzado sin recuperación durable. La
+copia solo vive en componente; salir no cancela operaciones. Backend, ledger,
 auditoría, permisos, cuerpos wire y contratos de idempotencia sin cambios.

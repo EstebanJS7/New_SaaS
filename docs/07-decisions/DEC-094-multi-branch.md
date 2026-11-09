@@ -1,7 +1,8 @@
 ---
 id: DEC-094
 type: decision
-title: Multi-branch operation (branches, staff assignment, cash, stock and reports)
+title:
+  Multi-branch operation (branches, staff assignment, cash, stock and reports)
 status: accepted
 date: 2026-11-03
 related_epics: [EPIC-07, EPIC-10, EPIC-12, EPIC-13, EPIC-18]
@@ -50,16 +51,16 @@ de la clínica, no tiene estado y nada que mueva dinero o stock la referencia
    propietario a la sucursal inicial.
 7. **Sucursal inactiva:** no admite turnos nuevos ni (desde MB-002) aperturas de
    caja ni ventas nuevas. Lo ya registrado no cambia.
-8. **Datos existentes, sin adivinar:** hasta hoy toda clínica operó con una
-   sola sucursal real, así que:
+8. **Datos existentes, sin adivinar:** hasta hoy toda clínica operó con una sola
+   sucursal real, así que:
    - toda membresía existente queda asignada a todas las sucursales existentes;
    - en MB-002 y MB-003, cajas, ventas, compras y stock existentes pasan a la
      sucursal **más antigua** de la clínica (la que creó el alta).
 9. **Caja y ventas (MB-002), reemplaza a DEC-020 en este punto:** cada caja
    pertenece a una sucursal. Una venta se crea en una sucursal y solo se cobra
    con una sesión abierta de una caja de esa sucursal. Cada sucursal puede
-   vincularse a un establecimiento fiscal y punto de expedición: las facturas
-   de sus ventas se numeran allí, y sin vínculo se usa el punto por defecto del
+   vincularse a un establecimiento fiscal y punto de expedición: las facturas de
+   sus ventas se numeran allí, y sin vínculo se usa el punto por defecto del
    perfil fiscal.
 10. **Stock (MB-003):** el saldo es por (ítem, sucursal). Cada movimiento lleva
     su sucursal; una compra se recibe en una sucursal; las transferencias entre
@@ -71,29 +72,28 @@ de la clínica, no tiene estado y nada que mueva dinero o stock la referencia
 
 ## Entregas
 
-| Historia | Alcance |
-| --- | --- |
-| MB-001 | Sucursales (alta, edición, activar/desactivar) y asignación de personal; turnos solo en sucursales asignadas |
-| MB-002 | Cajas y ventas por sucursal; establecimiento fiscal por sucursal |
-| MB-003 | Stock por sucursal, compras y transferencias |
-| MB-004 | Filtro por sucursal en reportes |
+| Historia | Alcance                                                                                                      |
+| -------- | ------------------------------------------------------------------------------------------------------------ |
+| MB-001   | Sucursales (alta, edición, activar/desactivar) y asignación de personal; turnos solo en sucursales asignadas |
+| MB-002   | Cajas y ventas por sucursal; establecimiento fiscal por sucursal                                             |
+| MB-003   | Stock por sucursal, compras y transferencias                                                                 |
+| MB-004   | Filtro por sucursal en reportes                                                                              |
 
 ## Estado
 
 - 2026-11-03: MB-001 y MB-002 entregadas.
-- 2026-11-04: MB-003 entregada. Hasta MB-004, el informe de stock suma todas
-  las sucursales y las transferencias no cuentan como entrada ni salida de la
+- 2026-11-04: MB-003 entregada. Hasta MB-004, el informe de stock suma todas las
+  sucursales y las transferencias no cuentan como entrada ni salida de la
   clínica.
 - 2026-11-05: MB-004 entregada. Con ella se completa esta decisión y se cierra
-  [[TD-052]]. Filtrado por sucursal, un movimiento de transferencia es entrada
-  o salida real de esa sucursal; en «Todas» sigue sin contar.
+  [[TD-052]]. Filtrado por sucursal, un movimiento de transferencia es entrada o
+  salida real de esa sucursal; en «Todas» sigue sin contar.
 - En MB-002 la regla «una sola sesión abierta» pasó a ser por sucursal: el
-  efectivo de una venta va a la única sesión abierta de una caja de su
-  sucursal.
+  efectivo de una venta va a la única sesión abierta de una caja de su sucursal.
 
 ## Consecuencias
 
 - `TD-052` se cierra al terminar MB-004.
 - La prueba que fijaba que `Branch` no tenía rutas
-  (`cross-tenant-isolation.e2e-spec.ts`) se reemplaza por pruebas de
-  aislamiento de las rutas nuevas.
+  (`cross-tenant-isolation.e2e-spec.ts`) se reemplaza por pruebas de aislamiento
+  de las rutas nuevas.

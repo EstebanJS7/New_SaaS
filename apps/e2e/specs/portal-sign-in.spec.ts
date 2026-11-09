@@ -57,7 +57,7 @@ test.describe("the portal sign-in surface", () => {
     await page.goto("/login");
     await page.fill("#login-email", DEMO.staffEmail);
     await page.fill("#login-password", DEMO.staffPassword);
-    await page.getByRole("button", { name: "Sign in" }).click();
+    await page.getByRole("button", { name: "Iniciar sesión" }).click();
     await expect(page).toHaveURL(/\/app$/);
 
     await page.goto(`/${DEMO.tenantSlug}/pets`);

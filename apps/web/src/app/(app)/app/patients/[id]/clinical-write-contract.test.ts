@@ -112,10 +112,18 @@ describe.each(writers)("$kind owned write contract", ({ kind, write, input }) =>
   });
   it("forwards the caller's version unchanged without obtaining a replacement", async () => {
     fetchMock.mockImplementation(() => Promise.resolve(success()));
-    await invoke(patient, record, { ...input, expectedVersion: 2147483647, correctionReason: "Motivo sintético" });
+    await invoke(patient, record, {
+      ...input,
+      expectedVersion: 2147483647,
+      correctionReason: "Motivo sintético",
+    });
     const puts = fetchMock.mock.calls.filter(([, init]) => init?.method === "PUT");
     expect(puts).toHaveLength(1);
-    expect(commandBody(puts[0][1])).toEqual({ ...input, expectedVersion: 2147483647, correctionReason: "Motivo sintético" });
+    expect(commandBody(puts[0][1])).toEqual({
+      ...input,
+      expectedVersion: 2147483647,
+      correctionReason: "Motivo sintético",
+    });
     expect(fetchMock.mock.calls[0][1]?.method).toBe("PUT");
   });
 });

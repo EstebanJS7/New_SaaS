@@ -504,40 +504,38 @@ formularios, detalle completo y POS no se consideran traducidos por esta Story.
 Sin nueva revisión visual, Back/Forward real, teclado/lector de pantalla o
 certificación WCAG. Evidencia: [[UX-011-VALIDATION-2026-10-29]].
 
-
 ## Consistencia staff — UX-029
 
 Alta/edición/detalle con etiquetas y ayudas españolas, errores asociados y foco
 en primer inválido. Lectura de impuestos distingue carga/error/vacío y permite
-GET explícito sin inferir escritura. Precio y umbral usan entrada es-PY con
-coma decimal y miles opcionales con punto (DEC-080); se normalizan por texto a
-wire decimal exacto. No Number, conversión o redondeo en esta frontera UI.
+GET explícito sin inferir escritura. Precio y umbral usan entrada es-PY con coma
+decimal y miles opcionales con punto (DEC-080); se normalizan por texto a wire
+decimal exacto. No Number, conversión o redondeo en esta frontera UI.
 
 Conserva Decimal(14,2)/Decimal(10,3), PYG/USD, precio cero y umbral positivo;
 par importe/moneda y umbral mantienen omisión/null. Valores intactos de edición
 no se reescriben por el cambio de separador. Detalle usa formatter exacto y
 fallback sin precio/umbral, nombres largos y filas adaptables. No se expone
-tracksStock editable ni se cambia el ledger. Alta sigue al formulario de
-edición confirmado y guardar edición vuelve al listado, como antes.
+tracksStock editable ni se cambia el ledger. Alta sigue al formulario de edición
+confirmado y guardar edición vuelve al listado, como antes.
 
-Mensajes de servidor privados nunca se renderizan. Transporte fallido,
-408/5xx o acuse malformado mantienen valores y bloquean el intento, al igual
-que 401/403/404. No retry automático de mutaciones ni idempotencia/CAS nuevos.
-Acuse mínimo exige ID antes de navegar; no valida todo el DTO. Salida explícita
+Mensajes de servidor privados nunca se renderizan. Transporte fallido, 408/5xx o
+acuse malformado mantienen valores y bloquean el intento, al igual que
+401/403/404. No retry automático de mutaciones ni idempotencia/CAS nuevos. Acuse
+mínimo exige ID antes de navegar; no valida todo el DTO. Salida explícita
 confirma descarte y beforeunload advierte, solo en memoria, sin interceptar
 Back/Forward. Búsqueda/contexto UX-011 y desactivación confirmada conservados.
 
-UX-029 done: 314 pruebas dirigidas distintas, lint/tipos/builds y lane real
-6/6 sin retries, con cierre automático. [[UX-029-VALIDATION-2026-11-01]]
-separa simulación, HTTP, PostgreSQL real, navegador y revisión visual. No sustituye
-los límites históricos de producción/TD-014 ni cierra TD-007 global por compartir
+UX-029 done: 314 pruebas dirigidas distintas, lint/tipos/builds y lane real 6/6
+sin retries, con cierre automático. [[UX-029-VALIDATION-2026-11-01]] separa
+simulación, HTTP, PostgreSQL real, navegador y revisión visual. No sustituye los
+límites históricos de producción/TD-014 ni cierra TD-007 global por compartir
 componentes.
-
 
 La comprobación real UX-029 encontró el PUT vacío validado por el contrato
 rechazado como404 por updateMany sin data. CatalogRepository ahora resuelve
 existencia por id+tenant con la transacción recibida cuando no hay cambios
-allowlisted. Se conserva el DTO y updatedAt sin reescribir cantidades/precio;
-el servicio agrega su auditoría con changedFields vacíos en esa misma
-transacción. Desconocidos/foreign siguen404, sin auditoría. No cambia el
-contrato de campos opcionales ni se añade una transición.
+allowlisted. Se conserva el DTO y updatedAt sin reescribir cantidades/precio; el
+servicio agrega su auditoría con changedFields vacíos en esa misma transacción.
+Desconocidos/foreign siguen404, sin auditoría. No cambia el contrato de campos
+opcionales ni se añade una transición.

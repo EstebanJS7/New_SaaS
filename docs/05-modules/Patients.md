@@ -306,18 +306,17 @@ persisted.
 Verification and limitations: [[UX-008-patient-search-pagination]]. No
 migration, new dependency, Core import or Portal behavior change.
 
-
 ## Consistencia staff de identidad — UX-028
 
 Alta/edición en español, campos obligatorios/opcionales y límites actuales con
 ayudas/errores asociados y primer inválido con foco. Catálogo y clientes tienen
 carga, error, vacío y relectura explícita. Conserva el selector existente y
-contratos: alta activa con principal en transacción, inactiva permitida,
-edición por diferencias, null de raza/fecha y día calendario sin desplazamiento.
-La fecha seleccionada también se presenta en es-PY debajo del selector nativo;
-el control mantiene el formato del navegador y rechaza estados incompletos.
-Nombres de taxonomía se muestran como datos del catálogo existente, sin cambiar
-seed ni traducir valores por inferencia.
+contratos: alta activa con principal en transacción, inactiva permitida, edición
+por diferencias, null de raza/fecha y día calendario sin desplazamiento. La
+fecha seleccionada también se presenta en es-PY debajo del selector nativo; el
+control mantiene el formato del navegador y rechaza estados incompletos. Nombres
+de taxonomía se muestran como datos del catálogo existente, sin cambiar seed ni
+traducir valores por inferencia.
 
 Errores de identidad sanitizados sin mensajes privados del servidor. Un comando
 con respuesta perdida, éxito malformado, 408 o 5xx conserva valores y queda

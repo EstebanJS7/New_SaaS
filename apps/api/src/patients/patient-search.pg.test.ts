@@ -10,6 +10,7 @@ import { patientSearchBody } from "./patient-search.dto.js";
 
 const url = process.env.PATIENT_SEARCH_TEST_URL;
 describe.skipIf(!url)("Patient search — real PostgreSQL", () => {
+  if (!url) return;
   const prisma = new PrismaService({ datasources: { db: { url } } });
   const context = new RequestContextService();
   const tenant = randomUUID(),

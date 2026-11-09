@@ -17,16 +17,15 @@ updated: 2026-11-03
 
 ## Objetivo
 
-Que la clínica administre sus sucursales y decida quién trabaja en cada una,
-y que un turno solo pueda darse en una sucursal activa donde trabaja el
+Que la clínica administre sus sucursales y decida quién trabaja en cada una, y
+que un turno solo pueda darse en una sucursal activa donde trabaja el
 profesional. Primera entrega de [[DEC-094]].
 
 ## En alcance
 
 - **Base de datos** (`20261106000001_branch_management`):
-  - `branch` gana `address`, `phone` e `is_active`; nombre de 1 a 120
-    caracteres y único por clínica sin distinguir mayúsculas; trigger que
-    impide borrar.
+  - `branch` gana `address`, `phone` e `is_active`; nombre de 1 a 120 caracteres
+    y único por clínica sin distinguir mayúsculas; trigger que impide borrar.
   - Tabla `membership_branch` con claves foráneas compuestas por clínica.
   - Relleno: cada membresía existente queda en todas las sucursales de su
     clínica.
@@ -40,9 +39,9 @@ profesional. Primera entrega de [[DEC-094]].
   - No se desactiva la última sucursal activa ni una con turnos pendientes.
   - No se le quita a alguien una sucursal donde tiene turnos pendientes.
   - Auditoría con ids solamente.
-- **Invitaciones:** `branchIds` opcional; si se omite, la persona queda en
-  todas las sucursales activas. El alta de clínica asigna al propietario a la
-  sucursal inicial; el seed demo asigna a todo el personal a su sucursal.
+- **Invitaciones:** `branchIds` opcional; si se omite, la persona queda en todas
+  las sucursales activas. El alta de clínica asigna al propietario a la sucursal
+  inicial; el seed demo asigna a todo el personal a su sucursal.
 - **Agenda:**
   - Crear un turno o aprobar una solicitud del portal exige sucursal activa y
     profesional asignado (400 con mensaje en español).
@@ -52,8 +51,8 @@ profesional. Primera entrega de [[DEC-094]].
   - Pantalla Configuración › Sucursales.
   - En Personal, las sucursales de cada persona, un editor por persona y la
     elección en la invitación (solo si hay más de una sucursal).
-  - En la agenda, el formulario de turno y la aprobación ofrecen solo
-    sucursales activas y los profesionales de la sucursal elegida.
+  - En la agenda, el formulario de turno y la aprobación ofrecen solo sucursales
+    activas y los profesionales de la sucursal elegida.
   - Proxies con lista de rutas permitidas `/api/branches` y
     `PUT /api/memberships/:id/branches`.
 

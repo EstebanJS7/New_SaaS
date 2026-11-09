@@ -10,6 +10,7 @@ import { ClinicalRecordsService, type ClinicalRecordsPrisma } from "./clinical.r
 
 const url = process.env.CLINICAL_CREATION_TEST_URL;
 describe.skipIf(!url)("Clinical idempotent creation — disposable PostgreSQL", () => {
+  if (!url) return;
   const prisma = new PrismaService({ datasources: { db: { url } } }),
     context = new RequestContextService();
   const tenant = randomUUID(),

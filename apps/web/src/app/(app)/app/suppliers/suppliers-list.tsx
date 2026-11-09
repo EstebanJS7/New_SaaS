@@ -78,7 +78,9 @@ function SupplierCard({ supplier }: { readonly supplier: Supplier }): JSX.Elemen
       </div>
       <ConfirmActionDialog
         open={confirmDeactivateOpen}
-        onOpenChange={(open) => { if (!open && !mutation.isPending) setConfirmDeactivateOpen(false); }}
+        onOpenChange={(open) => {
+          if (!open && !mutation.isPending) setConfirmDeactivateOpen(false);
+        }}
         title="Desactivar proveedor"
         description="El proveedor dejará de estar disponible para nuevas operaciones. Sus compras y registros se conservarán."
         confirmLabel="Desactivar proveedor"

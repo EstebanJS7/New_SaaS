@@ -38,14 +38,14 @@ entrega de [[DEC-094]] (§11); en este punto reemplaza a [[DEC-062]] y cierra
   - Una sucursal de otra clínica responde igual que una inexistente (404, «La
     sucursal no existe.»). Una sucursal desactivada se acepta: tiene historia.
   - Los reportes veterinarios no aceptan `branchId` (400).
-  - `GET /reports/branches` (`reports.read`): todas las sucursales de la
-    clínica con su estado, para el filtro.
+  - `GET /reports/branches` (`reports.read`): todas las sucursales de la clínica
+    con su estado, para el filtro.
   - Exportación CSV: las mismas reglas que cada reporte; el nombre del archivo
     no cambia.
 - **Web:**
   - Selector «Branch» en esos ocho reportes, con «All branches» por defecto,
-    visible solo si la clínica tiene más de una sucursal. La exportación usa
-    la misma sucursal.
+    visible solo si la clínica tiene más de una sucursal. La exportación usa la
+    misma sucursal.
   - El proxy de reportes acepta `branchId` solo en esos reportes y sirve
     `/api/reports/branches` sin parámetros.
 
@@ -58,8 +58,8 @@ entrega de [[DEC-094]] (§11); en este punto reemplaza a [[DEC-062]] y cierra
 ## Verificación
 
 - API: lista de sucursales; ventas, caja, compras, stock y stock bajo con y sin
-  sucursal; sucursal ajena o inexistente; UUID inválido; sucursal en un
-  reporte veterinario; exportación filtrada; ruta nueva fijada en el probe.
+  sucursal; sucursal ajena o inexistente; UUID inválido; sucursal en un reporte
+  veterinario; exportación filtrada; ruta nueva fijada en el probe.
 - Web: proxy (reenvío y rechazos), selector de sucursal (por defecto, cambio,
   exportación, una sola sucursal, reporte veterinario), build de Next.
 - **Pendiente:** prueba en navegador.

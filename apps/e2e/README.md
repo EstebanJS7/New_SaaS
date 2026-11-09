@@ -30,10 +30,12 @@ A failing run writes a trace; `pnpm --filter @newsaas/e2e e2e:report` opens it.
 
 ## What each spec needs
 
-| spec                              | needs                                                                                |
-| --------------------------------- | ------------------------------------------------------------------------------------ |
-| `staff-sign-in`, `portal-sign-in` | PostgreSQL, Redis, the built API and web                                             |
-| `staff-recovery`                  | the same, plus the **worker** (it mints the token at send time) and an **SMTP sink** |
+| spec                                                      | needs                                                                                |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `staff-sign-in`, `portal-sign-in`                         | PostgreSQL, Redis, the built API and web                                             |
+| `staff-recovery`                                          | the same, plus the **worker** (it mints the token at send time) and an **SMTP sink** |
+| `staff-team`                                              | the same as `staff-recovery`: the invitation's activation link leaves by mail        |
+| `payment-detail`, `sale-reversal`, `recoverable-attempts` | PostgreSQL, Redis, the built API and web                                             |
 
 The recovery spec starts the worker itself and listens on port 2526 as a minimal
 SMTP server, because there is no other place the link exists: the channel fake
@@ -53,6 +55,26 @@ The worker's environment is the complete set a real adapter needs
 `NOTIFICATION_EMAIL_FROM`. The channel module refuses a boot when any of them is
 missing, which is the right rule and which the lane had to learn one variable at
 a time.
+
+### The sales specs prepare through the BFF
+
+The demo seed creates no catalog item, no stock and no cash register, so
+`payment-detail`, `sale-reversal` and `recoverable-attempts` create what they
+sell the way a clinic would — a catalog item, a received purchase, a register —
+through the same `/api/...` proxy the browser uses (`support/staff.ts`). Names
+carry a per-run tag, and counts are taken per item, so the history earlier runs
+left behind never changes an assertion.
+
+A cash payment and a cash refund need **exactly one** open session at the sale's
+branch. The helper closes extra open sessions it finds, and
+`recoverable-attempts` leaves exactly the one it opened.
+
+`recoverable-attempts` loses an answer for real: `page.route` lets the command
+reach the API, which commits it, and drops the connection before the page sees
+the response.
+
+`staff-team` invites a new address each run, for the reason the recovery
+identity is fresh.
 
 ## What it does NOT prove
 

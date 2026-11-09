@@ -296,33 +296,33 @@ Back/Forward real, revisión visual y lector de pantalla no comprobados aquí.
 Offset no congela resultados entre peticiones; no hay búsqueda fonética ni
 promesa de tolerancia a acentos. Evidencia: [[UX-VALIDATION-2026-10-29]].
 
-
 ## Retorno de atención y sugerencia explícita — UX-030, 2026-11-01
 
 POS verifica la cita contra el paciente esperado antes de mostrar su contexto.
-Tras lectura autorizada de vínculos ofrece volver a la misma consulta, con o
-sin cita, usando solo IDs válidos; prioriza el origen persistido. No preselecciona
+Tras lectura autorizada de vínculos ofrece volver a la misma consulta, con o sin
+cita, usando solo IDs válidos; prioriza el origen persistido. No preselecciona
 cliente ni agrega cargos al entrar. El botón de sugerir exige ítem SERVICE
-activo de la lectura actual del catálogo y bloquea mientras se revalida.
-No cambia createSale, completar, importes, impuestos, pagos, caja o stock.
-Lane real verifica creación DRAFT y vínculo explícito/replay, no cobro completo.
+activo de la lectura actual del catálogo y bloquea mientras se revalida. No
+cambia createSale, completar, importes, impuestos, pagos, caja o stock. Lane
+real verifica creación DRAFT y vínculo explícito/replay, no cobro completo.
 TD-071 permanece abierta para incertidumbre de creación sin ID y salida con
-carrito, detectadas por inspección estática. QA [[UX-030-VALIDATION-2026-11-01]].
-
+carrito, detectadas por inspección estática. QA
+[[UX-030-VALIDATION-2026-11-01]].
 
 ## Protección del carrito y creación incierta — UX-031
 
-Implementación verificada (2026-11-01). Carrito/cliente local se conservan y bloquean
-tras creación sin resultado confirmado (transporte, 5xx, recibo sin ID válido).
-No retry ni recuperación por coincidencia de valores. Rechazo definido permite
-corregir; 401/403 bloquean comandos. Enlaces salientes requieren confirmación
-si hay copia local, y no permiten confirmar salida durante comando pendiente.
-Beforeunload ofrece advertencia nativa. Salir descarta solo copia local; nunca
-cancela una venta persistida. Datos CONFIDENTIAL permanecen en memoria de
-componente; sin browser storage, contenido en URL/logs o recibo durable.
-Back/Forward SPA y cierre forzado no están interceptados; recargar pierde copia.
-Creación/completar, precisión, pagos y movimientos mantienen contratos vigentes.
-Evidencia y estado [[UX-031-VALIDATION-2026-11-01]]. No certifica todo POS.
+Implementación verificada (2026-11-01). Carrito/cliente local se conservan y
+bloquean tras creación sin resultado confirmado (transporte, 5xx, recibo sin ID
+válido). No retry ni recuperación por coincidencia de valores. Rechazo definido
+permite corregir; 401/403 bloquean comandos. Enlaces salientes requieren
+confirmación si hay copia local, y no permiten confirmar salida durante comando
+pendiente. Beforeunload ofrece advertencia nativa. Salir descarta solo copia
+local; nunca cancela una venta persistida. Datos CONFIDENTIAL permanecen en
+memoria de componente; sin browser storage, contenido en URL/logs o recibo
+durable. Back/Forward SPA y cierre forzado no están interceptados; recargar
+pierde copia. Creación/completar, precisión, pagos y movimientos mantienen
+contratos vigentes. Evidencia y estado [[UX-031-VALIDATION-2026-11-01]]. No
+certifica todo POS.
 
 Cierre UX-031:184 pruebas distintas y navegador8+5 escenarios aprobados con
 PostgreSQL desechable, builds/verificador, lint/tipos y revisión visual. No una

@@ -11,7 +11,7 @@ permissions:
   [sales.create, sales.read, cash.session.open, cash.movement.create, cash.read]
 branch:
 created: 2026-11-03
-updated: 2026-11-03
+updated: 2026-11-09
 ---
 
 # UX-035 — Intentos recuperables en POS y Caja
@@ -45,7 +45,10 @@ ciegas ni comparar valores. Cierra [[TD-071]] y [[TD-073]] con los límites de
 - [x] Ningún reenvío automático: consultar y reintentar son acciones explícitas,
       y el reintento usa la misma clave.
 - [x] Tras recargar, POS y Caja ofrecen consultar los intentos pendientes.
-- [ ] Respuesta perdida reproducida contra PostgreSQL y navegador.
+- [x] Respuesta perdida reproducida contra PostgreSQL y navegador (live-pg
+      40fcb89; `apps/e2e/specs/recoverable-attempts.spec.ts`: venta con
+      respuesta perdida y recarga, venta que no llegó y reintento, apertura de
+      caja con respuesta perdida y recarga).
 
 ## Verificación
 
@@ -58,6 +61,17 @@ ciegas ni comparar valores. Cierra [[TD-071]] y [[TD-073]] con los límites de
     surface-integrity); nuevos en POS 3, Caja 3, proxy 4, pending-attempts 4;
     next build OK
 No se pudo correr: PostgreSQL real de punta a punta y navegador.
+
+2026-11-09 (PostgreSQL 16 real, suite live-pg, bloque SAL-REV-001/UX-035):
+  venta con clave: 201, consulta por clave tras "perder" la respuesta, replay 200
+    con el mismo id, otro cuerpo 409; una venta, una auditoría sale.created y un
+    registro sale.create
+  apertura con clave: 201, consulta, replay 200, otro importe 409; una sesión y
+    una auditoría cash.session.opened
+  movimiento con clave: consulta por clave devuelve el mismo movimiento
+  otro tenant: 404 en las tres consultas; clave desconocida: 404
+  pnpm test:live-pg completo: 276/276
+Navegador cubierto el 2026-11-09 por specs/recoverable-attempts.spec.ts (3 casos).
 ```
 
 ## Decisiones / ADRs

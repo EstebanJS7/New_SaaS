@@ -10,6 +10,7 @@ import { saleSearchBody } from "./sale-search.dto.js";
 
 const url = process.env.SALE_SEARCH_TEST_URL;
 describe.skipIf(!url)("Sale search — disposable real PostgreSQL", () => {
+  if (!url) return;
   const prisma = new PrismaService({ datasources: { db: { url } } });
   const context = new RequestContextService();
   const tenant = randomUUID(),
@@ -56,7 +57,9 @@ describe.skipIf(!url)("Sale search — disposable real PostgreSQL", () => {
     });
     // MB-002: every sale belongs to a branch of its tenant.
     const branch = await prisma.branch.create({ data: { tenantId: tenant, name: "Synthetic" } });
-    const otherBranch = await prisma.branch.create({ data: { tenantId: other, name: "Synthetic" } });
+    const otherBranch = await prisma.branch.create({
+      data: { tenantId: other, name: "Synthetic" },
+    });
     // Synthetic headers only in the disposable database: no completion, payment or ledger command.
     await prisma.sale.createMany({
       data: Array.from({ length: 25 }, (_, i) => ({

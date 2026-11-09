@@ -11,6 +11,7 @@ import { createStudyBody } from "./clinical.zod.js";
 
 const url = process.env.STUDY_ENTRY_TEST_URL;
 describe.skipIf(!url)("Study commands — disposable PostgreSQL", () => {
+  if (!url) return;
   const prisma = new PrismaService({ datasources: { db: { url } } }),
     context = new RequestContextService();
   const tenant = randomUUID(),
