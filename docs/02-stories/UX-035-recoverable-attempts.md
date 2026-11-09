@@ -45,7 +45,10 @@ ciegas ni comparar valores. Cierra [[TD-071]] y [[TD-073]] con los límites de
 - [x] Ningún reenvío automático: consultar y reintentar son acciones explícitas,
       y el reintento usa la misma clave.
 - [x] Tras recargar, POS y Caja ofrecen consultar los intentos pendientes.
-- [ ] Respuesta perdida reproducida contra PostgreSQL y navegador.
+- [x] Respuesta perdida reproducida contra PostgreSQL y navegador (live-pg
+      40fcb89; `apps/e2e/specs/recoverable-attempts.spec.ts`: venta con
+      respuesta perdida y recarga, venta que no llegó y reintento, apertura de
+      caja con respuesta perdida y recarga).
 
 ## Verificación
 
@@ -68,7 +71,7 @@ No se pudo correr: PostgreSQL real de punta a punta y navegador.
   movimiento con clave: consulta por clave devuelve el mismo movimiento
   otro tenant: 404 en las tres consultas; clave desconocida: 404
   pnpm test:live-pg completo: 276/276
-Pendiente: la mitad de navegador del criterio (recarga real con respuesta perdida).
+Navegador cubierto el 2026-11-09 por specs/recoverable-attempts.spec.ts (3 casos).
 ```
 
 ## Decisiones / ADRs
