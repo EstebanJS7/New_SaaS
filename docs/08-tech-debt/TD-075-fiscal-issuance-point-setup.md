@@ -33,4 +33,4 @@ la nota de crédito.»
 Definir quién declara el punto (operador al dar de alta la clínica, o una
 pantalla de configuración fiscal), con validación contra los rangos de timbrado
 activos, auditoría y permisos. Es una decisión de alcance: proponerla en
-`docs/07-decisions/` antes de implementarla.
+`docs/07-decisions/` antes de implementarla. Propuesta: [[DEC-095]].
