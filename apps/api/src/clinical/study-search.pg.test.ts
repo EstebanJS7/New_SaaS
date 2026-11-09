@@ -10,6 +10,7 @@ import { studySearchBody } from "./study-search.dto.js";
 
 const url = process.env.STUDY_SEARCH_TEST_URL;
 describe.skipIf(!url)("Studies — disposable real PostgreSQL", () => {
+  if (!url) return;
   const prisma = new PrismaService({ datasources: { db: { url } } });
   const context = new RequestContextService();
   const tenant = randomUUID(),

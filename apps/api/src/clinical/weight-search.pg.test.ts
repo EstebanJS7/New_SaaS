@@ -10,6 +10,7 @@ import { weightSearchBody } from "./weight-search.dto.js";
 
 const url = process.env.WEIGHT_SEARCH_TEST_URL;
 describe.skipIf(!url)("Weights — disposable real PostgreSQL", () => {
+  if (!url) return;
   const prisma = new PrismaService({ datasources: { db: { url } } });
   const context = new RequestContextService();
   const tenant = randomUUID(),

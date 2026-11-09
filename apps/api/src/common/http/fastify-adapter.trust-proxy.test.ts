@@ -17,16 +17,17 @@ afterEach(async () => {
 
 async function ipSeen(trustedProxies: readonly string[] | undefined, forwardedFor?: string) {
   const adapter = createFastifyAdapter(trustedProxies === undefined ? {} : { trustedProxies });
-  instance = adapter.getInstance() as unknown as FastifyInstance;
-  instance.get("/ip", (request) => ({ ip: request.ip }));
-  await instance.ready();
-  const response = await instance.inject({
+  const fastify = adapter.getInstance();
+  instance = fastify;
+  fastify.get("/ip", (request) => ({ ip: request.ip }));
+  await fastify.ready();
+  const response = await fastify.inject({
     method: "GET",
     url: "/ip",
     remoteAddress: "172.30.0.5",
     headers: forwardedFor === undefined ? {} : { "x-forwarded-for": forwardedFor },
   });
-  return (response.json() as { ip: string }).ip;
+  return response.json<{ ip: string }>().ip;
 }
 
 describe("trusted proxies (DEC-093)", () => {

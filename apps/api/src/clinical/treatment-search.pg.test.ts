@@ -10,6 +10,7 @@ import { treatmentSearchBody } from "./treatment-search.dto.js";
 
 const url = process.env.TREATMENT_SEARCH_TEST_URL;
 describe.skipIf(!url)("Treatments — disposable real PostgreSQL", () => {
+  if (!url) return;
   const prisma = new PrismaService({ datasources: { db: { url } } });
   const context = new RequestContextService();
   const tenant = randomUUID(),

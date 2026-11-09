@@ -13,6 +13,7 @@ import { weightSearchBody } from "./weight-search.dto.js";
 
 const url = process.env.WEIGHT_ENTRY_TEST_URL;
 describe.skipIf(!url)("Weight commands — disposable PostgreSQL", () => {
+  if (!url) return;
   const prisma = new PrismaService({ datasources: { db: { url } } }),
     context = new RequestContextService();
   const tenant = randomUUID(),

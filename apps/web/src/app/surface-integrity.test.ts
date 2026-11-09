@@ -125,7 +125,9 @@ describe("surface integrity", () => {
   });
 
   it("resolves every internal link to a page, or a documented non-page route", () => {
-    const dead = [...LINKS].filter((link) => {
+    const dead = [...LINKS].filter((href) => {
+      // A query string selects state on a page; it never names another page.
+      const link = href.split("?")[0] || "/";
       // Not a page: the BFF proxies, anchors, and the branding asset endpoint.
       if (link.startsWith("/api/") || link.startsWith("/branding")) return false;
       if (link in ENTRY_POINTS) return false;

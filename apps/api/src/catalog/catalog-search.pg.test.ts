@@ -9,6 +9,7 @@ import { catalogSearchBody } from "./catalog-search.dto.js";
 
 const url = process.env.CATALOG_SEARCH_TEST_URL;
 describe.skipIf(!url)("Catalog search — disposable real PostgreSQL", () => {
+  if (!url) return;
   const prisma = new PrismaService({ datasources: { db: { url } } });
   const context = new RequestContextService();
   const tenant = randomUUID(),
