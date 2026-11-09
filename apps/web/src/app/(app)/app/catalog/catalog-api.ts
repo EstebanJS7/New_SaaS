@@ -68,9 +68,39 @@ export interface CatalogItem {
    * caller that does not read the threshold is not forced to model it.
    */
   readonly lowStockThreshold?: string | null;
+  /**
+   * FISC-020 T9 (DEC-097): the declared SIFEN unit code (e.g. `"77"`), or
+   * `null` when none is declared. Optional for the same subset reason as the
+   * threshold; absent and `null` both read as "no unit declared".
+   */
+  readonly unitOfMeasureCode?: string | null;
   readonly isActive: boolean;
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+/**
+ * One SIFEN unit of measure (FISC-020 T9): protocol reference data served by
+ * `GET /catalog/units-of-measure`. `description` is the artifact's own Spanish
+ * label (e.g. `"Unidad - UNI"`), shown to staff as-is.
+ */
+export interface UnitOfMeasure {
+  readonly code: string;
+  readonly description: string;
+  readonly symbol: string;
+}
+
+function isUnitOfMeasure(value: unknown): value is UnitOfMeasure {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "code" in value &&
+    typeof value.code === "string" &&
+    "description" in value &&
+    typeof value.description === "string" &&
+    "symbol" in value &&
+    typeof value.symbol === "string"
+  );
 }
 
 /**
@@ -190,6 +220,19 @@ export function getCatalogItem(id: string): Promise<CatalogItem> {
 /** Reads the GLOBAL seeded rate list; the catalog form selects from it. */
 export function listTaxRates(): Promise<TaxRate[]> {
   return getJson("/tax-rates");
+}
+
+/**
+ * Reads the SIFEN unit list the catalog form selects from, sorted by its es-PY
+ * label. Malformed entries are dropped rather than rendered.
+ */
+export async function listUnitsOfMeasure(): Promise<UnitOfMeasure[]> {
+  const payload = await getJson<unknown>("/units-of-measure");
+  if (!Array.isArray(payload)) return [];
+  return payload
+    .filter(isUnitOfMeasure)
+    .map(({ code, description, symbol }) => ({ code, description, symbol }))
+    .sort((left, right) => left.description.localeCompare(right.description, "es-PY"));
 }
 
 export function createCatalogItem(body: unknown): Promise<CatalogItem> {

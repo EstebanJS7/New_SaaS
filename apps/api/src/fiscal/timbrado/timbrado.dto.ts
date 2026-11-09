@@ -1,6 +1,8 @@
 import type {
   EmitterProfileView,
   EstablishmentView,
+  IssuancePointDeclarationView,
+  IssuancePointView,
   FiscalRangeVoidView,
   TimbradoRangeView,
 } from "./timbrado.service.js";
@@ -12,12 +14,40 @@ export interface EmitterProfileResponse {
   readonly regimeCode: number | null;
   readonly legalName: string;
   readonly tradeName: string | null;
+  /**
+   * FISC-018 review: additive; `null` while none is declared. The identity
+   * document number is CONFIDENTIAL personal data (docs/05-modules/Fiscal.md).
+   */
+  readonly responsibleIssuer: ResponsibleIssuerResponse | null;
   readonly transactionType: number | null;
   readonly taxType: number;
   readonly emissionType: number;
   readonly activities: { code: string; description: string }[];
+  /** FISC-017: additive; `null` while the tenant has declared no point. */
+  readonly issuancePoint: IssuancePointResponse | null;
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+export interface ResponsibleIssuerResponse {
+  readonly type: number;
+  readonly typeName: string;
+  readonly id: string;
+  readonly name: string;
+  readonly role: string;
+}
+
+export interface IssuancePointResponse {
+  readonly establishmentId: string;
+  readonly establishmentCode: string;
+  readonly expeditionPoint: string;
+  readonly documentType: number;
+}
+
+/** FISC-017: what `PUT /fiscal/emitter-profile/issuance-point` answers. */
+export interface IssuancePointDeclarationResponse {
+  readonly issuancePoint: IssuancePointResponse;
+  readonly creditNoteRangeActive: boolean;
 }
 
 export interface EstablishmentResponse {
@@ -25,9 +55,17 @@ export interface EstablishmentResponse {
   readonly code: string;
   readonly addressLine: string;
   readonly houseNumber: number;
+  /** FISC-018 review: the fields below `houseNumber` are additive (INTERNAL). */
+  readonly addressComplement1: string | null;
+  readonly addressComplement2: string | null;
   readonly departmentCode: number;
   readonly districtCode: number | null;
+  readonly districtName: string | null;
   readonly cityCode: number;
+  readonly cityName: string;
+  readonly phone: string;
+  readonly email: string;
+  readonly branchName: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -84,12 +122,41 @@ export function toEmitterProfileResponse(view: EmitterProfileView): EmitterProfi
     regimeCode: view.regimeCode,
     legalName: view.legalName,
     tradeName: view.tradeName,
+    responsibleIssuer:
+      view.responsibleIssuer === null
+        ? null
+        : {
+            type: view.responsibleIssuer.type,
+            typeName: view.responsibleIssuer.typeName,
+            id: view.responsibleIssuer.id,
+            name: view.responsibleIssuer.name,
+            role: view.responsibleIssuer.role,
+          },
     transactionType: view.transactionType,
     taxType: view.taxType,
     emissionType: view.emissionType,
     activities: view.activities.map(({ code, description }) => ({ code, description })),
+    issuancePoint: view.issuancePoint === null ? null : toIssuancePointResponse(view.issuancePoint),
     createdAt: view.createdAt.toISOString(),
     updatedAt: view.updatedAt.toISOString(),
+  };
+}
+
+export function toIssuancePointResponse(view: IssuancePointView): IssuancePointResponse {
+  return {
+    establishmentId: view.establishmentId,
+    establishmentCode: view.establishmentCode,
+    expeditionPoint: view.expeditionPoint,
+    documentType: view.documentType,
+  };
+}
+
+export function toIssuancePointDeclarationResponse(
+  view: IssuancePointDeclarationView
+): IssuancePointDeclarationResponse {
+  return {
+    issuancePoint: toIssuancePointResponse(view.issuancePoint),
+    creditNoteRangeActive: view.creditNoteRangeActive,
   };
 }
 
@@ -99,9 +166,16 @@ export function toEstablishmentResponse(view: EstablishmentView): EstablishmentR
     code: view.code,
     addressLine: view.addressLine,
     houseNumber: view.houseNumber,
+    addressComplement1: view.addressComplement1,
+    addressComplement2: view.addressComplement2,
     departmentCode: view.departmentCode,
     districtCode: view.districtCode,
+    districtName: view.districtName,
     cityCode: view.cityCode,
+    cityName: view.cityName,
+    phone: view.phone,
+    email: view.email,
+    branchName: view.branchName,
     createdAt: view.createdAt.toISOString(),
     updatedAt: view.updatedAt.toISOString(),
   };

@@ -10,6 +10,18 @@ export const CUSTOMER_DTO_SCHEMA_VERSION = 1;
 export const customerKind = z.enum(["INDIVIDUAL", "COMPANY"]);
 export type CustomerKind = z.infer<typeof customerKind>;
 
+/**
+ * The receptor's declared fiscal operation type (`iTiOpe`, `D202`).
+ *
+ * [[DEC-057]] Q2 chose a DECLARATION over a derivation: `B2G` depends on the
+ * DNIT's own registry of state entities and `B2B`/`B2C`/`B2F` on facts only the
+ * tenant knows, so the four names are exactly what `customer.fiscal_operation_type`
+ * stores and nothing here infers one from `kind`. `null`/absent is the
+ * intentional "not declared" state the issuance read refuses on.
+ */
+export const fiscalOperationType = z.enum(["B2B", "B2C", "B2G", "B2F"]);
+export type FiscalOperationType = z.infer<typeof fiscalOperationType>;
+
 const displayNameField = z.string().min(1).max(200);
 
 /**
@@ -23,6 +35,7 @@ const createIndividualBody = z
     firstName: z.string().min(1).max(100).optional(),
     lastName: z.string().min(1).max(100).optional(),
     documentNumber: z.string().min(1).max(50).optional(),
+    fiscalOperationType: fiscalOperationType.nullish(),
   })
   .strict();
 
@@ -36,6 +49,7 @@ const createCompanyBody = z
     displayName: displayNameField,
     legalName: z.string().min(1).max(200),
     taxId: z.string().min(1).max(32),
+    fiscalOperationType: fiscalOperationType.nullish(),
   })
   .strict();
 
@@ -59,6 +73,12 @@ const updateCustomerPayloadSchema = z
     documentNumber: z.string().min(1).max(50).optional(),
     legalName: z.string().min(1).max(200).optional(),
     taxId: z.string().min(1).max(32).optional(),
+    /**
+     * ABSENT preserves the stored declaration; `null` is the explicit
+     * "undeclared" state. `.nullish()` is what keeps those two apart, and
+     * `buildUpdateData` only forwards the field when it is present.
+     */
+    fiscalOperationType: fiscalOperationType.nullish(),
   })
   .strict();
 

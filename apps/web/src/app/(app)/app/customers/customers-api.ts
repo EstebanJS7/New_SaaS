@@ -1,5 +1,30 @@
 "use client";
 
+/**
+ * The receptor's declared fiscal operation type (`iTiOpe`, `D202`).
+ *
+ * [[DEC-057]] Q2 chose a declaration over a derivation, so these four names are
+ * the whole contract; `null` is the intentional "not declared" state and the
+ * client never infers one from `kind`.
+ */
+export type FiscalOperationType = "B2B" | "B2C" | "B2G" | "B2F";
+
+/** es-PY labels for the four declarations, named as the protocol names them. */
+export const FISCAL_OPERATION_TYPES: readonly {
+  readonly value: FiscalOperationType;
+  readonly label: string;
+}[] = [
+  { value: "B2B", label: "B2B — Empresa a empresa" },
+  { value: "B2C", label: "B2C — Empresa a consumidor final" },
+  { value: "B2G", label: "B2G — Empresa a gobierno" },
+  { value: "B2F", label: "B2F — Empresa al exterior" },
+];
+
+/** The stored declaration's label, or the explicit undeclared state. */
+export function fiscalOperationTypeLabel(value: FiscalOperationType | null): string {
+  return FISCAL_OPERATION_TYPES.find((option) => option.value === value)?.label ?? "Sin declarar";
+}
+
 export interface Customer {
   readonly id: string;
   readonly tenantId: string;
@@ -10,6 +35,7 @@ export interface Customer {
   readonly firstName: string | null;
   readonly lastName: string | null;
   readonly documentNumber: string | null;
+  readonly fiscalOperationType: FiscalOperationType | null;
   readonly isActive: boolean;
   readonly createdAt: string;
   readonly updatedAt: string;

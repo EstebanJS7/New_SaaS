@@ -63,6 +63,13 @@ export const NAV_LINKS: readonly NavLink[] = [
     icon: "building",
   },
   { href: "/app/settings/branding", label: "Marca", section: "Configuración", icon: "settings" },
+  {
+    href: "/app/settings/fiscal",
+    label: "Configuración fiscal",
+    section: "Configuración",
+    icon: "receipt",
+    requiredFeature: "fiscal",
+  },
 ];
 
 // UX only: unknown entitlements never hide a working destination.

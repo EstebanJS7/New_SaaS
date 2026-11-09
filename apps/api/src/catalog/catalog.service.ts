@@ -2,11 +2,17 @@ import { Inject, Injectable } from "@nestjs/common";
 // Value imports (not `import type`): `PrismaService` is the DI token and
 // `Prisma` provides the exact `Decimal` type used by the price/rate literals.
 import { Prisma, PrismaService } from "@newsaas/database";
+import { DTE_UNITS_OF_MEASURE } from "../fiscal/units-of-measure.js";
 import { DomainError } from "@newsaas/shared";
 import { AuditWriter, type AuditAppendTx } from "../audit/audit-writer.service.js";
 import { RequestContextService } from "../context/request-context.service.js";
 import { PermissionResolver } from "../rbac/permission-resolver.service.js";
-import type { CatalogItemKindDto, CatalogItemResponse, TaxRateResponse } from "./catalog.dto.js";
+import type {
+  CatalogItemKindDto,
+  CatalogItemResponse,
+  TaxRateResponse,
+  UnitOfMeasureResponse,
+} from "./catalog.dto.js";
 import { CATALOG_PERMISSIONS, type CatalogPermission } from "./catalog.permissions.js";
 import {
   CATALOG_DTO_SCHEMA_VERSION,
@@ -93,6 +99,7 @@ const CATALOG_UPDATE_FIELD_ORDER = [
   "referencePriceCurrency",
   "tracksStock",
   "lowStockThreshold",
+  "unitOfMeasureCode",
 ] as const;
 
 /**
@@ -196,6 +203,7 @@ function toCatalogItemResponse(
       row.lowStockThreshold === null
         ? null
         : decimalToFixedScaleString(row.lowStockThreshold, CATALOG_QUANTITY_SCALE),
+    unitOfMeasureCode: row.unitOfMeasureCode ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -217,6 +225,8 @@ function buildCreateData(input: CreateCatalogItemInput): CatalogItemCreateData {
     referencePriceCurrency: input.referencePriceCurrency ?? null,
     tracksStock: input.tracksStock ?? defaultTracksStockForKind(input.kind),
     lowStockThreshold: input.lowStockThreshold ?? null,
+    // No default unit: an omitted unit is NULL until staff declare one (DEC-097).
+    unitOfMeasureCode: input.unitOfMeasureCode ?? null,
   };
 }
 
@@ -243,6 +253,10 @@ function buildUpdateData(input: UpdateCatalogItemInput): CatalogItemUpdateData {
   if (input.lowStockThreshold !== undefined) {
     data.lowStockThreshold = input.lowStockThreshold;
   }
+  // Same for the declared unit: absent leaves it, `null` clears it.
+  if (input.unitOfMeasureCode !== undefined) {
+    data.unitOfMeasureCode = input.unitOfMeasureCode;
+  }
   return data;
 }
 
@@ -265,6 +279,9 @@ function createChangedFields(input: CreateCatalogItemInput): string[] {
   }
   if (input.lowStockThreshold !== undefined && input.lowStockThreshold !== null) {
     fields.push("lowStockThreshold");
+  }
+  if (input.unitOfMeasureCode !== undefined && input.unitOfMeasureCode !== null) {
+    fields.push("unitOfMeasureCode");
   }
   return fields;
 }
@@ -315,6 +332,20 @@ export class CatalogService {
     await this.requirePermission(CATALOG_PERMISSIONS.read);
     const rows = await this.prisma.taxRate.findMany({ orderBy: { code: "asc" } });
     return rows.map(toTaxRateResponse);
+  }
+
+  /**
+   * The SIFEN units of measure an item may declare (FISC-020 T9), in the
+   * artifact's own order. Protocol reference data, identical for every tenant;
+   * gated by `catalog.read` like the tax-rate list.
+   */
+  async listUnitsOfMeasure(): Promise<UnitOfMeasureResponse[]> {
+    await this.requirePermission(CATALOG_PERMISSIONS.read);
+    return [...DTE_UNITS_OF_MEASURE.values()].map(({ code, description, symbol }) => ({
+      code,
+      description,
+      symbol,
+    }));
   }
 
   /** The caller tenant's items, optionally filtered by kind and/or active flag. */

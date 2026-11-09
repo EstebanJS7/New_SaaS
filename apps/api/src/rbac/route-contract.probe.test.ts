@@ -204,6 +204,8 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "POST /catalog/search",
   "POST /catalog",
   "GET /catalog/tax-rates",
+  // FISC-020 T9 (DEC-097): the SIFEN unit list the catalog form selects from.
+  "GET /catalog/units-of-measure",
   "GET /catalog/:id",
   "PUT /catalog/:id",
   "POST /catalog/:id/deactivate",
@@ -274,6 +276,11 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   // from the surface and a generic status patch is forbidden.
   "GET /notifications/deliveries",
   "GET /notifications/deliveries/:id",
+  "GET /fiscal/tax-classifications",
+  "PUT /fiscal/tax-classifications/:rateCode",
+  "GET /fiscal/csc",
+  "POST /fiscal/csc",
+  "POST /fiscal/csc/:id/retire",
   "POST /fiscal/signing-material",
   "GET /fiscal/signing-material",
   "POST /fiscal/signing-material/:id/retire",
@@ -283,6 +290,8 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   // numbers without issuing anything.
   "PUT /fiscal/emitter-profile",
   "GET /fiscal/emitter-profile",
+  // EPIC-16 FISC-017 — the issuance-point declaration (DEC-095 delivery 1).
+  "PUT /fiscal/emitter-profile/issuance-point",
   "GET /fiscal/establishments",
   "POST /fiscal/establishments",
   "PUT /fiscal/establishments/:id",
@@ -506,6 +515,7 @@ const CATALOG_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "GET /catalog": CATALOG_PERMISSIONS.read,
   "POST /catalog/search": CATALOG_PERMISSIONS.read,
   "GET /catalog/tax-rates": CATALOG_PERMISSIONS.read,
+  "GET /catalog/units-of-measure": CATALOG_PERMISSIONS.read,
   "GET /catalog/:id": CATALOG_PERMISSIONS.read,
   "POST /catalog": CATALOG_PERMISSIONS.create,
   "PUT /catalog/:id": CATALOG_PERMISSIONS.update,
@@ -623,6 +633,11 @@ const CASH_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
  * creation and its lifecycle is the two explicit commands (DEC-038, DEC-043).
  */
 const FISCAL_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
+  "GET /fiscal/tax-classifications": FISCAL_PERMISSIONS.profileManage,
+  "PUT /fiscal/tax-classifications/:rateCode": FISCAL_PERMISSIONS.profileManage,
+  "GET /fiscal/csc": FISCAL_PERMISSIONS.signingMaterialManage,
+  "POST /fiscal/csc": FISCAL_PERMISSIONS.signingMaterialManage,
+  "POST /fiscal/csc/:id/retire": FISCAL_PERMISSIONS.signingMaterialManage,
   "POST /fiscal/signing-material": FISCAL_PERMISSIONS.signingMaterialManage,
   "GET /fiscal/signing-material": FISCAL_PERMISSIONS.signingMaterialManage,
   "POST /fiscal/signing-material/:id/retire": FISCAL_PERMISSIONS.signingMaterialManage,
@@ -631,6 +646,7 @@ const FISCAL_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   // radius — a range's counter cannot be lowered once used.
   "PUT /fiscal/emitter-profile": FISCAL_PERMISSIONS.profileManage,
   "GET /fiscal/emitter-profile": FISCAL_PERMISSIONS.profileManage,
+  "PUT /fiscal/emitter-profile/issuance-point": FISCAL_PERMISSIONS.profileManage,
   "GET /fiscal/establishments": FISCAL_PERMISSIONS.profileManage,
   "POST /fiscal/establishments": FISCAL_PERMISSIONS.profileManage,
   "PUT /fiscal/establishments/:id": FISCAL_PERMISSIONS.profileManage,

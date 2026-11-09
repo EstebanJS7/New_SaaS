@@ -45,6 +45,12 @@ export interface CatalogItemRow {
    * performed on it here.
    */
   lowStockThreshold: Prisma.Decimal | null;
+  /**
+   * FISC-020 T9 (DEC-097): the declared SIFEN unit code, `VARCHAR(4)` with no
+   * database default. Optional in this structural row so a test double that
+   * predates the column keeps compiling; the service projects absent as `null`.
+   */
+  unitOfMeasureCode?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -76,6 +82,8 @@ export interface CatalogItemCreateData {
    * cannot reach the column. Omitted or `null` means "not monitored".
    */
   readonly lowStockThreshold?: Prisma.Decimal | string | null;
+  /** Declared SIFEN unit code; omitted or `null` stores NULL (no default). */
+  readonly unitOfMeasureCode?: string | null;
 }
 
 /**
@@ -97,6 +105,8 @@ export interface CatalogItemUpdateData {
    * explicit `null` clears it ("stop monitoring"), and a value replaces it.
    */
   lowStockThreshold?: Prisma.Decimal | string | null;
+  /** Absent leaves the declared unit untouched; `null` clears it. */
+  unitOfMeasureCode?: string | null;
 }
 
 /** Supported read filters for {@link CatalogRepository.list}. */
@@ -163,6 +173,9 @@ function buildUpdateData(input: CatalogItemUpdateData): CatalogItemUpdateData {
   if (input.tracksStock !== undefined) data.tracksStock = input.tracksStock;
   if (input.lowStockThreshold !== undefined) {
     data.lowStockThreshold = input.lowStockThreshold;
+  }
+  if (input.unitOfMeasureCode !== undefined) {
+    data.unitOfMeasureCode = input.unitOfMeasureCode;
   }
   return data;
 }

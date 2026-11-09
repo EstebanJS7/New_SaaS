@@ -35,8 +35,26 @@ export interface EmitterProfileRow {
   transactionType: number | null;
   taxType: number;
   emissionType: number;
+  /**
+   * The declared issuance point (DEC-057 Q4): all three or none, by CHECK.
+   * Written only by `writeIssuancePoint`; the profile upsert never touches it.
+   */
+  defaultEstablishmentId: string | null;
+  defaultExpeditionPoint: string | null;
+  defaultDocumentType: number | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+/** The three declaration columns, which only the FISC-017 command writes. */
+export type IssuancePointColumns =
+  "defaultEstablishmentId" | "defaultExpeditionPoint" | "defaultDocumentType";
+
+/** A declared issuance point: the key of exactly one ACTIVE range. */
+export interface IssuancePointKey {
+  readonly establishmentId: string;
+  readonly expeditionPoint: string;
+  readonly documentType: number;
 }
 
 /** One row of `fiscal_emitter_activity`. */
@@ -181,6 +199,9 @@ export interface FiscalProfileDelegate {
       orderBy: [{ establishmentId: "asc" }, { documentType: "asc" }, { series: "asc" }];
     }): Promise<TimbradoRangeRow[]>;
     findFirst(args: { where: { tenantId: string; id: string } }): Promise<TimbradoRangeRow | null>;
+    count(args: {
+      where: IssuancePointKey & { tenantId: string; status: TimbradoRangeRow["status"] };
+    }): Promise<number>;
     create(args: { data: Record<string, unknown> }): Promise<TimbradoRangeRow>;
     updateMany(args: {
       where: {
@@ -278,6 +299,37 @@ export class FiscalProfileRepository {
   async findRange(id: string, tx: FiscalProfileTx = this.prisma): Promise<TimbradoRangeRow | null> {
     return tx.fiscalTimbradoRange.findFirst({
       where: { tenantId: this.context.requireTenantId(), id },
+    });
+  }
+
+  /**
+   * How many ACTIVE ranges the key matches, tenant-scoped, in the caller's
+   * transaction — the same count the allocation validates a declaration with.
+   */
+  async countActiveRanges(key: IssuancePointKey, tx: FiscalProfileTx): Promise<number> {
+    return tx.fiscalTimbradoRange.count({
+      where: {
+        tenantId: this.context.requireTenantId(),
+        establishmentId: key.establishmentId,
+        expeditionPoint: key.expeditionPoint,
+        documentType: key.documentType,
+        status: "ACTIVE",
+      },
+    });
+  }
+
+  /**
+   * Writes the three declaration columns together, and nothing else: the CHECK
+   * makes them all-or-nothing, and the profile's own fields belong to the upsert.
+   */
+  async writeIssuancePoint(key: IssuancePointKey, tx: FiscalProfileTx): Promise<EmitterProfileRow> {
+    return tx.fiscalEmitterProfile.update({
+      where: { tenantId: this.context.requireTenantId() },
+      data: {
+        defaultEstablishmentId: key.establishmentId,
+        defaultExpeditionPoint: key.expeditionPoint,
+        defaultDocumentType: key.documentType,
+      },
     });
   }
 
@@ -479,7 +531,10 @@ export class FiscalProfileRepository {
 
   /** The profile and its activities, written together: activities are replaced. */
   async upsertProfile(
-    data: Omit<EmitterProfileRow, "id" | "tenantId" | "createdAt" | "updatedAt">,
+    data: Omit<
+      EmitterProfileRow,
+      "id" | "tenantId" | "createdAt" | "updatedAt" | IssuancePointColumns
+    >,
     activities: readonly { code: string; description: string }[],
     tx: FiscalProfileTx
   ): Promise<EmitterProfileRow> {

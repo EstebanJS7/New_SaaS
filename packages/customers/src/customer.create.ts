@@ -2,7 +2,7 @@ import type { AuditAppendInput, AuditAppendTx } from "@newsaas/database";
 import { CONTACT_DTO_SCHEMA_VERSION } from "./customer-contact.zod.js";
 import type { CreateCustomerContactInput } from "./customer-contact.zod.js";
 import { CUSTOMER_DTO_SCHEMA_VERSION } from "./customer.zod.js";
-import type { CreateCustomerInput, CustomerKind } from "./customer.zod.js";
+import type { CreateCustomerInput, CustomerKind, FiscalOperationType } from "./customer.zod.js";
 import type { CustomerResponse } from "./customer.dto.js";
 
 /**
@@ -31,6 +31,12 @@ export interface CustomerRow {
   firstName: string | null;
   lastName: string | null;
   documentNumber: string | null;
+  /**
+   * The receptor's declared `iTiOpe` (`D202`), or `null` when the tenant has not
+   * declared one. [[DEC-057]] Q2 chose the declaration over a derivation, so a
+   * null here is a real state rather than a missing default.
+   */
+  fiscalOperationType: FiscalOperationType | null;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -46,6 +52,8 @@ export interface CustomerCreateData {
   readonly firstName?: string | null;
   readonly lastName?: string | null;
   readonly documentNumber?: string | null;
+  /** Omitted and `null` both mean "undeclared": no value is ever invented here. */
+  readonly fiscalOperationType?: FiscalOperationType | null;
 }
 
 /**
@@ -171,6 +179,7 @@ export function toCustomerResponse(row: CustomerRow): CustomerResponse {
     firstName: row.firstName,
     lastName: row.lastName,
     documentNumber: row.documentNumber,
+    fiscalOperationType: row.fiscalOperationType,
     isActive: row.isActive,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -178,6 +187,10 @@ export function toCustomerResponse(row: CustomerRow): CustomerResponse {
 }
 
 function buildCreateData(tenantId: string, input: CreateCustomerInput): CustomerCreateData {
+  // The declaration is written exactly as declared: absent/null stays undeclared
+  // and `kind` is never used to infer one ([[DEC-057]] Q2).
+  const fiscalOperationType = input.fiscalOperationType ?? null;
+
   if (input.kind === "COMPANY") {
     return {
       tenantId,
@@ -188,6 +201,7 @@ function buildCreateData(tenantId: string, input: CreateCustomerInput): Customer
       firstName: null,
       lastName: null,
       documentNumber: null,
+      fiscalOperationType,
     };
   }
 
@@ -200,6 +214,7 @@ function buildCreateData(tenantId: string, input: CreateCustomerInput): Customer
     documentNumber: input.documentNumber ?? null,
     legalName: null,
     taxId: null,
+    fiscalOperationType,
   };
 }
 
@@ -239,6 +254,11 @@ function changedFieldsForCreate(input: CreateCustomerInput): string[] {
     if (input.documentNumber !== undefined) fields.push("documentNumber");
   } else {
     fields.push("legalName", "taxId");
+  }
+  // The audit row names a declaration only when one was made: an undeclared
+  // create wrote no fiscal fact and its changed-field list says so.
+  if (input.fiscalOperationType !== undefined && input.fiscalOperationType !== null) {
+    fields.push("fiscalOperationType");
   }
   return fields;
 }

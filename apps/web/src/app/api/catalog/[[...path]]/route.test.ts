@@ -148,6 +148,11 @@ const SERVED_ROUTES = [
   { method: "GET", pathname: "/api/catalog", upstream: "/catalog" },
   { method: "GET", pathname: `/api/catalog/${ITEM_ID}`, upstream: `/catalog/${ITEM_ID}` },
   { method: "GET", pathname: "/api/catalog/tax-rates", upstream: "/catalog/tax-rates" },
+  {
+    method: "GET",
+    pathname: "/api/catalog/units-of-measure",
+    upstream: "/catalog/units-of-measure",
+  },
   { method: "POST", pathname: "/api/catalog", upstream: "/catalog" },
   {
     method: "POST",
@@ -371,6 +376,46 @@ describe("/api/catalog proxy", () => {
     expect(init.headers["x-request-id"]).toBe("req-abc");
     expect(init.headers).not.toHaveProperty("authorization");
     expect(init.headers).not.toHaveProperty("x-forwarded-for");
+  });
+
+  it("keeps the SIFEN unit list read-only and query-free (FISC-020 T9)", async () => {
+    for (const method of ["POST", "PUT"] as const) {
+      const response = await dispatch(
+        method,
+        mockNextRequest({ pathname: "/api/catalog/units-of-measure", body: byteStream(["{}"]) })
+      );
+      expect(response.status, method).toBe(405);
+    }
+    const withQuery = await dispatch(
+      "GET",
+      mockNextRequest({ pathname: "/api/catalog/units-of-measure", search: "?code=77" })
+    );
+    expect(withQuery.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("forwards unitOfMeasureCode, including an explicit null, byte-for-byte on create and update", async () => {
+    const cases = [
+      {
+        method: "POST" as const,
+        pathname: "/api/catalog",
+        json: '{"kind":"PRODUCT","name":"A","taxRateId":"x","unitOfMeasureCode":"77"}',
+      },
+      {
+        method: "PUT" as const,
+        pathname: `/api/catalog/${ITEM_ID}`,
+        json: '{"unitOfMeasureCode":null}',
+      },
+    ];
+    for (const scenario of cases) {
+      fetchMock.mockReset();
+      fetchMock.mockResolvedValue(upstreamOk({ id: ITEM_ID }));
+      await dispatch(
+        scenario.method,
+        mockNextRequest({ pathname: scenario.pathname, body: byteStream([scenario.json]) })
+      );
+      expect(fetchInit().body).toBe(scenario.json);
+    }
   });
 
   it("forwards the PUT body as text, so the API parses the caller's exact JSON", async () => {

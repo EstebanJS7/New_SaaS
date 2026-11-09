@@ -16,6 +16,7 @@ import {
   CATALOG_ITEM_KINDS,
   CATALOG_REFERENCE_PRICE_CURRENCIES,
   listTaxRates,
+  listUnitsOfMeasure,
   catalogWriteBlocked,
   userFacingCatalogError,
   type CatalogItem,
@@ -62,6 +63,8 @@ interface CatalogFormValues {
   referencePriceAmount: string;
   referencePriceCurrency: CatalogReferencePriceCurrency;
   lowStockThreshold: string;
+  /** Declared SIFEN unit code; empty means "no unit declared" (never a default). */
+  unitOfMeasureCode: string;
 }
 
 function emptyValues(): CatalogFormValues {
@@ -73,6 +76,7 @@ function emptyValues(): CatalogFormValues {
     referencePriceCurrency: "PYG",
     // Empty means "not monitored": the API stores NULL, never a zero.
     lowStockThreshold: "",
+    unitOfMeasureCode: "",
   };
 }
 
@@ -89,6 +93,7 @@ function itemToValues(item: CatalogItem): CatalogFormValues {
       item.lowStockThreshold === null || item.lowStockThreshold === undefined
         ? ""
         : formatEsPyDecimalInput(item.lowStockThreshold),
+    unitOfMeasureCode: item.unitOfMeasureCode ?? "",
   };
 }
 
@@ -110,6 +115,11 @@ function buildCreateBody(values: CatalogFormValues): Record<string, unknown> {
   const threshold = values.lowStockThreshold.trim();
   if (threshold) {
     body.lowStockThreshold = threshold;
+  }
+
+  // FISC-020 T9: the unit is sent only when one is selected; no default unit.
+  if (values.unitOfMeasureCode) {
+    body.unitOfMeasureCode = values.unitOfMeasureCode;
   }
 
   return body;
@@ -149,6 +159,13 @@ function buildUpdateBody(values: CatalogFormValues, item: CatalogItem): Record<s
     body.lowStockThreshold = threshold;
   }
 
+  // Unit: untouched is omitted (the stored unit stays), a cleared selection
+  // sends an explicit null, and a different code replaces it.
+  const currentUnit = item.unitOfMeasureCode ?? "";
+  if (values.unitOfMeasureCode !== currentUnit) {
+    body.unitOfMeasureCode = values.unitOfMeasureCode === "" ? null : values.unitOfMeasureCode;
+  }
+
   return body;
 }
 
@@ -184,6 +201,17 @@ export function CatalogForm({ item, onSubmit, isPending, error }: CatalogFormPro
     retry: false,
   });
   const unavailable = rates.isPending || rates.isError || !rates.data?.length;
+  // The unit is optional: it is read only once the required rates are usable,
+  // and a failed unit read disables only its selector — it never blocks saving
+  // the rest of the item.
+  const units = useQuery({
+    queryKey: ["catalog", "units-of-measure"],
+    queryFn: listUnitsOfMeasure,
+    retry: false,
+    enabled: !unavailable,
+  });
+  const unitOptions = units.data ?? [];
+  const unitListed = unitOptions.some((unit) => unit.code === values.unitOfMeasureCode);
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (sending.current || isPending || blocked || unavailable) return;
@@ -454,6 +482,39 @@ export function CatalogForm({ item, onSubmit, isPending, error }: CatalogFormPro
             >
               {errors.lowStockThreshold ??
                 "Cantidad opcional, hasta 3 decimales. El reporte de stock bajo compara el saldo con este umbral. Vacío significa sin seguimiento; vaciarlo al editar quita el umbral. Esto no modifica existencias. Usá coma decimal y, opcionalmente, puntos de miles."}
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <label htmlFor="unitOfMeasureCode" className="text-sm font-medium">
+              Unidad de medida (opcional)
+            </label>
+            <select
+              id="unitOfMeasureCode"
+              aria-describedby="unitOfMeasureCode-hint"
+              value={values.unitOfMeasureCode}
+              onChange={(event) =>
+                setValues((previous) => ({ ...previous, unitOfMeasureCode: event.target.value }))
+              }
+              disabled={isPending || !units.isSuccess}
+              className={selectClassName}
+            >
+              <option value="">Sin unidad declarada</option>
+              {values.unitOfMeasureCode && !unitListed && (
+                <option value={values.unitOfMeasureCode}>
+                  Código SIFEN {values.unitOfMeasureCode}
+                </option>
+              )}
+              {unitOptions.map((unit) => (
+                <option key={unit.code} value={unit.code}>
+                  {unit.description}
+                </option>
+              ))}
+            </select>
+            <p id="unitOfMeasureCode-hint" className="text-xs text-muted-foreground">
+              {units.isError
+                ? "No pudimos cargar las unidades de medida. La unidad actual se conserva."
+                : "Unidad del catálogo SIFEN que se informa en la factura electrónica. Quitarla al editar deja el artículo sin unidad declarada."}
             </p>
           </div>
 

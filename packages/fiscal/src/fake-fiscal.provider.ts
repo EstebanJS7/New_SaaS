@@ -18,6 +18,13 @@ import type {
 export interface FakeFiscalProviderOptions {
   readonly outcomes?: readonly FiscalIssueOutcome[];
   /**
+   * DEC-095 / FISC-019: when true the fake asks for a signed document like the
+   * real adapter, so the worker builds, signs and gates the DE (certificate,
+   * CSC, CDC) before the fake answers. Default false keeps a demo tenant without
+   * an emitter profile issuable (ADR-009).
+   */
+  readonly requiresSignedDocument?: boolean;
+  /**
    * The ordered answers {@link FakeFiscalProvider.query} returns; the last entry
    * repeats. It is a scripted outcome and simulates no protocol detail (DEC-048):
    * the adapter decides which service to ask, and the fake only decides what
@@ -62,7 +69,7 @@ export class FakeFiscalProvider implements FiscalProviderPort {
    * covers `cancel` and `voidRange` too, and both ignore the request's document
    * field exactly as a provider that declares `false` may.
    */
-  readonly requiresSignedDocument = false;
+  readonly requiresSignedDocument: boolean;
   private calls = 0;
   private queryCalls = 0;
   private cancelCalls = 0;
@@ -77,6 +84,7 @@ export class FakeFiscalProvider implements FiscalProviderPort {
   private readonly clock: () => Date;
 
   constructor(options: FakeFiscalProviderOptions = {}) {
+    this.requiresSignedDocument = options.requiresSignedDocument ?? false;
     this.outcomes = options.outcomes?.length ? options.outcomes : ["APPROVED"];
     this.queryOutcomes = options.queryOutcomes?.length ? options.queryOutcomes : ["APPROVED"];
     this.cancelOutcomes = options.cancelOutcomes?.length ? options.cancelOutcomes : ["CANCELLED"];
@@ -153,7 +161,7 @@ export class FakeFiscalProvider implements FiscalProviderPort {
     });
   }
 
-  issue(_request: FiscalIssueRequest): Promise<FiscalIssueResult> {
+  issue(request: FiscalIssueRequest): Promise<FiscalIssueResult> {
     this.calls += 1;
     const index = this.calls;
     const outcome = this.outcomes[Math.min(index - 1, this.outcomes.length - 1)];
@@ -179,7 +187,10 @@ export class FakeFiscalProvider implements FiscalProviderPort {
       outcome,
       externalId,
       providerReference,
-      cdc: null,
+      // An approval confirms the identity the signed document already carries
+      // (its CDC); echoing it is not inventing one, and the worker's result write
+      // must not overwrite the stored, write-once CDC with null.
+      cdc: approved ? (request.document?.cdc ?? null) : null,
       reasonCode,
       reason: reasonCode === null ? null : `Simulated ${outcome.toLowerCase()}`,
       retryAfterMs,

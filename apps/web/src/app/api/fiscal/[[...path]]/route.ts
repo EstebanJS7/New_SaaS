@@ -5,19 +5,209 @@ import { STAFF_SESSION_COOKIE } from "@/lib/session-cookie";
 export const dynamic = "force-dynamic";
 const DEFAULT_API_URL = "http://localhost:3001";
 const WEB_FISCAL_PREFIX = "/api/fiscal";
-type FiscalMethod = "GET" | "POST";
-type FiscalPathShape = "fiscalList" | "fiscalItem" | "fiscalIssue" | "fiscalCancel";
-const FISCAL_QUERY_KEYS: Readonly<Record<FiscalPathShape, readonly string[]>> = {
+type FiscalMethod = "GET" | "POST" | "PUT";
+type FiscalPathShape =
+  | "fiscalList"
+  | "fiscalItem"
+  | "fiscalIssue"
+  | "fiscalCancel"
+  | "profileRead"
+  | "profileSave"
+  | "issuancePointDeclare"
+  | "establishmentList"
+  | "establishmentCreate"
+  | "establishmentUpdate"
+  | "rangeList"
+  | "rangeCreate"
+  | "rangeRetire"
+  | "secretRead"
+  | "certificateUpload"
+  | "secretRetire"
+  | "cscLoad"
+  | "taxList"
+  | "taxSave";
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** A path segment that must be a resource id; it travels only as a UUID. */
+const ID_SEGMENT = ":id";
+interface FiscalRoute {
+  readonly method: FiscalMethod;
+  readonly segments: readonly string[];
+  readonly shape: FiscalPathShape;
+  /** The API prefix: the documents controller is `/fiscal-documents`, FISC-011's is `/fiscal`. */
+  readonly upstreamPrefix: "" | "/fiscal";
+}
+/**
+ * The ALLOWLIST: every pair this proxy forwards, and nothing else. FISC-018 adds the
+ * fiscal settings screen's routes (profile, issuance point, establishments, ranges
+ * list/create/retire) with the API's own methods. FISC-019 adds secret metadata,
+ * CSC and streamed certificate uploads; FISC-020 adds tax declarations. Range
+ * void stays API-only.
+ */
+const FISCAL_ROUTES: readonly FiscalRoute[] = [
+  { method: "GET", segments: ["signing-material"], shape: "secretRead", upstreamPrefix: "/fiscal" },
+  {
+    method: "POST",
+    segments: ["signing-material"],
+    shape: "certificateUpload",
+    upstreamPrefix: "/fiscal",
+  },
+  {
+    method: "POST",
+    segments: ["signing-material", ID_SEGMENT, "retire"],
+    shape: "secretRetire",
+    upstreamPrefix: "/fiscal",
+  },
+  { method: "GET", segments: ["csc"], shape: "secretRead", upstreamPrefix: "/fiscal" },
+  { method: "POST", segments: ["csc"], shape: "cscLoad", upstreamPrefix: "/fiscal" },
+  {
+    method: "POST",
+    segments: ["csc", ID_SEGMENT, "retire"],
+    shape: "secretRetire",
+    upstreamPrefix: "/fiscal",
+  },
+  { method: "GET", segments: ["tax-classifications"], shape: "taxList", upstreamPrefix: "/fiscal" },
+  {
+    method: "PUT",
+    segments: ["tax-classifications", ":rateCode"],
+    shape: "taxSave",
+    upstreamPrefix: "/fiscal",
+  },
+  { method: "GET", segments: ["fiscal-documents"], shape: "fiscalList", upstreamPrefix: "" },
+  { method: "POST", segments: ["fiscal-documents"], shape: "fiscalIssue", upstreamPrefix: "" },
+  {
+    method: "GET",
+    segments: ["fiscal-documents", ID_SEGMENT],
+    shape: "fiscalItem",
+    upstreamPrefix: "",
+  },
+  {
+    method: "POST",
+    segments: ["fiscal-documents", ID_SEGMENT, "cancel"],
+    shape: "fiscalCancel",
+    upstreamPrefix: "",
+  },
+  {
+    method: "GET",
+    segments: ["emitter-profile"],
+    shape: "profileRead",
+    upstreamPrefix: "/fiscal",
+  },
+  {
+    method: "PUT",
+    segments: ["emitter-profile"],
+    shape: "profileSave",
+    upstreamPrefix: "/fiscal",
+  },
+  {
+    method: "PUT",
+    segments: ["emitter-profile", "issuance-point"],
+    shape: "issuancePointDeclare",
+    upstreamPrefix: "/fiscal",
+  },
+  {
+    method: "GET",
+    segments: ["establishments"],
+    shape: "establishmentList",
+    upstreamPrefix: "/fiscal",
+  },
+  {
+    method: "POST",
+    segments: ["establishments"],
+    shape: "establishmentCreate",
+    upstreamPrefix: "/fiscal",
+  },
+  {
+    method: "PUT",
+    segments: ["establishments", ID_SEGMENT],
+    shape: "establishmentUpdate",
+    upstreamPrefix: "/fiscal",
+  },
+  {
+    method: "GET",
+    segments: ["timbrado-ranges"],
+    shape: "rangeList",
+    upstreamPrefix: "/fiscal",
+  },
+  {
+    method: "POST",
+    segments: ["timbrado-ranges"],
+    shape: "rangeCreate",
+    upstreamPrefix: "/fiscal",
+  },
+  {
+    method: "POST",
+    segments: ["timbrado-ranges", ID_SEGMENT, "retire"],
+    shape: "rangeRetire",
+    upstreamPrefix: "/fiscal",
+  },
+];
+const FISCAL_QUERY_KEYS: Partial<Record<FiscalPathShape, readonly string[]>> = {
   fiscalList: ["status"],
-  fiscalItem: [],
-  fiscalIssue: [],
-  fiscalCancel: [],
 };
+const PROFILE_KEYS = [
+  "ruc",
+  "checkDigit",
+  "taxpayerType",
+  "regimeCode",
+  "legalName",
+  "tradeName",
+  "responsibleIssuer",
+  "transactionType",
+  "taxType",
+  "emissionType",
+  "activities",
+] as const;
+const ESTABLISHMENT_KEYS = [
+  "code",
+  "addressLine",
+  "houseNumber",
+  "addressComplement1",
+  "addressComplement2",
+  "departmentCode",
+  "district",
+  "cityCode",
+  "cityName",
+  "phone",
+  "email",
+  "branchName",
+] as const;
+const ESTABLISHMENT_CONTRACT = { keys: ESTABLISHMENT_KEYS, message: "Invalid establishment body." };
+/**
+ * The top-level keys each body may carry. Values are the API's Zod to validate; a
+ * PRESENT body with any other key (a `tenantId`, a `status`) is refused here.
+ */
 const FISCAL_BODY_CONTRACTS: Partial<
   Record<FiscalPathShape, { keys: readonly string[]; message: string }>
 > = {
   fiscalIssue: { keys: ["invoiceId"], message: "Invalid fiscal document create body." },
   fiscalCancel: { keys: ["reason"], message: "Invalid fiscal document cancel body." },
+  profileSave: { keys: PROFILE_KEYS, message: "Invalid emitter fiscal profile body." },
+  issuancePointDeclare: {
+    keys: ["establishmentId", "expeditionPoint", "documentType"],
+    message: "Invalid issuance point declaration body.",
+  },
+  establishmentCreate: ESTABLISHMENT_CONTRACT,
+  establishmentUpdate: ESTABLISHMENT_CONTRACT,
+  rangeCreate: {
+    keys: [
+      "establishmentId",
+      "expeditionPoint",
+      "documentType",
+      "series",
+      "timbradoNumber",
+      "rangeFrom",
+      "rangeTo",
+      "validityStart",
+    ],
+    message: "Invalid timbrado range body.",
+  },
+  rangeRetire: { keys: ["reason"], message: "Invalid retirement body." },
+  secretRetire: { keys: ["reason"], message: "Invalid retirement body." },
+  cscLoad: { keys: ["environment", "idCsc", "value"], message: "Invalid CSC body." },
+  taxSave: {
+    keys: ["affectation", "proportionality"],
+    message: "Invalid tax classification body.",
+  },
 };
 function notFound(): NextResponse {
   return NextResponse.json(
@@ -40,21 +230,51 @@ function unauthenticated(): NextResponse {
     { status: 401 }
   );
 }
-function fiscalPathShape(
-  segments: readonly string[],
-  method: FiscalMethod
-): FiscalPathShape | null {
-  if (segments.length === 1 && segments[0] === "fiscal-documents")
-    return method === "GET" ? "fiscalList" : "fiscalIssue";
-  if (segments.length === 2 && segments[0] === "fiscal-documents" && method === "GET")
-    return "fiscalItem";
-  if (
-    segments.length === 3 &&
-    segments[0] === "fiscal-documents" &&
-    segments[2] === "cancel" &&
-    method === "POST"
-  )
-    return "fiscalCancel";
+function methodNotAllowed(allow: readonly FiscalMethod[]): NextResponse {
+  return NextResponse.json(
+    {
+      error: { code: "METHOD_NOT_ALLOWED", message: "Fiscal route does not accept this method." },
+    },
+    { status: 405, headers: { allow: allow.join(", ") } }
+  );
+}
+type ShapeMatch =
+  { route: FiscalRoute } | { invalidId: true } | { allow: readonly FiscalMethod[] } | null;
+function shapeMatches(route: FiscalRoute, segments: readonly string[]): "valid" | "badId" | null {
+  if (route.segments.length !== segments.length) return null;
+  const literalsMatch = route.segments.every(
+    (expected, index) =>
+      expected === ID_SEGMENT || expected === ":rateCode" || expected === segments[index]
+  );
+  if (!literalsMatch) return null;
+  const idsValid = route.segments.every((expected, index) =>
+    expected === ID_SEGMENT
+      ? UUID.test(segments[index] ?? "")
+      : expected !== ":rateCode" || /^[A-Z0-9_]{1,50}$/.test(segments[index] ?? "")
+  );
+  return idsValid ? "valid" : "badId";
+}
+/**
+ * The route a request matches. A path that matches a route except for a non-UUID
+ * id is a 400 (the id is malformed); a path or method no route admits is a 404 —
+ * except a PUT on a valid `fiscal-documents` shape, which is a 405 with `Allow`:
+ * the answer Next.js gave before FISC-018 exported `PUT` from this proxy.
+ */
+function matchFiscalRoute(segments: readonly string[], method: FiscalMethod): ShapeMatch {
+  let invalidId = false;
+  for (const route of FISCAL_ROUTES) {
+    if (route.method !== method) continue;
+    const match = shapeMatches(route, segments);
+    if (match === "valid") return { route };
+    if (match === "badId") invalidId = true;
+  }
+  if (invalidId) return { invalidId: true };
+  if (method === "PUT" && segments[0] === "fiscal-documents") {
+    const allow = FISCAL_ROUTES.filter((route) => shapeMatches(route, segments) === "valid").map(
+      (route) => route.method
+    );
+    if (allow.length > 0) return { allow };
+  }
   return null;
 }
 function resolveFiscalQuery(
@@ -64,9 +284,10 @@ function resolveFiscalQuery(
 ): string | null {
   const keys = [...params.keys()];
   if (keys.length === 0) return "";
-  if (method !== "GET" || keys.some((key) => !FISCAL_QUERY_KEYS[shape].includes(key))) return null;
+  const allowed = FISCAL_QUERY_KEYS[shape] ?? [];
+  if (method !== "GET" || keys.some((key) => !allowed.includes(key))) return null;
   const forwarded = new URLSearchParams();
-  for (const key of FISCAL_QUERY_KEYS[shape]) {
+  for (const key of allowed) {
     const value = params.get(key);
     if (value !== null && value.length > 0) forwarded.set(key, value);
   }
@@ -84,11 +305,18 @@ function resolveFiscalPath(request: NextRequest, method: FiscalMethod): PathReso
   const segments = remainder.length === 0 ? [] : remainder.slice(1).split("/");
   if (segments.some((segment) => !segment || segment === "." || segment === ".."))
     return { ok: false, response: invalidPath() };
-  const shape = fiscalPathShape(segments, method);
-  if (shape === null) return { ok: false, response: notFound() };
+  const match = matchFiscalRoute(segments, method);
+  if (match === null) return { ok: false, response: notFound() };
+  if ("invalidId" in match) return { ok: false, response: invalidPath() };
+  if ("allow" in match) return { ok: false, response: methodNotAllowed(match.allow) };
+  const { shape, upstreamPrefix } = match.route;
   const query = resolveFiscalQuery(request.nextUrl.searchParams, shape, method);
   if (query === null) return { ok: false, response: notFound() };
-  return { ok: true, path: `/${segments.map(encodeURIComponent).join("/")}${query}`, shape };
+  return {
+    ok: true,
+    path: `${upstreamPrefix}/${segments.map(encodeURIComponent).join("/")}${query}`,
+    shape,
+  };
 }
 function parseJsonObject(text: string): Record<string, unknown> | null {
   let value: unknown;
@@ -107,7 +335,7 @@ async function resolveFiscalBody(
   method: FiscalMethod
 ): Promise<{ ok: true; body: string | undefined } | { ok: false; response: NextResponse }> {
   const contract = FISCAL_BODY_CONTRACTS[shape];
-  if (method !== "POST" || contract === undefined) return { ok: true, body: undefined };
+  if (method === "GET" || contract === undefined) return { ok: true, body: undefined };
   const text = await request.text();
   if (!text.trim()) return { ok: true, body: undefined };
   const parsed = parseJsonObject(text);
@@ -124,12 +352,26 @@ async function proxyFiscalRequest(
   const cookieStore = await cookies();
   const session = cookieStore.get(STAFF_SESSION_COOKIE);
   if (session === undefined || session.value.length === 0) return unauthenticated();
-  const bodyResolution = await resolveFiscalBody(request, resolution.shape, method);
+  const multipart = resolution.shape === "certificateUpload";
+  const contentType = request.headers.get("content-type") ?? "";
+  if (
+    multipart &&
+    (!/^multipart\/form-data\s*;/i.test(contentType) ||
+      !/boundary=/i.test(contentType) ||
+      !request.body)
+  ) {
+    return invalidBody("A multipart signing container is required.");
+  }
+  // Only the API parses the certificate/password. The BFF never buffers either.
+  const bodyResolution = multipart
+    ? { ok: true as const, body: request.body ?? undefined }
+    : await resolveFiscalBody(request, resolution.shape, method);
   if (!bodyResolution.ok) return bodyResolution.response;
   const headers: Record<string, string> = { cookie: `${STAFF_SESSION_COOKIE}=${session.value}` };
   const requestId = request.headers.get("x-request-id");
   if (requestId) headers["x-request-id"] = requestId;
-  if (bodyResolution.body !== undefined) headers["content-type"] = "application/json";
+  if (bodyResolution.body !== undefined)
+    headers["content-type"] = multipart ? contentType : "application/json";
   const response = await fetch(
     `${process.env.NEXT_PUBLIC_API_URL ?? DEFAULT_API_URL}${resolution.path}`,
     {
@@ -137,6 +379,7 @@ async function proxyFiscalRequest(
       headers,
       body: bodyResolution.body,
       cache: "no-store",
+      ...(multipart ? { duplex: "half" as const } : {}),
     }
   );
   const responseHeaders: Record<string, string> = {
@@ -151,4 +394,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 }
 export async function POST(request: NextRequest): Promise<NextResponse> {
   return proxyFiscalRequest(request, "POST");
+}
+export async function PUT(request: NextRequest): Promise<NextResponse> {
+  return proxyFiscalRequest(request, "PUT");
 }

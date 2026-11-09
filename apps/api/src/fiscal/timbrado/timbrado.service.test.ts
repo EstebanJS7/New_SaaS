@@ -20,19 +20,22 @@ import {
 } from "@newsaas/fiscal";
 import { FIXTURE_CERTIFICATE_PEM, FIXTURE_PRIVATE_KEY_PEM } from "@newsaas/fiscal/testing";
 import { FISCAL_PERMISSIONS } from "../fiscal.permissions.js";
-import type {
-  FiscalProfileClient,
+import {
+  type FiscalProfileClient,
   FiscalProfileRepository,
-  FiscalProfileWriteTx,
-  FiscalRangeVoidWriteRow,
-  RecordRangeVoidInput,
-  TimbradoRangeRow,
+  type FiscalProfileWriteTx,
+  type FiscalRangeVoidWriteRow,
+  type RecordRangeVoidInput,
+  type TimbradoRangeRow,
 } from "./timbrado.repository.js";
 import {
   assertRangeVoidable,
   buildInutilizacionEventDocument,
   FISCAL_ESTABLISHMENT_SAVED_ACTION,
+  FISCAL_ISSUANCE_POINT_DECLARED_ACTION,
   FISCAL_PROFILE_SAVED_ACTION,
+  issuancePointAmbiguousRangeMessage,
+  issuancePointNoRangeMessage,
   FISCAL_RANGE_CREATED_ACTION,
   FISCAL_RANGE_RETIRED_ACTION,
   FISCAL_RANGE_VOIDED_ACTION,
@@ -85,6 +88,9 @@ function buildClient(overrides: Partial<Record<string, unknown>> = {}) {
     transactionType: 1,
     taxType: 1,
     emissionType: 1,
+    defaultEstablishmentId: null,
+    defaultExpeditionPoint: null,
+    defaultDocumentType: null,
     createdAt: new Date("2026-10-07T00:00:00Z"),
     updatedAt: new Date("2026-10-07T00:00:00Z"),
   };
@@ -201,12 +207,13 @@ function buildService(
     permissions?: string[];
     audit?: { append: ReturnType<typeof vi.fn> };
     materials?: readonly { certificatePem: string; certificateSubject: string }[];
+    repository?: FiscalProfileRepository;
   } = {}
 ) {
   const audit = overrides.audit ?? { append: vi.fn().mockResolvedValue({}) };
   const service = new FiscalProfileService(
     client,
-    buildRepository(client) as unknown as FiscalProfileRepository,
+    overrides.repository ?? (buildRepository(client) as unknown as FiscalProfileRepository),
     {
       requireTenantId: () => TENANT,
       requireUserProfileId: () => ACTOR,
@@ -470,6 +477,444 @@ describe("the reads", () => {
     const { service } = buildService(client);
     expect((await service.listEstablishments())[0]?.code).toBe("001");
     expect((await service.listRanges())[0]?.timbradoNumber).toBe("12345678");
+  });
+
+  // FISC-018 review: the edit forms prefill what the PUT replaces, so the reads
+  // return every saved field, not a subset the operator has to retype.
+  it("returns the responsible issuer as one object, or null while none is declared", async () => {
+    expect((await buildService(client).service.getProfile()).responsibleIssuer).toBeNull();
+    const reader = client as unknown as {
+      fiscalEmitterProfile: { findUnique: (args: unknown) => Promise<Record<string, unknown>> };
+    };
+    const profileRow = await reader.fiscalEmitterProfile.findUnique({});
+    const { client: withIssuer } = buildClient({
+      fiscalEmitterProfile: {
+        findUnique: () =>
+          Promise.resolve({
+            ...profileRow,
+            responsibleIssuerType: 1,
+            responsibleIssuerTypeName: "Cédula paraguaya",
+            responsibleIssuerId: "1234567",
+            responsibleIssuerName: "Ana Pérez",
+            responsibleIssuerRole: "Contadora",
+          }),
+        create: () => Promise.resolve(null),
+        update: () => Promise.resolve(null),
+      },
+    });
+    expect((await buildService(withIssuer).service.getProfile()).responsibleIssuer).toEqual({
+      type: 1,
+      typeName: "Cédula paraguaya",
+      id: "1234567",
+      name: "Ana Pérez",
+      role: "Contadora",
+    });
+  });
+
+  it("returns every saved establishment field", async () => {
+    const [view] = await buildService(client).service.listEstablishments();
+    expect(view).toMatchObject({
+      addressComplement1: null,
+      addressComplement2: null,
+      districtCode: null,
+      districtName: null,
+      cityName: "ASUNCION",
+      phone: "021123456",
+      email: "fiscal@vetsur.example",
+      branchName: null,
+    });
+  });
+});
+
+/**
+ * FISC-017 — the issuance-point declaration, driven through the REAL repository
+ * over a stateful fake client: the tenant scoping of every read and the exact
+ * columns the write touches are part of what is under test, so neither may be
+ * replaced by a canned answer.
+ */
+const OTHER_TENANT = "44444444-4444-4444-8444-444444444444";
+const SECOND_ESTABLISHMENT_ID = "55555555-5555-4555-8555-555555555555";
+const FOREIGN_ESTABLISHMENT_ID = "66666666-6666-4666-8666-666666666666";
+
+interface RangeFixture {
+  readonly tenantId: string;
+  readonly establishmentId: string;
+  readonly expeditionPoint: string;
+  readonly documentType: number;
+  readonly status: TimbradoRangeRow["status"];
+}
+
+const activeRange = (overrides: Partial<RangeFixture> = {}): RangeFixture => ({
+  tenantId: TENANT,
+  establishmentId: ESTABLISHMENT_ID,
+  expeditionPoint: "001",
+  documentType: 1,
+  status: "ACTIVE",
+  ...overrides,
+});
+
+const POINT_INPUT = {
+  establishmentId: ESTABLISHMENT_ID,
+  expeditionPoint: "001",
+  documentType: 1,
+} as const;
+
+function buildDeclarationHarness(
+  options: {
+    profile?: boolean;
+    ranges?: readonly RangeFixture[];
+    declared?: { establishmentId: string; expeditionPoint: string; documentType: number };
+  } = {}
+) {
+  const profileWrites: Record<string, unknown>[] = [];
+  const rangeCounts: Record<string, unknown>[] = [];
+  let profile: Record<string, unknown> | null =
+    options.profile === false
+      ? null
+      : {
+          id: "p1",
+          tenantId: TENANT,
+          ruc: "80012345",
+          checkDigit: "6",
+          taxpayerType: 2,
+          regimeCode: 8,
+          legalName: "Clínica Veterinaria del Sur S.A.",
+          tradeName: null,
+          responsibleIssuerType: null,
+          responsibleIssuerTypeName: null,
+          responsibleIssuerId: null,
+          responsibleIssuerName: null,
+          responsibleIssuerRole: null,
+          transactionType: 1,
+          taxType: 1,
+          emissionType: 1,
+          defaultEstablishmentId: options.declared?.establishmentId ?? null,
+          defaultExpeditionPoint: options.declared?.expeditionPoint ?? null,
+          defaultDocumentType: options.declared?.documentType ?? null,
+          createdAt: new Date("2026-10-07T00:00:00Z"),
+          updatedAt: new Date("2026-10-07T00:00:00Z"),
+        };
+  const establishments = [
+    { id: ESTABLISHMENT_ID, tenantId: TENANT, code: "001" },
+    { id: SECOND_ESTABLISHMENT_ID, tenantId: TENANT, code: "002" },
+    // The same code in another tenant: a scoped read must never reach it.
+    { id: FOREIGN_ESTABLISHMENT_ID, tenantId: OTHER_TENANT, code: "001" },
+  ].map((row) => ({ ...row, createdAt: new Date(0), updatedAt: new Date(0) }));
+  const ranges = options.ranges ?? [];
+  const matches = (row: object, where: object): boolean =>
+    Object.entries(where).every(([key, value]) => (row as Record<string, unknown>)[key] === value);
+
+  const client = {
+    fiscalEmitterProfile: {
+      findUnique: ({ where }: { where: { tenantId: string } }) =>
+        Promise.resolve(
+          profile !== null && profile.tenantId === where.tenantId
+            ? { ...profile, activities: [] }
+            : null
+        ),
+      create: () => Promise.reject(new Error("no profile is created here")),
+      update: ({ where, data }: { where: { tenantId: string }; data: Record<string, unknown> }) => {
+        if (profile?.tenantId !== where.tenantId) {
+          return Promise.reject(new Error("update outside the tenant's profile"));
+        }
+        profileWrites.push(data);
+        profile = { ...profile, ...data };
+        return Promise.resolve(profile);
+      },
+    },
+    fiscalEmitterActivity: {
+      deleteMany: () => Promise.resolve({ count: 0 }),
+      createMany: () => Promise.resolve({ count: 1 }),
+    },
+    fiscalEstablishment: {
+      findFirst: ({ where }: { where: object }) =>
+        Promise.resolve(establishments.find((row) => matches(row, where)) ?? null),
+    },
+    fiscalTimbradoRange: {
+      count: ({ where }: { where: Record<string, unknown> }) => {
+        rangeCounts.push(where);
+        return Promise.resolve(ranges.filter((row) => matches(row, where)).length);
+      },
+    },
+    $transaction: async <T>(work: (tx: FiscalProfileWriteTx) => Promise<T>): Promise<T> =>
+      work(client),
+  } as unknown as FiscalProfileClient;
+
+  const repository = new FiscalProfileRepository(client, {
+    requireTenantId: () => TENANT,
+  } as never);
+  return {
+    client,
+    repository,
+    profileWrites,
+    rangeCounts,
+    currentProfile: () => profile,
+  };
+}
+
+describe("FiscalProfileService.declareIssuancePoint — the gates (FISC-017)", () => {
+  it("refuses a tenant without the fiscal capability before reading anything", async () => {
+    const harness = buildDeclarationHarness({ ranges: [activeRange()] });
+    const { service, audit } = buildService(harness.client, {
+      entitled: false,
+      repository: harness.repository,
+    });
+    await expect(service.declareIssuancePoint(POINT_INPUT)).rejects.toMatchObject({
+      code: "FEATURE_NOT_ENTITLED",
+    });
+    expect(harness.profileWrites).toEqual([]);
+    expect(harness.rangeCounts).toEqual([]);
+    expect(audit.append).not.toHaveBeenCalled();
+  });
+
+  it("refuses a caller without fiscal.profile.manage", async () => {
+    const harness = buildDeclarationHarness({ ranges: [activeRange()] });
+    const { service, audit } = buildService(harness.client, {
+      permissions: [FISCAL_PERMISSIONS.rangeVoid],
+      repository: harness.repository,
+    });
+    await expect(service.declareIssuancePoint(POINT_INPUT)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+    expect(harness.profileWrites).toEqual([]);
+    expect(audit.append).not.toHaveBeenCalled();
+  });
+});
+
+describe("FiscalProfileService.declareIssuancePoint — not found (FISC-017)", () => {
+  it("answers NOT_FOUND when the tenant has no fiscal profile", async () => {
+    const harness = buildDeclarationHarness({ profile: false, ranges: [activeRange()] });
+    const { service, audit } = buildService(harness.client, { repository: harness.repository });
+    await expect(service.declareIssuancePoint(POINT_INPUT)).rejects.toMatchObject({
+      code: "NOT_FOUND",
+      message: "The emitter fiscal profile was not found.",
+    });
+    expect(audit.append).not.toHaveBeenCalled();
+  });
+
+  it("answers NOT_FOUND for an unknown establishment, writing nothing", async () => {
+    const harness = buildDeclarationHarness({ ranges: [activeRange()] });
+    const { service, audit } = buildService(harness.client, { repository: harness.repository });
+    await expect(
+      service.declareIssuancePoint({
+        ...POINT_INPUT,
+        establishmentId: "77777777-7777-4777-8777-777777777777",
+      })
+    ).rejects.toMatchObject({ code: "NOT_FOUND", message: "The establishment was not found." });
+    expect(harness.profileWrites).toEqual([]);
+    expect(audit.append).not.toHaveBeenCalled();
+  });
+
+  it("answers the SAME NOT_FOUND for another tenant's establishment, even with a range there", async () => {
+    const harness = buildDeclarationHarness({
+      ranges: [activeRange({ tenantId: OTHER_TENANT, establishmentId: FOREIGN_ESTABLISHMENT_ID })],
+    });
+    const { service, audit } = buildService(harness.client, { repository: harness.repository });
+    await expect(
+      service.declareIssuancePoint({ ...POINT_INPUT, establishmentId: FOREIGN_ESTABLISHMENT_ID })
+    ).rejects.toMatchObject({ code: "NOT_FOUND", message: "The establishment was not found." });
+    expect(harness.profileWrites).toEqual([]);
+    expect(harness.rangeCounts).toEqual([]);
+    expect(audit.append).not.toHaveBeenCalled();
+  });
+});
+
+describe("FiscalProfileService.declareIssuancePoint — exactly one ACTIVE range (FISC-017)", () => {
+  it("refuses a point with no ACTIVE range, naming what is missing and writing nothing", async () => {
+    const harness = buildDeclarationHarness({
+      // A range at the point that is not ACTIVE, one of another type and one in
+      // another tenant: none of them makes the declaration resolvable.
+      ranges: [
+        activeRange({ status: "RETIRED" }),
+        activeRange({ documentType: 5 }),
+        activeRange({ tenantId: OTHER_TENANT }),
+      ],
+    });
+    const { service, audit } = buildService(harness.client, { repository: harness.repository });
+    const refusal = service.declareIssuancePoint(POINT_INPUT);
+    await expect(refusal).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: issuancePointNoRangeMessage({
+        establishmentCode: "001",
+        expeditionPoint: "001",
+        documentType: 1,
+      }),
+    });
+    await expect(refusal).rejects.toThrow(
+      "No hay un timbrado activo para el establecimiento 001, punto de expedición 001 y tipo de documento 1"
+    );
+    expect(harness.rangeCounts[0]).toEqual({
+      tenantId: TENANT,
+      establishmentId: ESTABLISHMENT_ID,
+      expeditionPoint: "001",
+      documentType: 1,
+      status: "ACTIVE",
+    });
+    expect(harness.profileWrites).toEqual([]);
+    expect(audit.append).not.toHaveBeenCalled();
+  });
+
+  it("refuses a point with two ACTIVE ranges, with its own message, writing nothing", async () => {
+    const harness = buildDeclarationHarness({ ranges: [activeRange(), activeRange()] });
+    const { service, audit } = buildService(harness.client, { repository: harness.repository });
+    const refusal = service.declareIssuancePoint(POINT_INPUT);
+    await expect(refusal).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: issuancePointAmbiguousRangeMessage({
+        establishmentCode: "001",
+        expeditionPoint: "001",
+        documentType: 1,
+      }),
+    });
+    await expect(refusal).rejects.toThrow(
+      "Hay más de un timbrado activo para el establecimiento 001, punto de expedición 001 y tipo de documento 1"
+    );
+    expect(harness.profileWrites).toEqual([]);
+    expect(audit.append).not.toHaveBeenCalled();
+  });
+});
+
+describe("FiscalProfileService.declareIssuancePoint — the declaration (FISC-017)", () => {
+  it("writes the three columns together and audits them in the same transaction", async () => {
+    const harness = buildDeclarationHarness({
+      ranges: [activeRange(), activeRange({ documentType: 5 })],
+    });
+    const { service, audit } = buildService(harness.client, { repository: harness.repository });
+    const view = await service.declareIssuancePoint(POINT_INPUT);
+
+    expect(view).toEqual({
+      issuancePoint: {
+        establishmentId: ESTABLISHMENT_ID,
+        establishmentCode: "001",
+        expeditionPoint: "001",
+        documentType: 1,
+      },
+      creditNoteRangeActive: true,
+    });
+    // ONE write carrying exactly the three columns: the declaration is atomic.
+    expect(harness.profileWrites).toEqual([
+      {
+        defaultEstablishmentId: ESTABLISHMENT_ID,
+        defaultExpeditionPoint: "001",
+        defaultDocumentType: 1,
+      },
+    ]);
+    expect(audit.append).toHaveBeenCalledTimes(1);
+    const [entry, tx] = audit.append.mock.calls[0] as [Record<string, unknown>, unknown];
+    expect(entry).toEqual({
+      action: FISCAL_ISSUANCE_POINT_DECLARED_ACTION,
+      tenantId: TENANT,
+      actorUserProfileId: ACTOR,
+      targetType: "fiscal_emitter_profile",
+      targetId: "p1",
+      metadata: {
+        schemaVersion: 1,
+        establishmentCode: "001",
+        expeditionPoint: "001",
+        documentType: 1,
+        creditNoteRangeActive: true,
+      },
+    });
+    expect(FISCAL_ISSUANCE_POINT_DECLARED_ACTION).toBe("fiscal.issuance_point.declared");
+    expect(JSON.stringify(entry)).not.toContain("80012345");
+    expect(tx).toBe(harness.client);
+  });
+
+  it("reports no credit-note range when type 5 has no ACTIVE range at that point", async () => {
+    const harness = buildDeclarationHarness({
+      ranges: [
+        activeRange(),
+        // Type 5 at ANOTHER point, and a retired one at this point: neither counts.
+        activeRange({ documentType: 5, expeditionPoint: "002" }),
+        activeRange({ documentType: 5, status: "RETIRED" }),
+      ],
+    });
+    const { service, audit } = buildService(harness.client, { repository: harness.repository });
+    const view = await service.declareIssuancePoint(POINT_INPUT);
+
+    expect(view.creditNoteRangeActive).toBe(false);
+    expect(audit.append.mock.calls[0]?.[0]).toMatchObject({
+      metadata: { creditNoteRangeActive: false },
+    });
+  });
+
+  it("replaces an earlier declaration", async () => {
+    const harness = buildDeclarationHarness({
+      declared: { establishmentId: ESTABLISHMENT_ID, expeditionPoint: "001", documentType: 1 },
+      ranges: [
+        activeRange(),
+        activeRange({ establishmentId: SECOND_ESTABLISHMENT_ID, expeditionPoint: "003" }),
+      ],
+    });
+    const { service } = buildService(harness.client, { repository: harness.repository });
+    const view = await service.declareIssuancePoint({
+      establishmentId: SECOND_ESTABLISHMENT_ID,
+      expeditionPoint: "003",
+      documentType: 1,
+    });
+
+    expect(view.issuancePoint).toEqual({
+      establishmentId: SECOND_ESTABLISHMENT_ID,
+      establishmentCode: "002",
+      expeditionPoint: "003",
+      documentType: 1,
+    });
+    expect(harness.currentProfile()).toMatchObject({
+      defaultEstablishmentId: SECOND_ESTABLISHMENT_ID,
+      defaultExpeditionPoint: "003",
+      defaultDocumentType: 1,
+    });
+  });
+});
+
+describe("the emitter profile carries its declared point (FISC-017)", () => {
+  it("returns a null issuance point while nothing is declared", async () => {
+    const harness = buildDeclarationHarness();
+    const { service } = buildService(harness.client, { repository: harness.repository });
+    expect((await service.getProfile()).issuancePoint).toBeNull();
+  });
+
+  it("returns the declared point with its establishment code", async () => {
+    const harness = buildDeclarationHarness({
+      declared: {
+        establishmentId: SECOND_ESTABLISHMENT_ID,
+        expeditionPoint: "002",
+        documentType: 1,
+      },
+    });
+    const { service } = buildService(harness.client, { repository: harness.repository });
+    expect((await service.getProfile()).issuancePoint).toEqual({
+      establishmentId: SECOND_ESTABLISHMENT_ID,
+      establishmentCode: "002",
+      expeditionPoint: "002",
+      documentType: 1,
+    });
+  });
+
+  it("keeps the declaration when the profile is saved again", async () => {
+    const harness = buildDeclarationHarness({
+      declared: { establishmentId: ESTABLISHMENT_ID, expeditionPoint: "001", documentType: 1 },
+    });
+    const { service } = buildService(harness.client, { repository: harness.repository });
+    const view = await service.saveProfile(PROFILE_INPUT);
+
+    // The upsert writes the profile's own fields and never the declaration.
+    for (const write of harness.profileWrites) {
+      expect(Object.keys(write)).not.toEqual(expect.arrayContaining(["defaultEstablishmentId"]));
+      expect(write).not.toHaveProperty("defaultExpeditionPoint");
+      expect(write).not.toHaveProperty("defaultDocumentType");
+    }
+    expect(harness.currentProfile()).toMatchObject({
+      defaultEstablishmentId: ESTABLISHMENT_ID,
+      defaultExpeditionPoint: "001",
+      defaultDocumentType: 1,
+    });
+    expect(view.issuancePoint).toEqual({
+      establishmentId: ESTABLISHMENT_ID,
+      establishmentCode: "001",
+      expeditionPoint: "001",
+      documentType: 1,
+    });
   });
 });
 

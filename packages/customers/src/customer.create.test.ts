@@ -8,7 +8,7 @@ import type {
   CustomerCreateTransaction,
   CustomerRow,
 } from "./customer.create.js";
-import { createCustomerBody } from "./customer.zod.js";
+import { createCustomerBody, updateCustomerBody } from "./customer.zod.js";
 
 const TENANT_ID = "11111111-1111-4111-8111-111111111111";
 const ACTOR_ID = "22222222-2222-4222-8222-222222222222";
@@ -42,6 +42,7 @@ function makeHarness(appenderError?: Error) {
           firstName: data.firstName ?? null,
           lastName: data.lastName ?? null,
           documentNumber: data.documentNumber ?? null,
+          fiscalOperationType: data.fiscalOperationType ?? null,
           isActive: true,
           createdAt: CREATED_AT,
           updatedAt: CREATED_AT,
@@ -243,6 +244,68 @@ describe("createCustomer", () => {
     expect(JSON.stringify(appends.map((entry) => entry.input))).not.toContain("ana@example.com");
   });
 
+  it("writes the declared fiscal operation type and names it in the create audit row", async () => {
+    const { rows, appends, db, audit } = makeHarness();
+
+    const created = await createCustomer({
+      db,
+      audit,
+      tenantId: TENANT_ID,
+      actorUserProfileId: ACTOR_ID,
+      input: {
+        kind: "COMPANY",
+        displayName: "Paws S.A.",
+        legalName: "Paws Sociedad Anónima",
+        taxId: "80012345-6",
+        fiscalOperationType: "B2B",
+      },
+    });
+
+    // DEC-057 Q2: `iTiOpe` is the tenant's declaration, so the row carries it
+    // verbatim and the response reports it back to the endpoint's caller.
+    expect(rows[0]?.fiscalOperationType).toBe("B2B");
+    expect(toCustomerResponse(created).fiscalOperationType).toBe("B2B");
+    expect(appends[0]?.input.metadata).toMatchObject({
+      changedFields: ["kind", "displayName", "legalName", "taxId", "fiscalOperationType"],
+    });
+    // The audit row names the field, never the declared value's neighbours.
+    expect(JSON.stringify(appends[0]?.input)).not.toContain("Paws Sociedad");
+  });
+
+  it("leaves the operation type undeclared when the create payload omits it", async () => {
+    const { rows, appends, db, audit } = makeHarness();
+
+    const created = await createCustomer({
+      db,
+      audit,
+      tenantId: TENANT_ID,
+      actorUserProfileId: ACTOR_ID,
+      input: { kind: "INDIVIDUAL", displayName: "Ana García" },
+    });
+
+    // No default is invented from `kind` and no value is guessed: null is the
+    // intentional "not declared" state the issuance read refuses on.
+    expect(rows[0]?.fiscalOperationType).toBeNull();
+    expect(toCustomerResponse(created).fiscalOperationType).toBeNull();
+    expect(appends[0]?.input.metadata).toMatchObject({
+      changedFields: ["kind", "displayName"],
+    });
+  });
+
+  it("keeps an explicitly null declaration undeclared", async () => {
+    const { rows, db, audit } = makeHarness();
+
+    await createCustomer({
+      db,
+      audit,
+      tenantId: TENANT_ID,
+      actorUserProfileId: ACTOR_ID,
+      input: { kind: "INDIVIDUAL", displayName: "Ana García", fiscalOperationType: null },
+    });
+
+    expect(rows[0]?.fiscalOperationType).toBeNull();
+  });
+
   it("behaves exactly as before when no contacts are given", async () => {
     const { appends, contacts, db, audit } = makeHarness();
 
@@ -273,11 +336,13 @@ describe("createCustomer", () => {
       firstName: "Ana",
       lastName: null,
       documentNumber: null,
+      fiscalOperationType: "B2G",
       isActive: true,
       createdAt: CREATED_AT,
       updatedAt: CREATED_AT,
     });
 
+    expect(response.fiscalOperationType).toBe("B2G");
     expect(Object.keys(response).sort()).toEqual(
       [
         "id",
@@ -289,6 +354,7 @@ describe("createCustomer", () => {
         "firstName",
         "lastName",
         "documentNumber",
+        "fiscalOperationType",
         "createdAt",
         "updatedAt",
         "isActive",
@@ -309,5 +375,46 @@ describe("the create schema stays the single source of the rules", () => {
     expect(createCustomerBody.safeParse({ kind: "INDIVIDUAL", displayName: "Ana" }).success).toBe(
       true
     );
+  });
+
+  it.each(["B2B", "B2C", "B2G", "B2F"] as const)(
+    "accepts the declared fiscal operation type %s on either kind",
+    (fiscalOperationType) => {
+      expect(
+        createCustomerBody.safeParse({
+          kind: "INDIVIDUAL",
+          displayName: "Ana",
+          fiscalOperationType,
+        }).success
+      ).toBe(true);
+      expect(
+        createCustomerBody.safeParse({
+          kind: "COMPANY",
+          displayName: "Paws S.A.",
+          legalName: "Paws Sociedad Anónima",
+          taxId: "80012345-6",
+          fiscalOperationType,
+        }).success
+      ).toBe(true);
+    }
+  );
+
+  it("rejects a fiscal operation type the schema does not define", () => {
+    expect(
+      createCustomerBody.safeParse({
+        kind: "INDIVIDUAL",
+        displayName: "Ana",
+        fiscalOperationType: "B2X",
+      }).success
+    ).toBe(false);
+    expect(updateCustomerBody.safeParse({ fiscalOperationType: "b2b" }).success).toBe(false);
+  });
+
+  it("keeps an absent declaration absent and an explicit null nullable on update", () => {
+    const omitted = updateCustomerBody.parse({ displayName: "Ana" });
+    expect(omitted).not.toHaveProperty("fiscalOperationType");
+    expect(updateCustomerBody.parse({ fiscalOperationType: null })).toEqual({
+      fiscalOperationType: null,
+    });
   });
 });

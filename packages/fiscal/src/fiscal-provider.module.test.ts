@@ -139,6 +139,28 @@ describe("buildSelectedFiscalProvider", () => {
     expect(provider.requiresSignedDocument).toBe(false);
   });
 
+  it.each([
+    ["true", true],
+    ["false", false],
+    ["TRUE", false],
+    ["1", false],
+    [undefined, false],
+  ] as const)(
+    "lets FISCAL_FAKE_REQUIRES_SIGNED_DOCUMENT=%s ask the fake for a signed document: %s",
+    (raw, expected) => {
+      const provider = buildSelectedFiscalProvider({
+        nodeEnv: "test",
+        rawFiscalProvider: "fake",
+        rawSifenEnvironment: undefined,
+        rawFakeRequiresSignedDocument: raw,
+        credentialPort: nullPort,
+      });
+
+      expect(provider.provider).toBe("FAKE");
+      expect(provider.requiresSignedDocument).toBe(expected);
+    }
+  );
+
   it("builds the real SIFEN adapter for the sifen-direct selection", () => {
     const provider = buildSelectedFiscalProvider({
       nodeEnv: "test",

@@ -16,9 +16,13 @@ const customer = {
   kind: "INDIVIDUAL",
   isActive: true,
   firstName: "Ana",
+  fiscalOperationType: "B2G",
 };
 let writes: { url: string; body: unknown }[];
-function install(failure?: "contact" | "read" | "unknown" | "denied") {
+function install(
+  failure?: "contact" | "read" | "unknown" | "denied",
+  customerOverride: Record<string, unknown> = {}
+) {
   const fetch = vi.fn((url: unknown, init?: RequestInit) => {
     if (typeof url !== "string") throw Error("Expected path");
     if (init?.method) {
@@ -33,7 +37,7 @@ function install(failure?: "contact" | "read" | "unknown" | "denied") {
     }
     if (failure === "read")
       return Promise.resolve(json({ error: { code: "NOT_FOUND", message: "Private name" } }, 404));
-    if (url === base) return Promise.resolve(json(customer));
+    if (url === base) return Promise.resolve(json({ ...customer, ...customerOverride }));
     if (failure === "contact" && url.endsWith("/contacts"))
       return Promise.resolve(json({ error: { code: "FORBIDDEN" } }, 403));
     return Promise.resolve(json([]));
@@ -68,6 +72,20 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 describe("Customer detail subforms", () => {
+  it("shows the declared fiscal operation type and the undeclared state", async () => {
+    install();
+    const { unmount } = mount();
+    await screen.findByRole("heading", { name: "Cliente sintético" });
+    expect(screen.getByText("Tipo de operación fiscal: B2G — Empresa a gobierno")).toBeVisible();
+    unmount();
+
+    // A customer whose declaration is absent reads as "Sin declarar": the
+    // detail never derives one from `kind` and never hides the missing fact.
+    install(undefined, { fiscalOperationType: null });
+    mount();
+    await screen.findByRole("heading", { name: "Cliente sintético" });
+    expect(screen.getByText("Tipo de operación fiscal: Sin declarar")).toBeVisible();
+  });
   it("adds only supplied address keys and keeps exact country validation local", async () => {
     install();
     mount();

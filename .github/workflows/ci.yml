@@ -237,6 +237,13 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Fetch the official DNIT schemas for the fiscal worker
+        # FISC-019: the electronic credit note spec signs and XSD-gates a real DE,
+        # so the lane's worker needs the schemas the XSD job already fetches.
+        env:
+          DTE_XSD_DIR: ${{ runner.temp }}/dte-xsd
+        run: pnpm --filter @newsaas/fiscal fetch:dte-schemas
+
       - name: Run the lane
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/newsaas_migrations
@@ -252,6 +259,7 @@ jobs:
           # profile, …) so a secret never lives in tenant settings or a record.
           AWS_ACCESS_KEY_ID: newsaas
           AWS_SECRET_ACCESS_KEY: newsaas-minio-secret
+          DTE_XSD_DIR: ${{ runner.temp }}/dte-xsd
         run: pnpm --filter @newsaas/e2e e2e
 
       - name: Upload the report and traces

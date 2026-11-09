@@ -44,6 +44,17 @@ export interface TaxRateResponse {
 }
 
 /**
+ * One SIFEN unit of measure (FISC-020 T9): the protocol's own `tcUniMed` code,
+ * the artifact's Spanish documentation and the `dDesUniMed` symbol. PUBLIC
+ * protocol reference data, identical for every tenant.
+ */
+export interface UnitOfMeasureResponse {
+  readonly code: string;
+  readonly description: string;
+  readonly symbol: string;
+}
+
+/**
  * Allowlisted CatalogItem response. `tenantId` is the CALLER's own tenant —
  * the same disclosure the Customer/Patient DTOs make — and the global rate
  * arrives as a nested read-only projection instead of a duplicated column.
@@ -72,6 +83,13 @@ export interface CatalogItemResponse {
    * item with no threshold instead of inventing one.
    */
   readonly lowStockThreshold: string | null;
+  /**
+   * FISC-020 T9 (DEC-097): the declared SIFEN unit of measure code (`cUniMed`,
+   * e.g. `"77"`), or `null` when the item declares none. INTERNAL, like the
+   * rest of the catalog configuration. Never defaulted: a `null` item cannot be
+   * invoiced electronically until staff declare its unit.
+   */
+  readonly unitOfMeasureCode: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }

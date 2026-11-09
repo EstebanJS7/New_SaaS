@@ -24,7 +24,7 @@ type CatalogMethod = "GET" | "POST" | "PUT";
  * two apart is what lets a known path reached with a wrong method answer with a
  * method refusal instead of being conflated with an unknown path.
  */
-type CatalogPathShape = "list" | "item" | "taxRates" | "deactivate";
+type CatalogPathShape = "list" | "item" | "taxRates" | "unitsOfMeasure" | "deactivate";
 
 /**
  * Method-aware allowlist for the catalog proxy (EPIC-09 WU3 B1).
@@ -40,6 +40,7 @@ type CatalogPathShape = "list" | "item" | "taxRates" | "deactivate";
  * - `PUT  /catalog/:uuid`               partial update
  * - `POST /catalog/:uuid/deactivate`    idempotent soft removal
  * - `GET  /catalog/tax-rates`           the GLOBAL seeded rate list
+ * - `GET  /catalog/units-of-measure`    the SIFEN unit list (FISC-020 T9)
  *
  * Deliberately absent (so the request is refused here, never smuggled upstream):
  * the static `/catalog/tax-rates` reached with a write verb, a `DELETE`/`PATCH`
@@ -47,7 +48,7 @@ type CatalogPathShape = "list" | "item" | "taxRates" | "deactivate";
  * the `SERVICE`↔`Appointment` agenda filter, which is epic WU4.
  */
 const ALLOWED_CATALOG_ROUTES: Readonly<Record<CatalogMethod, ReadonlySet<CatalogPathShape>>> = {
-  GET: new Set<CatalogPathShape>(["list", "item", "taxRates"]),
+  GET: new Set<CatalogPathShape>(["list", "item", "taxRates", "unitsOfMeasure"]),
   POST: new Set<CatalogPathShape>(["list", "deactivate"]),
   PUT: new Set<CatalogPathShape>(["item"]),
 };
@@ -122,9 +123,9 @@ function unauthenticated(): NextResponse {
  * the path is not part of the API surface at all. Method-independent, so the
  * caller can tell "unknown path" apart from "known path, wrong method".
  *
- * The static `tax-rates` literal and the `:id` slot cannot be confused: the id
- * slot requires a UUID, so `tax-rates` can never match it and the literal needs
- * no special ordering.
+ * The static `tax-rates`/`units-of-measure` literals and the `:id` slot cannot
+ * be confused: the id slot requires a UUID, so neither literal can match it and
+ * they need no special ordering.
  */
 function catalogPathShape(segments: readonly string[]): CatalogPathShape | null {
   if (segments.length === 0) {
@@ -137,6 +138,9 @@ function catalogPathShape(segments: readonly string[]): CatalogPathShape | null 
     }
     if (first === "tax-rates") {
       return "taxRates";
+    }
+    if (first === "units-of-measure") {
+      return "unitsOfMeasure";
     }
     return UUID_PATTERN.test(first) ? "item" : null;
   }

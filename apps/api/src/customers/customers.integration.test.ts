@@ -15,6 +15,7 @@ interface CustomerDto {
   firstName: string | null;
   lastName: string | null;
   documentNumber: string | null;
+  fiscalOperationType: "B2B" | "B2C" | "B2G" | "B2F" | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -69,6 +70,7 @@ const CUSTOMER_RESPONSE_KEYS: readonly string[] = [
   "firstName",
   "lastName",
   "documentNumber",
+  "fiscalOperationType",
   "isActive",
   "createdAt",
   "updatedAt",
@@ -77,6 +79,7 @@ const CUSTOMER_RESPONSE_KEYS: readonly string[] = [
 describe("Customers HTTP boundary", () => {
   let booted: BootedTestApp;
   let tenantAId: string;
+  let tenantBId: string;
   let ownerCookie: string;
   let readOnlyCookie: string;
   let noAccessCookie: string;
@@ -90,6 +93,7 @@ describe("Customers HTTP boundary", () => {
     const tenantA = db.prisma.tenant.create({ data: { slug: "cust-a", name: "A" } });
     const tenantB = db.prisma.tenant.create({ data: { slug: "cust-b", name: "B" } });
     tenantAId = tenantA.id;
+    tenantBId = tenantB.id;
 
     const ownerRole = seedRoleWithKeys(db, "CUSTOMER_OWNER", "Customer Owner", [
       "customers.read",
@@ -192,6 +196,11 @@ describe("Customers HTTP boundary", () => {
     const body = list.body as CustomerDto[];
     expect(body).toHaveLength(1);
     expect(body[0].id).toBe(customerAId);
+    // The list shares the ONE allowlisted DTO (DEC-073), so it gains the
+    // declaration field and no other key: the pre-existing response contract is
+    // otherwise byte-identical.
+    expect(Object.keys(body[0]).sort()).toEqual(CUSTOMER_RESPONSE_KEYS.slice().sort());
+    expect(body[0].fiscalOperationType).toBeNull();
   });
 
   it("rejects a COMPANY customer missing required company fields", async () => {
@@ -257,11 +266,19 @@ describe("Customers HTTP boundary", () => {
   });
 
   it("deactivates a customer and excludes it from default lists", async () => {
-    await supertest(booted.app.getHttpServer())
+    const deactivated = await supertest(booted.app.getHttpServer())
       .post(`/customers/${customerAId}/deactivate`)
       .set("Cookie", ownerCookie)
       .send({})
       .expect(201);
+
+    // Deactivation is an EXISTING command this Story does not re-scope. It
+    // answers with the same single allowlisted DTO (DEC-073), so its body gains
+    // `fiscalOperationType` and nothing else: same status, same keys, and a
+    // customer created without a declaration still reports the undeclared state.
+    const deactivatedBody = deactivated.body as CustomerDto;
+    expect(Object.keys(deactivatedBody).sort()).toEqual(CUSTOMER_RESPONSE_KEYS.slice().sort());
+    expect(deactivatedBody.fiscalOperationType).toBeNull();
 
     const list = await supertest(booted.app.getHttpServer())
       .get("/customers")
@@ -422,5 +439,157 @@ describe("Customers HTTP boundary", () => {
       .set("Cookie", ownerCookie)
       .send({})
       .expect(201);
+  });
+
+  it("declares a customer's fiscal operation type on create and reads it back", async () => {
+    const response = await supertest(booted.app.getHttpServer())
+      .post("/customers")
+      .set("Cookie", ownerCookie)
+      .send({
+        kind: "COMPANY",
+        displayName: "Declarada S.A.",
+        legalName: "Declarada Sociedad Anónima",
+        taxId: "80012345-6",
+        fiscalOperationType: "B2G",
+      })
+      .expect(201);
+
+    const body = response.body as CustomerDto;
+    expect(body.fiscalOperationType).toBe("B2G");
+    expect(Object.keys(body).sort()).toEqual(CUSTOMER_RESPONSE_KEYS.slice().sort());
+
+    const read = await supertest(booted.app.getHttpServer())
+      .get(`/customers/${body.id}`)
+      .set("Cookie", ownerCookie)
+      .expect(200);
+    expect((read.body as CustomerDto).fiscalOperationType).toBe("B2G");
+
+    const audit = [...booted.db.tables.audits.values()].find(
+      (row) =>
+        (row as AuditRow).action === "customer.created" && (row as AuditRow).targetId === body.id
+    ) as AuditRow | undefined;
+    assert(audit);
+    expect(audit.metadata).toMatchObject({
+      changedFields: ["kind", "displayName", "legalName", "taxId", "fiscalOperationType"],
+    });
+  });
+
+  it("leaves the operation type undeclared when the create body omits it", async () => {
+    const response = await supertest(booted.app.getHttpServer())
+      .post("/customers")
+      .set("Cookie", ownerCookie)
+      .send({ kind: "INDIVIDUAL", displayName: "Sin declaración" })
+      .expect(201);
+
+    expect((response.body as CustomerDto).fiscalOperationType).toBeNull();
+  });
+
+  it("rejects an operation type outside the declared values without writing a row or audit", async () => {
+    const before = booted.db.tables.audits.size;
+
+    const response = await supertest(booted.app.getHttpServer())
+      .post("/customers")
+      .set("Cookie", ownerCookie)
+      .send({ kind: "INDIVIDUAL", displayName: "Valor inválido", fiscalOperationType: "B2X" })
+      .expect(400);
+    expect((response.body as ErrorDto).error.code).toBe("VALIDATION_FAILED");
+
+    expect(booted.db.tables.audits.size).toBe(before);
+    const list = await supertest(booted.app.getHttpServer())
+      .get("/customers")
+      .set("Cookie", ownerCookie)
+      .expect(200);
+    expect(
+      (list.body as CustomerDto[]).some((customer) => customer.displayName === "Valor inválido")
+    ).toBe(false);
+  });
+
+  it("preserves a declared operation type when an update omits the field", async () => {
+    const created = await supertest(booted.app.getHttpServer())
+      .post("/customers")
+      .set("Cookie", ownerCookie)
+      .send({ kind: "INDIVIDUAL", displayName: "Declarado", fiscalOperationType: "B2B" })
+      .expect(201);
+    const customerId = (created.body as CustomerDto).id;
+
+    const updated = await supertest(booted.app.getHttpServer())
+      .put(`/customers/${customerId}`)
+      .set("Cookie", ownerCookie)
+      .send({ displayName: "Declarado y renombrado" })
+      .expect(200);
+    expect((updated.body as CustomerDto).fiscalOperationType).toBe("B2B");
+
+    const read = await supertest(booted.app.getHttpServer())
+      .get(`/customers/${customerId}`)
+      .set("Cookie", ownerCookie)
+      .expect(200);
+    expect((read.body as CustomerDto).fiscalOperationType).toBe("B2B");
+
+    const audit = [...booted.db.tables.audits.values()].find(
+      (row) =>
+        (row as AuditRow).action === "customer.updated" && (row as AuditRow).targetId === customerId
+    ) as AuditRow | undefined;
+    assert(audit);
+    expect(audit.metadata).toMatchObject({ changedFields: ["displayName"] });
+  });
+
+  it("declares, replaces and clears the operation type through update", async () => {
+    const created = await supertest(booted.app.getHttpServer())
+      .post("/customers")
+      .set("Cookie", ownerCookie)
+      .send({ kind: "INDIVIDUAL", displayName: "Editable" })
+      .expect(201);
+    const customerId = (created.body as CustomerDto).id;
+
+    const declared = await supertest(booted.app.getHttpServer())
+      .put(`/customers/${customerId}`)
+      .set("Cookie", ownerCookie)
+      .send({ fiscalOperationType: "B2F" })
+      .expect(200);
+    expect((declared.body as CustomerDto).fiscalOperationType).toBe("B2F");
+
+    const beforeInvalid = booted.db.tables.audits.size;
+    await supertest(booted.app.getHttpServer())
+      .put(`/customers/${customerId}`)
+      .set("Cookie", ownerCookie)
+      .send({ fiscalOperationType: "b2f" })
+      .expect(400);
+    expect(booted.db.tables.audits.size).toBe(beforeInvalid);
+
+    const read = await supertest(booted.app.getHttpServer())
+      .get(`/customers/${customerId}`)
+      .set("Cookie", ownerCookie)
+      .expect(200);
+    expect((read.body as CustomerDto).fiscalOperationType).toBe("B2F");
+
+    const cleared = await supertest(booted.app.getHttpServer())
+      .put(`/customers/${customerId}`)
+      .set("Cookie", ownerCookie)
+      .send({ fiscalOperationType: null })
+      .expect(200);
+    expect((cleared.body as CustomerDto).fiscalOperationType).toBeNull();
+  });
+
+  it("masks a cross-tenant declaration update as 404 and leaves the foreign row unchanged", async () => {
+    const created = await supertest(booted.app.getHttpServer())
+      .post("/customers")
+      .set("Cookie", foreignOwnerCookie)
+      .send({ kind: "INDIVIDUAL", displayName: "Cliente B", fiscalOperationType: "B2C" })
+      .expect(201);
+    const foreignCustomer = created.body as CustomerDto;
+    expect(foreignCustomer.tenantId).toBe(tenantBId);
+
+    const masked = await supertest(booted.app.getHttpServer())
+      .put(`/customers/${foreignCustomer.id}`)
+      .set("Cookie", ownerCookie)
+      .send({ fiscalOperationType: "B2G" })
+      .expect(404);
+    expect((masked.body as ErrorDto).error.code).toBe("NOT_FOUND");
+
+    const read = await supertest(booted.app.getHttpServer())
+      .get(`/customers/${foreignCustomer.id}`)
+      .set("Cookie", foreignOwnerCookie)
+      .expect(200);
+    expect((read.body as CustomerDto).fiscalOperationType).toBe("B2C");
   });
 });

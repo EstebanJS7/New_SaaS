@@ -324,6 +324,18 @@ export class FiscalSubmissionHandler {
     attemptCount: number
   ): Promise<StageResult> {
     if (!this.provider.requiresSignedDocument) {
+      // Nothing to build, but the claim must still reach SENDING: the result
+      // write only matches SENDING rows, so a SIGNING row would silently drop
+      // the provider's outcome. A re-claimed SENDING row is already there.
+      if (!resumingSubmission) {
+        const advanced = await this.prisma.fiscalDocument.updateMany({
+          where: { id: document.id, tenantId: document.tenantId, status: "SIGNING" },
+          data: { status: "SENDING" },
+        });
+        if (advanced.count !== 1) {
+          return { outcome: "FAILED" };
+        }
+      }
       return { outcome: "READY", document: null };
     }
     if (resumingSubmission) {

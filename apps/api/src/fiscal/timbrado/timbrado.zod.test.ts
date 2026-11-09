@@ -8,7 +8,12 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { createRangeBodySchema, saveProfileBodySchema } from "./timbrado.zod.js";
+import {
+  createRangeBodySchema,
+  declareIssuancePointBodySchema,
+  saveEstablishmentBodySchema,
+  saveProfileBodySchema,
+} from "./timbrado.zod.js";
 
 const RANGE = {
   establishmentId: "22222222-2222-4222-8222-222222222222",
@@ -117,5 +122,114 @@ describe("the emitter profile body", () => {
   it("refuses a RUC that does not match tRuc", () => {
     expect(saveProfileBodySchema.safeParse({ ...PROFILE, ruc: "012345" }).success).toBe(false);
     expect(saveProfileBodySchema.safeParse({ ...PROFILE, ruc: "80012345678" }).success).toBe(false);
+  });
+
+  // FISC-018 review: an unknown key is a 400, never a silently stripped field —
+  // at the top level and inside every nested object the body carries.
+  it("refuses an unknown key at the top level and inside every nested object", () => {
+    const issuer = {
+      type: 1,
+      typeName: "Cédula paraguaya",
+      id: "1234567",
+      name: "Ana Pérez",
+      role: "Contadora",
+    };
+    expect(saveProfileBodySchema.safeParse({ ...PROFILE, responsibleIssuer: issuer }).success).toBe(
+      true
+    );
+    for (const body of [
+      { ...PROFILE, tenantId: "11111111-1111-4111-8111-111111111111" },
+      { ...PROFILE, responsibleIssuer: { ...issuer, email: "ana@example.test" } },
+      { ...PROFILE, activities: [{ code: "47730", description: "Venta", main: true }] },
+    ]) {
+      const parsed = saveProfileBodySchema.safeParse(body);
+      expect(parsed.success).toBe(false);
+      expect(parsed.success ? "" : parsed.error.issues[0]?.code).toBe("unrecognized_keys");
+    }
+  });
+});
+
+describe("the establishment body", () => {
+  const ESTABLISHMENT = {
+    code: "001",
+    addressLine: "Av. Mcal. López",
+    houseNumber: 1234,
+    addressComplement1: null,
+    addressComplement2: null,
+    departmentCode: 1,
+    district: { code: 1, name: "ASUNCION" },
+    cityCode: 1,
+    cityName: "ASUNCION",
+    phone: "021123456",
+    email: "fiscal@vetsur.example",
+    branchName: null,
+  };
+
+  it("accepts a well-formed establishment", () => {
+    expect(saveEstablishmentBodySchema.safeParse(ESTABLISHMENT).success).toBe(true);
+  });
+
+  it("refuses an unknown key at the top level and inside the district", () => {
+    for (const body of [
+      { ...ESTABLISHMENT, id: "22222222-2222-4222-8222-222222222222" },
+      { ...ESTABLISHMENT, district: { code: 1, name: "ASUNCION", departmentCode: 1 } },
+    ]) {
+      const parsed = saveEstablishmentBodySchema.safeParse(body);
+      expect(parsed.success).toBe(false);
+      expect(parsed.success ? "" : parsed.error.issues[0]?.code).toBe("unrecognized_keys");
+    }
+  });
+});
+
+describe("the issuance-point body (FISC-017)", () => {
+  const POINT = {
+    establishmentId: "22222222-2222-4222-8222-222222222222",
+    expeditionPoint: "001",
+    documentType: 1,
+  } as const;
+
+  it("accepts a well-formed declaration", () => {
+    expect(declareIssuancePointBodySchema.safeParse(POINT).success).toBe(true);
+  });
+
+  it("refuses an extra field, so a tenantId or a status can never ride along", () => {
+    expect(
+      declareIssuancePointBodySchema.safeParse({
+        ...POINT,
+        tenantId: "11111111-1111-4111-8111-111111111111",
+      }).success
+    ).toBe(false);
+  });
+
+  it("refuses an establishment id that is not a UUID", () => {
+    expect(
+      declareIssuancePointBodySchema.safeParse({ ...POINT, establishmentId: "001" }).success
+    ).toBe(false);
+  });
+
+  it("refuses a point of expedition that is not three digits", () => {
+    for (const expeditionPoint of ["1", "01", "0001", "A01", 1]) {
+      expect(declareIssuancePointBodySchema.safeParse({ ...POINT, expeditionPoint }).success).toBe(
+        false
+      );
+    }
+  });
+
+  it("admits exactly the document types tiTiDE declares", () => {
+    for (const documentType of [0, 2, 3, 8, 11, "1"]) {
+      expect(declareIssuancePointBodySchema.safeParse({ ...POINT, documentType }).success).toBe(
+        false
+      );
+    }
+    for (const documentType of [1, 4, 5, 6, 7, 9, 10]) {
+      expect(declareIssuancePointBodySchema.safeParse({ ...POINT, documentType }).success).toBe(
+        true
+      );
+    }
+  });
+
+  it("refuses a missing field", () => {
+    const { documentType: _omitted, ...withoutType } = POINT;
+    expect(declareIssuancePointBodySchema.safeParse(withoutType).success).toBe(false);
   });
 });

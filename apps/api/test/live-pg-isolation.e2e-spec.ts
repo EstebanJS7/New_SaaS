@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Test } from "@nestjs/testing";
 import type { NestFastifyApplication } from "@nestjs/platform-fastify";
@@ -53,7 +53,13 @@ import {
   InvoiceSnapshotReadError,
   ReceptorReadError,
 } from "@newsaas/fiscal-persistence";
-import { InMemorySecretStore } from "@newsaas/secret-store";
+import {
+  EnvelopeSecretStore,
+  InMemorySecretStore,
+  parseSecretStoreKeyRing,
+  SECRET_STORE,
+  type SecretStore,
+} from "@newsaas/secret-store";
 
 interface ErrorEnvelope {
   error: { code: string };
@@ -477,6 +483,7 @@ interface CatalogItemDto {
   taxRate: { code: string; name: string; rate: string };
   referencePriceAmount: string | null;
   referencePriceCurrency: string | null;
+  unitOfMeasureCode: string | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -584,6 +591,8 @@ const CATALOG_ITEM_DTO_KEYS = [
   "taxRateId",
   "tenantId",
   "tracksStock",
+  // DEC-097 (FISC-020 T9): the declared SIFEN unit, null when undeclared.
+  "unitOfMeasureCode",
   "updatedAt",
 ].sort();
 
@@ -1468,6 +1477,18 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       .useValue(notificationDeliveryProducer)
       .overrideProvider(IMPORT_PREVIEW_PRODUCER)
       .useValue(importPreviewProducer)
+      // FISC-019: the CSC routes must be measured against the transactional,
+      // encrypted driver, not the process-local fake the boot selects without
+      // a master key. A throwaway key exists only for this disposable database.
+      .overrideProvider(SECRET_STORE)
+      .useFactory({
+        factory: (client: PrismaService): SecretStore =>
+          new EnvelopeSecretStore(
+            client,
+            parseSecretStoreKeyRing(`1:${randomBytes(32).toString("base64")}`, undefined)!
+          ),
+        inject: [PrismaService],
+      })
       .compile();
 
     app = moduleRef.createNestApplication<NestFastifyApplication>(
@@ -19445,6 +19466,515 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       expect(committed).toHaveLength(2);
       expect(new Set(committed.map((row) => row.invoiceId)).size).toBe(2);
     }, 30_000);
+  });
+
+  describe("EPIC-16 FISC-017 issuance-point declaration", () => {
+    /**
+     * DEC-095 delivery 1, against real PostgreSQL and through the REAL routes:
+     * the profile, the establishment, the ranges AND the declared point are all
+     * written over HTTP, so no raw SQL stands in for the declaration. The only
+     * raw write left is the factura's SIFEN approval, which no route performs
+     * (it is the provider's answer, not the clinic's).
+     *
+     * Every case gets a DEDICATED tenant: fiscal rows refuse deletion and the
+     * profile is unique per tenant.
+     */
+    const NO_RANGE_PREFIX = "No hay un timbrado activo para el establecimiento 001";
+    /** A factura's CDC: `iTiDE` 01, the RUC and its check digit, then 34 digits. */
+    const FACTURA_CDC = `01800123456${"0".repeat(33)}`;
+
+    const provisionFiscalTenant = async (
+      slug: string,
+      options: { features?: readonly string[]; roleCode?: string } = {}
+    ): Promise<{ tenantId: string; cookie: string }> => {
+      const tenant = await prisma.tenant.create({ data: { slug, name: slug } });
+      const role = await prisma.role.findUnique({ where: { code: options.roleCode ?? "OWNER" } });
+      if (!role) {
+        throw new Error("Reference seed did not create the requested role");
+      }
+      const profile = await prisma.userProfile.create({
+        data: { email: `${slug}@live.test`, displayName: slug, status: "active" },
+      });
+      const membership = await prisma.tenantMembership.create({
+        data: { tenantId: tenant.id, userProfileId: profile.id, roleId: role.id, status: "ACTIVE" },
+      });
+      await provisionFirstBranch(tenant.id, membership.id);
+      for (const code of options.features ?? ["fiscal"]) {
+        const feature = await prisma.featureCode.upsert({
+          where: { code },
+          create: { code },
+          update: {},
+        });
+        await prisma.tenantEntitlement.upsert({
+          where: { tenantId_featureCodeId: { tenantId: tenant.id, featureCodeId: feature.id } },
+          create: { tenantId: tenant.id, featureCodeId: feature.id },
+          update: {},
+        });
+      }
+      const session = await app.get(SessionService).issue(profile.id);
+      return { tenantId: tenant.id, cookie: `${STAFF_SESSION_COOKIE}=${session.token}` };
+    };
+
+    describe("FISC-019 CSC routes", () => {
+      /**
+       * The CSC is written only over HTTP and read back only through the
+       * worker's own reader, wired to the app's ENCRYPTED secret store: no raw
+       * SQL stands in for the load. The suite overrides `SECRET_STORE` with an
+       * `EnvelopeSecretStore`, so the value really travels through
+       * `tenant_secret` inside the route's transaction.
+       */
+      it("loads over HTTP for the worker reader, isolates tenants and refuses the database bounds with 409", async () => {
+        const tenant = await provisionFiscalTenant(`csc-${randomUUID().slice(0, 8)}`);
+        const other = await provisionFiscalTenant(`csc-other-${randomUUID().slice(0, 8)}`);
+        const unentitled = await provisionFiscalTenant(`csc-off-${randomUUID().slice(0, 8)}`, {
+          features: [],
+        });
+        const store = app.get<SecretStore>(SECRET_STORE);
+        expect(store).toBeInstanceOf(EnvelopeSecretStore);
+        const reader = createFiscalCscReader({ client: prisma, secretStore: store });
+        const value = "Aa12".repeat(8);
+        const load = (idCsc: string) =>
+          supertest(serverUrl)
+            .post("/fiscal/csc")
+            .set("Cookie", tenant.cookie)
+            .send({ environment: "TEST", idCsc, value });
+        const list = async (cookie = tenant.cookie) => {
+          const response = await supertest(serverUrl)
+            .get("/fiscal/csc")
+            .set("Cookie", cookie)
+            .expect(200);
+          expect(response.text).not.toContain(value);
+          expect(response.text).not.toContain("secretRef");
+          return (response.body as { items: { id: string; idCsc: string; status: string }[] })
+            .items;
+        };
+        const state = async () => [
+          await prisma.tenantFiscalCsc.count({ where: { tenantId: tenant.tenantId } }),
+          await prisma.tenantSecret.count({ where: { tenantId: tenant.tenantId } }),
+          await prisma.auditLog.count({ where: { tenantId: tenant.tenantId } }),
+        ];
+
+        await supertest(serverUrl).get("/fiscal/csc").expect(401);
+        await supertest(serverUrl).get("/fiscal/csc").set("Cookie", unentitled.cookie).expect(403);
+
+        const first = await load("0001").expect(201);
+        const id = (first.body as { id: string }).id;
+        expect(Object.keys(first.body as object).sort()).toEqual([
+          "createdAt",
+          "environment",
+          "id",
+          "idCsc",
+          "retiredAt",
+          "retirementReason",
+          "status",
+        ]);
+        expect(first.text).not.toContain(value);
+        const loadedAudit = await prisma.auditLog.findMany({
+          where: { tenantId: tenant.tenantId, action: "fiscal.csc.loaded" },
+        });
+        expect(loadedAudit.map((row) => row.metadata)).toEqual([
+          { environment: "TEST", idCsc: "0001" },
+        ]);
+        // The value is sealed: neither the row nor the stored ciphertext carries it.
+        const secretRows = await prisma.tenantSecret.findMany({
+          where: { tenantId: tenant.tenantId },
+        });
+        expect(secretRows).toHaveLength(1);
+        expect(
+          JSON.stringify(secretRows, (_key, field: unknown) =>
+            Buffer.isBuffer(field) ? field.toString("latin1") : field
+          )
+        ).not.toContain(value);
+
+        expect(await reader.read({ tenantId: tenant.tenantId, environment: "TEST" })).toEqual({
+          idCsc: "0001",
+          csc: value,
+        });
+        expect(
+          await reader.read({ tenantId: tenant.tenantId, environment: "PRODUCTION" })
+        ).toBeNull();
+        expect(await reader.read({ tenantId: other.tenantId, environment: "TEST" })).toBeNull();
+        expect(await list(other.cookie)).toEqual([]);
+
+        const before = await state();
+        // Partial unique index: the identifier is already ACTIVE.
+        const duplicate = await load("0001").expect(409);
+        expect(duplicate.text).not.toContain(value);
+        expect((duplicate.body as { error: { message: string } }).error.message).toBe(
+          "A CSC with this identifier is already active in this environment."
+        );
+        await supertest(serverUrl)
+          .post("/fiscal/csc")
+          .set("Cookie", tenant.cookie)
+          .send({ environment: "TEST", idCsc: "0002", value, tenantId: other.tenantId })
+          .expect(400);
+        await supertest(serverUrl)
+          .post(`/fiscal/csc/${id}/retire`)
+          .set("Cookie", other.cookie)
+          .send({ reason: "foreign" })
+          .expect(404);
+        expect(await state()).toEqual(before);
+
+        await load("0002").expect(201);
+        const two = await state();
+        // The at-most-two trigger refuses the third: a 409, and nothing written.
+        const third = await load("0003").expect(409);
+        expect((third.body as { error: { code: string; message: string } }).error).toMatchObject({
+          code: "CONFLICT",
+          message: "Two CSCs are already active in this environment; retire one first.",
+        });
+        expect(await state()).toEqual(two);
+
+        await supertest(serverUrl)
+          .post(`/fiscal/csc/${id}/retire`)
+          .set("Cookie", tenant.cookie)
+          .send({ reason: "rotation" })
+          .expect(200);
+        const afterRetire = await list();
+        expect(afterRetire.find((row) => row.id === id)).toMatchObject({ status: "RETIRED" });
+        expect(await prisma.tenantSecret.count({ where: { tenantId: tenant.tenantId } })).toBe(1);
+        const retiredAudit = await prisma.auditLog.findMany({
+          where: { tenantId: tenant.tenantId, action: "fiscal.csc.retired" },
+        });
+        expect(retiredAudit.map((row) => row.metadata)).toEqual([
+          { environment: "TEST", idCsc: "0001" },
+        ]);
+        await supertest(serverUrl)
+          .post(`/fiscal/csc/${id}/retire`)
+          .set("Cookie", tenant.cookie)
+          .send({ reason: "again" })
+          .expect(409);
+        expect(await reader.read({ tenantId: tenant.tenantId, environment: "TEST" })).toEqual({
+          idCsc: "0002",
+          csc: value,
+        });
+
+        // Two concurrent loads into the one free slot: exactly one wins.
+        const raced = await Promise.all([load("0003"), load("0004")]);
+        expect(raced.map((response) => response.status).sort()).toEqual([201, 409]);
+        expect((await list()).filter((row) => row.status === "ACTIVE")).toHaveLength(2);
+        expect(await prisma.tenantSecret.count({ where: { tenantId: tenant.tenantId } })).toBe(2);
+      }, 30_000);
+    });
+
+    const saveProfile = (cookie: string) =>
+      supertest(serverUrl)
+        .put("/fiscal/emitter-profile")
+        .set("Cookie", cookie)
+        .send({
+          ruc: "80012345",
+          checkDigit: "6",
+          taxpayerType: 2,
+          regimeCode: 8,
+          legalName: "Veterinaria Sur S.A.",
+          tradeName: null,
+          responsibleIssuer: null,
+          transactionType: 1,
+          taxType: 1,
+          emissionType: 1,
+          activities: [{ code: "75000", description: "Actividades veterinarias" }],
+        })
+        .expect(200);
+
+    const createEstablishment = async (cookie: string): Promise<string> => {
+      const response = await supertest(serverUrl)
+        .post("/fiscal/establishments")
+        .set("Cookie", cookie)
+        .send({
+          code: "001",
+          addressLine: "Av. Mcal. López",
+          houseNumber: 1234,
+          addressComplement1: null,
+          addressComplement2: null,
+          departmentCode: 1,
+          district: null,
+          cityCode: 7,
+          cityName: "ASUNCION",
+          phone: "021123456",
+          email: "fiscal@vetsur.example",
+          branchName: null,
+        })
+        .expect(201);
+      return (response.body as { id: string }).id;
+    };
+
+    const createRange = (
+      cookie: string,
+      establishmentId: string,
+      documentType: number,
+      timbradoNumber: string
+    ) =>
+      supertest(serverUrl)
+        .post("/fiscal/timbrado-ranges")
+        .set("Cookie", cookie)
+        .send({
+          establishmentId,
+          expeditionPoint: "001",
+          documentType,
+          series: null,
+          timbradoNumber,
+          rangeFrom: 1,
+          rangeTo: 9_999_999,
+          validityStart: "2019-09-01",
+        })
+        .expect(201);
+
+    const declare = (cookie: string, body: Record<string, unknown>) =>
+      supertest(serverUrl)
+        .put("/fiscal/emitter-profile/issuance-point")
+        .set("Cookie", cookie)
+        .send(body);
+
+    const declaredColumns = async (tenantId: string) =>
+      prisma.fiscalEmitterProfile.findUniqueOrThrow({
+        where: { tenantId },
+        select: {
+          defaultEstablishmentId: true,
+          defaultExpeditionPoint: true,
+          defaultDocumentType: true,
+        },
+      });
+
+    const declarationAudits = (tenantId: string) =>
+      prisma.auditLog.findMany({
+        where: { tenantId, action: "fiscal.issuance_point.declared" },
+      });
+
+    const UNDECLARED = {
+      defaultEstablishmentId: null,
+      defaultExpeditionPoint: null,
+      defaultDocumentType: null,
+    };
+
+    it("refuses an anonymous caller, a tenant without the fiscal capability and a member without the permission", async () => {
+      const body = { establishmentId: randomUUID(), expeditionPoint: "001", documentType: 1 };
+      await supertest(serverUrl)
+        .put("/fiscal/emitter-profile/issuance-point")
+        .send(body)
+        .expect(401);
+
+      const unentitled = await provisionFiscalTenant(
+        `fisc017-unentitled-${randomUUID().slice(0, 8)}`,
+        { features: [] }
+      );
+      const notEntitled = await declare(unentitled.cookie, body).expect(403);
+      expect((notEntitled.body as ErrorEnvelope).error.code).toBe("FEATURE_NOT_ENTITLED");
+
+      const veterinarian = await provisionFiscalTenant(`fisc017-vet-${randomUUID().slice(0, 8)}`, {
+        roleCode: "VETERINARIAN",
+      });
+      const forbidden = await declare(veterinarian.cookie, body).expect(403);
+      expect((forbidden.body as ErrorEnvelope).error.code).toBe("FORBIDDEN");
+    }, 30_000);
+
+    it("refuses a non-strict body with 400", async () => {
+      const { cookie } = await provisionFiscalTenant(`fisc017-body-${randomUUID().slice(0, 8)}`);
+      const valid = { establishmentId: randomUUID(), expeditionPoint: "001", documentType: 1 };
+      for (const body of [
+        { ...valid, tenantId: randomUUID() },
+        { ...valid, expeditionPoint: "01" },
+        { ...valid, documentType: 2 },
+        { ...valid, establishmentId: "not-a-uuid" },
+      ]) {
+        const refused = await declare(cookie, body).expect(400);
+        expect((refused.body as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+      }
+    }, 30_000);
+
+    it("answers 404 without a profile and for another tenant's establishment, writing nothing", async () => {
+      const owner = await provisionFiscalTenant(`fisc017-own-${randomUUID().slice(0, 8)}`);
+      const foreign = await provisionFiscalTenant(`fisc017-foreign-${randomUUID().slice(0, 8)}`);
+      const foreignEstablishmentId = await createEstablishment(foreign.cookie);
+      await createRange(foreign.cookie, foreignEstablishmentId, 1, "12345678");
+      const body = {
+        establishmentId: foreignEstablishmentId,
+        expeditionPoint: "001",
+        documentType: 1,
+      };
+
+      // No profile yet: 404 before anything else is looked at.
+      const noProfile = await declare(owner.cookie, body).expect(404);
+      expect((noProfile.body as ErrorEnvelope).error.code).toBe("NOT_FOUND");
+
+      await saveProfile(owner.cookie);
+      await saveProfile(foreign.cookie);
+      // The foreign establishment HAS an ACTIVE range: only the tenant scoping
+      // can make this a 404, and it must read exactly like an unknown id.
+      const crossTenant = await declare(owner.cookie, body).expect(404);
+      const unknown = await declare(owner.cookie, {
+        ...body,
+        establishmentId: randomUUID(),
+      }).expect(404);
+      expect(crossTenant.body).toMatchObject({ error: { code: "NOT_FOUND" } });
+      expect((crossTenant.body as { error: { message?: string } }).error.message).toBe(
+        (unknown.body as { error: { message?: string } }).error.message
+      );
+
+      expect(await declaredColumns(owner.tenantId)).toEqual(UNDECLARED);
+      expect(await declaredColumns(foreign.tenantId)).toEqual(UNDECLARED);
+      expect(await declarationAudits(owner.tenantId)).toEqual([]);
+      expect(await declarationAudits(foreign.tenantId)).toEqual([]);
+    }, 30_000);
+
+    it("answers 409 when the point has no ACTIVE range, writing nothing", async () => {
+      const { tenantId, cookie } = await provisionFiscalTenant(
+        `fisc017-norange-${randomUUID().slice(0, 8)}`
+      );
+      await saveProfile(cookie);
+      const establishmentId = await createEstablishment(cookie);
+      // A credit-note range only: the declared type (1) still resolves to none.
+      await createRange(cookie, establishmentId, 5, "87654321");
+
+      const refused = await declare(cookie, {
+        establishmentId,
+        expeditionPoint: "001",
+        documentType: 1,
+      }).expect(409);
+      const error = (refused.body as { error: { code: string; message: string } }).error;
+      expect(error.code).toBe("CONFLICT");
+      expect(error.message.startsWith(NO_RANGE_PREFIX)).toBe(true);
+      expect(await declaredColumns(tenantId)).toEqual(UNDECLARED);
+      expect(await declarationAudits(tenantId)).toEqual([]);
+    }, 30_000);
+
+    it("declares the point through the route, and a reversal of a confirmed invoice then issues the credit note", async () => {
+      const { tenantId, cookie } = await provisionFiscalTenant(
+        `fisc017-nce-${randomUUID().slice(0, 8)}`,
+        { features: ["fiscal", "billing", "sales", "cash"] }
+      );
+      await saveProfile(cookie);
+      const establishmentId = await createEstablishment(cookie);
+      await createRange(cookie, establishmentId, 1, "12345678");
+      const creditNoteRange = await createRange(cookie, establishmentId, 5, "87654321");
+
+      const declared = await declare(cookie, {
+        establishmentId,
+        expeditionPoint: "001",
+        documentType: 1,
+      }).expect(200);
+      expect(declared.body).toEqual({
+        issuancePoint: {
+          establishmentId,
+          establishmentCode: "001",
+          expeditionPoint: "001",
+          documentType: 1,
+        },
+        creditNoteRangeActive: true,
+      });
+      expect(await declaredColumns(tenantId)).toEqual({
+        defaultEstablishmentId: establishmentId,
+        defaultExpeditionPoint: "001",
+        defaultDocumentType: 1,
+      });
+      const audits = await declarationAudits(tenantId);
+      expect(audits).toHaveLength(1);
+      expect(audits[0].targetType).toBe("fiscal_emitter_profile");
+      expect(audits[0].metadata).toEqual({
+        schemaVersion: 1,
+        establishmentCode: "001",
+        expeditionPoint: "001",
+        documentType: 1,
+        creditNoteRangeActive: true,
+      });
+      const read = await supertest(serverUrl)
+        .get("/fiscal/emitter-profile")
+        .set("Cookie", cookie)
+        .expect(200);
+      expect((read.body as { issuancePoint: unknown }).issuancePoint).toEqual(
+        (declared.body as { issuancePoint: unknown }).issuancePoint
+      );
+      // Saving the profile again keeps the declaration.
+      await saveProfile(cookie);
+      expect((await declaredColumns(tenantId)).defaultEstablishmentId).toBe(establishmentId);
+
+      // A completed cash sale, invoiced and confirmed through the real routes.
+      const exempt = await prisma.taxRate.findFirst({ where: { code: "EXEMPT" } });
+      if (!exempt) {
+        throw new Error("Reference seed did not create the global EXEMPT tax rate");
+      }
+      const item = await supertest(serverUrl)
+        .post("/catalog")
+        .set("Cookie", cookie)
+        .send({
+          kind: "SUPPLY",
+          name: "FISC-017 item",
+          taxRateId: exempt.id,
+          referencePriceAmount: "1000.00",
+          referencePriceCurrency: "PYG",
+        })
+        .expect(201);
+      const itemId = (item.body as { id: string }).id;
+      await supertest(serverUrl)
+        .post("/inventory/stock/adjustments")
+        .set("Cookie", cookie)
+        .send({ catalogItemId: itemId, quantity: "5.000", reason: "FISC-017 funding" })
+        .expect(201);
+      const register = await supertest(serverUrl)
+        .post("/cash/registers")
+        .set("Cookie", cookie)
+        .send({ name: "FISC-017 drawer" })
+        .expect(201);
+      await supertest(serverUrl)
+        .post("/cash/sessions")
+        .set("Cookie", cookie)
+        .send({ registerId: (register.body as { id: string }).id, openingAmount: "0.00" })
+        .expect(201);
+      const draft = await supertest(serverUrl)
+        .post("/sales")
+        .set("Cookie", cookie)
+        .send({ lines: [{ catalogItemId: itemId, quantity: "1.000" }] })
+        .expect(201);
+      const saleId = (draft.body as SaleDto).id;
+      await supertest(serverUrl)
+        .post(`/sales/${saleId}/complete`)
+        .set("Cookie", cookie)
+        .send({ payments: [{ method: "CASH", amount: "1000.00" }] })
+        .expect(201);
+      const invoice = await supertest(serverUrl)
+        .post("/invoices")
+        .set("Cookie", cookie)
+        .send({ saleId })
+        .expect(201);
+      const invoiceId = (invoice.body as { id: string }).id;
+      await supertest(serverUrl)
+        .post(`/invoices/${invoiceId}/confirm`)
+        .set("Cookie", cookie)
+        .expect(200);
+      // The confirmation drew its fiscal number from the DECLARED point.
+      const allocation = await prisma.$queryRaw<
+        { establishment_id: string; document_type: number }[]
+      >`
+        SELECT "establishment_id"::text AS establishment_id, "document_type"
+        FROM "invoice_fiscal_allocation" WHERE "invoice_id" = ${invoiceId}::uuid
+      `;
+      expect(allocation).toEqual([{ establishment_id: establishmentId, document_type: 1 }]);
+
+      // SIFEN's approval of the factura is the provider's answer, which no route
+      // writes: this is the one raw row, and it is not the issuance point.
+      await prisma.$executeRaw`
+        INSERT INTO "fiscal_document" (
+          "id", "tenant_id", "invoice_id", "provider", "status", "cdc", "resolved_at"
+        ) VALUES (
+          ${randomUUID()}::uuid, ${tenantId}::uuid, ${invoiceId}::uuid,
+          'THIRD_PARTY'::fiscal_provider, 'APPROVED'::fiscal_document_status,
+          ${FACTURA_CDC}, now()
+        )
+      `;
+
+      const reversed = await supertest(serverUrl)
+        .post(`/sales/${saleId}/reverse`)
+        .set("Cookie", cookie)
+        .set("Idempotency-Key", randomUUID())
+        .send({ reason: "Cliente devolvió el producto" })
+        .expect(201);
+      const creditNote = (reversed.body as { creditNote: { id: string; number: string } | null })
+        .creditNote;
+      expect(creditNote).not.toBeNull();
+      expect(creditNote?.number).toBe("001-001-0000001");
+      const note = await prisma.creditNote.findFirstOrThrow({ where: { tenantId, invoiceId } });
+      expect(note.rangeId).toBe((creditNoteRange.body as { id: string }).id);
+      expect(note.documentType).toBe(5);
+    }, 60_000);
   });
 
   describe("SAL-REV-001 completed-sale reversal and UX-035 recoverable attempts against real PostgreSQL", () => {

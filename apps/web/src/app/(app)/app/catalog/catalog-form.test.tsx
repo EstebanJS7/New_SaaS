@@ -615,3 +615,146 @@ describe("Catalog accessible exact input", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 });
+
+describe("CatalogForm — unidad de medida SIFEN (FISC-020 T9)", () => {
+  const UNITS = [
+    { code: "77", description: "Unidad - UNI", symbol: "UNI" },
+    { code: "83", description: "Kilogramos - kg", symbol: "kg" },
+  ];
+
+  function mockRatesAndUnits(units: unknown = UNITS): void {
+    global.fetch = vi.fn((input: RequestInfo | URL) => {
+      const url = resolveUrl(input);
+      if (url.endsWith("/api/catalog/tax-rates")) return Promise.resolve(jsonResponse(RATES));
+      if (url.endsWith("/api/catalog/units-of-measure"))
+        return Promise.resolve(jsonResponse(units));
+      return Promise.resolve(jsonResponse({ error: { code: "NOT_FOUND" } }, 404));
+    });
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("offers the SIFEN units sorted by their es-PY label, with no unit preselected", async () => {
+    mockRatesAndUnits();
+    render(
+      <TestWrapper>
+        <CatalogForm onSubmit={vi.fn()} isPending={false} error={null} />
+      </TestWrapper>
+    );
+
+    await screen.findByRole("option", { name: "Unidad - UNI" });
+    const unit = screen.getByRole("combobox", { name: "Unidad de medida (opcional)" });
+    expect(unit).toHaveValue("");
+    expect(
+      within(unit)
+        .getAllByRole("option")
+        .map((option) => option.textContent)
+    ).toEqual(["Sin unidad declarada", "Kilogramos - kg", "Unidad - UNI"]);
+  });
+
+  it("sends the selected unit on create and omits it when none is selected", async () => {
+    mockRatesAndUnits();
+    const onSubmit = vi.fn();
+    render(
+      <TestWrapper>
+        <CatalogForm onSubmit={onSubmit} isPending={false} error={null} />
+      </TestWrapper>
+    );
+    await fillCreate();
+    await screen.findByRole("option", { name: "Unidad - UNI" });
+
+    submitForm();
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith({
+        name: "Artículo sintético",
+        kind: "PRODUCT",
+        taxRateId: RATE_ID,
+      })
+    );
+
+    onSubmit.mockClear();
+    fireEvent.change(screen.getByLabelText("Unidad de medida (opcional)"), {
+      target: { value: "83" },
+    });
+    submitForm();
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith({
+        name: "Artículo sintético",
+        kind: "PRODUCT",
+        taxRateId: RATE_ID,
+        unitOfMeasureCode: "83",
+      })
+    );
+  });
+
+  it("on edit prefills the unit, omits it when untouched, replaces it and clears it with null", async () => {
+    mockRatesAndUnits();
+    const onSubmit = vi.fn();
+    render(
+      <TestWrapper>
+        <CatalogForm
+          item={{ ...ITEM, unitOfMeasureCode: "77" }}
+          onSubmit={onSubmit}
+          isPending={false}
+          error={null}
+        />
+      </TestWrapper>
+    );
+    await screen.findByRole("option", { name: "Unidad - UNI" });
+    expect(screen.getByLabelText("Unidad de medida (opcional)")).toHaveValue("77");
+
+    submitForm();
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({}));
+
+    onSubmit.mockClear();
+    fireEvent.change(screen.getByLabelText("Unidad de medida (opcional)"), {
+      target: { value: "83" },
+    });
+    submitForm();
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({ unitOfMeasureCode: "83" }));
+
+    onSubmit.mockClear();
+    fireEvent.change(screen.getByLabelText("Unidad de medida (opcional)"), {
+      target: { value: "" },
+    });
+    submitForm();
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({ unitOfMeasureCode: null }));
+  });
+
+  it("still saves the item when the unit list cannot be read, leaving the unit untouched", async () => {
+    mockRatesAndUnits(null);
+    global.fetch = vi.fn((input: RequestInfo | URL) =>
+      Promise.resolve(
+        resolveUrl(input).endsWith("/api/catalog/tax-rates")
+          ? jsonResponse(RATES)
+          : jsonResponse({ error: { code: "INTERNAL" } }, 500)
+      )
+    );
+    const onSubmit = vi.fn();
+    render(
+      <TestWrapper>
+        <CatalogForm
+          item={{ ...ITEM, unitOfMeasureCode: "77" }}
+          onSubmit={onSubmit}
+          isPending={false}
+          error={null}
+        />
+      </TestWrapper>
+    );
+    await screen.findByRole("option", { name: "IVA 10%" });
+    expect(
+      await screen.findByText(
+        "No pudimos cargar las unidades de medida. La unidad actual se conserva."
+      )
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Unidad de medida (opcional)")).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("Nombre (obligatorio)"), {
+      target: { value: "Renombrado" },
+    });
+    submitForm();
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({ name: "Renombrado" }));
+  });
+});

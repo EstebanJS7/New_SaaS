@@ -40,8 +40,15 @@ interface CatalogItemDto {
   isActive: boolean;
   tracksStock: boolean;
   lowStockThreshold: string | null;
+  unitOfMeasureCode: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+interface UnitOfMeasureDto {
+  code: string;
+  description: string;
+  symbol: string;
 }
 
 interface ErrorDto {
@@ -61,6 +68,7 @@ const CATALOG_ITEM_RESPONSE_KEYS: readonly string[] = [
   "isActive",
   "tracksStock",
   "lowStockThreshold",
+  "unitOfMeasureCode",
   "createdAt",
   "updatedAt",
 ];
@@ -1027,5 +1035,145 @@ describe("Catalog writes HTTP boundary (EPIC-09 WU2)", () => {
       .expect(404);
 
     expect(booted.db.tables.catalogItems.has(item.id)).toBe(true);
+  });
+});
+
+/**
+ * FISC-020 T9 (DEC-097): the optional SIFEN unit of measure on a catalog item.
+ * The HTTP boundary validates the code against the protocol's own list and
+ * keeps the existing permissions. Persistence semantics (absent preserves,
+ * `null` clears) are pinned in `catalog.service.test.ts` against a fake
+ * delegate that stores the column.
+ */
+describe("Catalog unit of measure HTTP boundary (FISC-020 T9)", () => {
+  let booted: BootedTestApp;
+  let fixture: CatalogHttpFixture;
+
+  beforeAll(async () => {
+    booted = await bootTestApp();
+    fixture = seedCatalogHttp(booted.db);
+  });
+
+  afterAll(async () => {
+    await booted.close();
+  });
+
+  it("lists the SIFEN units of measure under catalog.read and denies a caller without it", async () => {
+    const response = await supertest(booted.app.getHttpServer())
+      .get("/catalog/units-of-measure")
+      .set("Cookie", fixture.readOnly.cookie)
+      .expect(200);
+    const units = response.body as UnitOfMeasureDto[];
+    expect(units).toHaveLength(64);
+    expect(units).toContainEqual({ code: "77", description: "Unidad - UNI", symbol: "UNI" });
+    for (const unit of units)
+      expect(Object.keys(unit).sort()).toEqual(["code", "description", "symbol"]);
+
+    const denied = await supertest(booted.app.getHttpServer())
+      .get("/catalog/units-of-measure")
+      .set("Cookie", fixture.noPermission.cookie)
+      .expect(403);
+    expect((denied.body as ErrorDto).error.code).toBe("FORBIDDEN");
+  });
+
+  it("creates an item without a unit exactly as before: no unit is invented", async () => {
+    const response = await supertest(booted.app.getHttpServer())
+      .post("/catalog")
+      .set("Cookie", fixture.a.actor.cookie)
+      .send(createBody())
+      .expect(201);
+    const body = response.body as CatalogItemDto;
+    expect(body.unitOfMeasureCode).toBeNull();
+    const [audit] = auditsForTarget(booted, body.id);
+    expect(audit && changedFieldsOf(audit)).toEqual(["kind", "name", "taxRateId"]);
+  });
+
+  it("accepts a published unit code on create and records only its field name in the audit", async () => {
+    const response = await supertest(booted.app.getHttpServer())
+      .post("/catalog")
+      .set("Cookie", fixture.a.actor.cookie)
+      .send(createBody({ unitOfMeasureCode: "77" }))
+      .expect(201);
+    const body = response.body as CatalogItemDto;
+    expect(Object.keys(body).sort()).toEqual([...CATALOG_ITEM_RESPONSE_KEYS].sort());
+    const [audit] = auditsForTarget(booted, body.id);
+    expect(audit && changedFieldsOf(audit)).toEqual([
+      "kind",
+      "name",
+      "taxRateId",
+      "unitOfMeasureCode",
+    ]);
+    expect(JSON.stringify(audit?.metadata)).not.toContain('"77"');
+  });
+
+  it("rejects an unknown, re-spelled or non-string unit code on create and update and persists nothing", async () => {
+    const item = fixture.createItem(fixture.a, { name: "Unidad intacta" });
+    const itemsBefore = booted.db.tables.catalogItems.size;
+    const auditsBefore = booted.db.tables.audits.size;
+
+    for (const unitOfMeasureCode of ["9999", "077", "UNI", "", 77, true]) {
+      const created = await supertest(booted.app.getHttpServer())
+        .post("/catalog")
+        .set("Cookie", fixture.a.actor.cookie)
+        .send(createBody({ unitOfMeasureCode }))
+        .expect(400);
+      expect((created.body as ErrorDto).error.code, String(unitOfMeasureCode)).toBe(
+        "VALIDATION_FAILED"
+      );
+
+      const updated = await supertest(booted.app.getHttpServer())
+        .put(`/catalog/${item.id}`)
+        .set("Cookie", fixture.a.actor.cookie)
+        .send({ unitOfMeasureCode })
+        .expect(400);
+      expect((updated.body as ErrorDto).error.code, String(unitOfMeasureCode)).toBe(
+        "VALIDATION_FAILED"
+      );
+    }
+
+    expect(booted.db.tables.catalogItems.size).toBe(itemsBefore);
+    expect(booted.db.tables.audits.size).toBe(auditsBefore);
+  });
+
+  it("accepts an explicit null clear on update and names the field in the audit", async () => {
+    const item = fixture.createItem(fixture.a, { name: "Unidad a quitar" });
+
+    await supertest(booted.app.getHttpServer())
+      .put(`/catalog/${item.id}`)
+      .set("Cookie", fixture.a.actor.cookie)
+      .send({ unitOfMeasureCode: null })
+      .expect(200);
+
+    const [audit] = auditsForTarget(booted, item.id);
+    expect(audit && changedFieldsOf(audit)).toEqual(["unitOfMeasureCode"]);
+  });
+
+  it("keeps the update permission: a read-only member cannot declare a unit", async () => {
+    const item = fixture.createItem(fixture.a, { name: "Solo lectura" });
+    const auditsBefore = booted.db.tables.audits.size;
+
+    const response = await supertest(booted.app.getHttpServer())
+      .put(`/catalog/${item.id}`)
+      .set("Cookie", fixture.readOnly.cookie)
+      .send({ unitOfMeasureCode: "77" })
+      .expect(403);
+
+    expect((response.body as ErrorDto).error.code).toBe("FORBIDDEN");
+    expect(booted.db.tables.audits.size).toBe(auditsBefore);
+  });
+
+  it("masks a foreign unit update as the same 404 as an unknown id", async () => {
+    const foreign = fixture.createItem(fixture.b, { name: "Ajeno" });
+
+    await expectCrossTenant404({
+      app: booted.app,
+      cookie: fixture.a.actor.cookie,
+      method: "PUT",
+      body: { unitOfMeasureCode: "77" },
+      nonexistentUrl: `/catalog/${randomUUID()}`,
+      foreignUrl: `/catalog/${foreign.id}`,
+      forbiddenIdentifiers: [foreign.id, fixture.b.tenant.id],
+    });
+    expect(booted.db.tables.catalogItems.get(foreign.id)?.name).toBe("Ajeno");
   });
 });

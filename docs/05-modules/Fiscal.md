@@ -2,7 +2,7 @@
 type: module
 status: implemented
 epic: EPIC-15 + EPIC-16
-updated: 2026-10-09
+updated: 2026-11-09
 ---
 
 # Fiscal
@@ -92,7 +92,41 @@ identity comes from authenticated server context, not caller input.
 | `POST /fiscal/signing-material`            | `fiscal.signing_material.manage` | Load a signing material (`201`). `multipart/form-data` with `file` (a PKCS#12, at most 64 KiB), `password` and `environment` (`TEST`/`PRODUCTION`); part order is not assumed. A material already `ACTIVE` for that environment is retired and its stored key destroyed in the same transaction. Every rejection carries its own message.                              |
 | `GET /fiscal/signing-material`             | `fiscal.signing_material.manage` | List the tenant's materials, newest first. Metadata only: the `credentialRef`, the certificate PEM and the private key are never returned.                                                                                                                                                                                                                             |
 | `POST /fiscal/signing-material/:id/retire` | `fiscal.signing_material.manage` | Retire (`200`) with a required reason of at most 500 characters. The stored private key is destroyed in the same transaction and the row survives as the record. A repeat is `409`; an unknown or foreign id is a byte-equivalent `404`.                                                                                                                               |
+| `POST /fiscal/csc`                         | `fiscal.signing_material.manage` | Load a CSC (`201`). Strict JSON `{ environment, idCsc, value }`: `TEST`/`PRODUCTION`, a four-character `idCsc` (§24.3) and a 32-character alphanumeric `value` (§24.2). The value goes only to the secret store. An `idCsc` already `ACTIVE` in that environment, or a third `ACTIVE` CSC, is `409` with nothing written.                                              |
+| `GET /fiscal/csc`                          | `fiscal.signing_material.manage` | List the tenant's CSCs, newest first. Metadata only (`id`, `environment`, `idCsc`, `status`, `createdAt`, `retiredAt`, `retirementReason`); the value and `secretRef` are never returned.                                                                                                                                                                              |
+| `POST /fiscal/csc/:id/retire`              | `fiscal.signing_material.manage` | Retire (`200`) with a required reason of 1-500 trimmed characters. The stored value is destroyed in the same transaction and the row survives. A repeat is `409`; an unknown or foreign id is `404`.                                                                                                                                                                   |
 | `POST /fiscal/timbrado-ranges/:id/void`    | `fiscal.range.void`              | Void the range's **remaining numbers** at the provider (`200`). The body carries a reason only — the interval is read from the range — and the answer is the `fiscal_range_void` record. A retired range, an empty tail, a document type the event cannot express and an invalid reason are each a named refusal; an unknown or foreign id is a byte-equivalent `404`. |
+
+### Declaring the issuance point
+
+`PUT /fiscal/emitter-profile/issuance-point` (`fiscal.profile.manage`,
+[[FISC-017]], [[DEC-095]] delivery 1) declares the establishment, point of
+expedition and document type the tenant issues from ([[DEC-057]] Q4). It is the
+only route that writes `default_establishment_id`, `default_expedition_point`
+and `default_document_type`; `PUT /fiscal/emitter-profile` never touches them.
+
+- **Body** (strict, any extra field is `400 VALIDATION_FAILED`):
+  `{ establishmentId: uuid, expeditionPoint: "^[0-9]{3}$", documentType: 1 | 4 | 5 | 6 | 7 | 9 | 10 }`.
+- **Order:** the `fiscal` entitlement (`403 FEATURE_NOT_ENTITLED`), the
+  permission (`403 FORBIDDEN`), then one transaction: no profile is `404`; an
+  unknown establishment and another tenant's establishment are the same `404`.
+- **Exactly one ACTIVE range:** `(tenant, establishment, point, type)` must
+  match exactly one `ACTIVE` timbrado range — the allocation's own count, run at
+  declaration time. None is `409` ("No hay un timbrado activo para el
+  establecimiento 001, punto de expedición 001 y tipo de documento 1: …") and
+  more than one is `409` ("Hay más de un timbrado activo para …"); nothing is
+  written in either case. Like the allocation's count it is a validation, not a
+  lock: a range retired later is caught again when a number is allocated.
+- **Write:** the three columns together, plus one audit row in the same
+  transaction. Declaring again replaces the point.
+- **Answer (`200`):**
+  `{ issuancePoint: { establishmentId, establishmentCode, expeditionPoint, documentType }, creditNoteRangeActive }`,
+  where `creditNoteRangeActive` says whether an `ACTIVE` type-5 range exists at
+  the same establishment and point. It is reported, not required: a credit note
+  refuses on its own when none exists ([[DEC-090]] §4).
+
+`GET /fiscal/emitter-profile` (and the `PUT` profile answer) carry the same
+`issuancePoint` object, or `null` while nothing is declared — an additive field.
 
 There is no update, delete, retry, status patch or reopen route. Cancellation
 reuses `fiscal.invoice.issue` because no separate cancel key was accepted
@@ -505,6 +539,29 @@ is enforced by `node:crypto` (`X509Certificate.checkPrivateKey` for the pair,
 `modulusLength` for the pinned RSA minimum, `validToDate` for expiry). Node
 cannot open a PKCS#12 in any form, which is why that dependency exists at all.
 
+## The CSC boundary
+
+[[FISC-019]] gives the CSC (the QR's security code, SIFEN-BASELINE §24.2) its
+only write path. The value is **RESTRICTED** and follows the private key's
+rules: it is sealed in `tenant_secret` under an opaque `fcsc_…` `secretRef`,
+never returned, audited, logged or interpolated into an error. `idCsc` is not
+secret — the QR carries it — and is stored on the row.
+
+- **The database owns the SIFEN bounds.** The partial unique index allows one
+  `ACTIVE` row per `(tenant, environment, idCsc)` and the
+  `tenant_fiscal_csc_at_most_two_active` trigger allows two `ACTIVE` per
+  environment. The load inserts the row **before** storing the value, inside one
+  SERIALIZABLE transaction with the audit row, so a refused insert never reaches
+  the secret store and the trigger's READ COMMITTED counting window is closed.
+  Each refusal maps to a stable `409` message; a serialization failure is a
+  `409` asking to retry.
+- **Retirement destroys the value** in the same transaction and keeps the row.
+- **The worker reads what the route wrote.** `createFiscalCscReader`
+  (`packages/fiscal-persistence`) picks the first `ACTIVE` CSC by `idCsc` and
+  reads its value from the same store (live-pg proves the round trip).
+- The routes reuse `fiscal.signing_material.manage`: both are taxpayer secrets
+  that authenticate to SIFEN.
+
 ## Staff surface
 
 `/app/fiscal` provides the status-filtered document list, the document detail
@@ -520,6 +577,20 @@ the authority for permission and entitlement checks. The client pins its own
 runtime status mirror because the API's status union is server-side only, and it
 renders an API `409` verbatim rather than replacing it with an invented local
 rule.
+
+`/app/settings/fiscal` («Configuración › Configuración fiscal», [[FISC-018]])
+configures the emitter profile, the establishments (add, edit), the timbrado
+ranges (add, retire with a reason after a confirmation) and the issuance point,
+chosen among the ACTIVE ranges and declared through FISC-017's route; it warns
+when the declared point has no ACTIVE credit-note range. Its navigation entry
+also declares `requiredFeature: "fiscal"`; a `403` renders a permission state
+with no form. For it the proxy additionally allowlists
+`GET`/`PUT emitter-profile`, `PUT emitter-profile/issuance-point`,
+`GET`/`POST establishments`, `PUT establishments/:id`,
+`GET`/`POST timbrado-ranges` and `POST timbrado-ranges/:id/retire`, forwarded
+under the API's `/fiscal` prefix, with ids accepted only as UUIDs (`400`
+otherwise) and top-level body keys limited to each route's contract. The range
+void and the signing material stay API-only (`404` at the proxy).
 
 ## Does Not Own
 
@@ -552,13 +623,18 @@ Accepted mutations write one co-committed audit row:
 `fiscal.document.submitted`, `fiscal.document.submission_failed` and
 `fiscal.document.submission_requeued` from the worker with `actorType: SYSTEM`.
 The signing-material commands write `fiscal.signing_material.uploaded` and
-`fiscal.signing_material.retired`, and the range void writes
-`fiscal.timbrado_range.voided` or `fiscal.timbrado_range.void_failed` (FISC-016
-WU-D). Audit metadata carries a schema version, the outcome and field names only
-— never the cancellation reason text, never the void's reason either (it lives
-in the `fiscal_range_void` row the metadata points at), never a provider
-payload, never a certificate PEM, a private key or a `credentialRef`. Reads are
-not audited.
+`fiscal.signing_material.retired`; the CSC commands write `fiscal.csc.loaded`
+and `fiscal.csc.retired` (target `fiscal_csc`) with `{ environment, idCsc }`
+only ([[FISC-019]]); and the range void writes `fiscal.timbrado_range.voided` or
+`fiscal.timbrado_range.void_failed` (FISC-016 WU-D). The issuance-point
+declaration writes `fiscal.issuance_point.declared` (target
+`fiscal_emitter_profile`) with
+`{ schemaVersion: 1, establishmentCode, expeditionPoint, documentType, creditNoteRangeActive }`
+and no RUC (FISC-017). Audit metadata carries a schema version, the outcome and
+field names only — never the cancellation reason text, never the void's reason
+either (it lives in the `fiscal_range_void` row the metadata points at), never a
+provider payload, never a certificate PEM, a private key or a `credentialRef`.
+Reads are not audited.
 
 Provider references (`external_id`, `cdc`, storage keys) and the
 request/response snapshots are CONFIDENTIAL; status, attempt counters,
@@ -569,6 +645,20 @@ message are written through the same 500-character scrub the cancellation's
 error columns use. A tenant's signing private key is **RESTRICTED**:
 `tenant_secret` stores only ciphertext, the store never logs, and no DTO exposes
 it. Logs and audit carry IDs and field names only.
+
+The emitter-profile and establishment reads (and the `PUT`/`POST` answers)
+return every saved field so the settings screen prefills its edit forms
+(FISC-018 review). The responsible issuer (`responsibleIssuer`: `type`,
+`typeName`, `id`, `name`, `role`, or `null`) is a natural person's identity: its
+document number `id` and `name` are **CONFIDENTIAL**; `type`, `typeName` and
+`role` are INTERNAL. The establishment's `addressComplement1`,
+`addressComplement2`, `districtName`, `cityName`, `phone`, `email` and
+`branchName` are business contact data, **INTERNAL**. All of them are returned
+only behind `fiscal.profile.manage`, through the DTO mappers, never logged, and
+the profile and establishment audit rows keep field names and the code only. The
+profile and establishment bodies — and every object nested in them
+(`responsibleIssuer`, `activities[]`, `district`) — are `strict()`: an unknown
+key is a `400 VALIDATION_FAILED`, not a silently stripped field.
 
 ## Settings
 
@@ -640,6 +730,20 @@ because they are deployment concerns rather than tenant behavior.
   and it could not be executed for this unit (no PostgreSQL server accepted
   connections on the configured port), so the total is arithmetic rather than an
   observed run.
+- FISC-017 — `timbrado.service.test.ts` drives the declaration through the real
+  repository over a stateful fake (gates, both `404`s, both `409`s with nothing
+  written, the exact columns and audit metadata, the credit-note flag,
+  re-declaration, the `GET` field and a profile save that keeps the point);
+  `timbrado.zod.test.ts` pins the strict body; the route probe pins the route
+  with `fiscal.profile.manage`. The live-pg block "EPIC-16 FISC-017
+  issuance-point declaration" (**5 cases**) proves `401`,
+  `FEATURE_NOT_ENTITLED`, `FORBIDDEN`, the strict body, the cross-tenant `404`,
+  the `409` with nothing written, and the end-to-end path: profile,
+  establishment, ranges and point declared over HTTP, an invoice confirmed from
+  that point, and a sale reversal that issues the credit note from the type-5
+  range. The FISC-015 identity and WU-B allocation blocks keep their raw SQL
+  declaration on purpose: they probe the CHECKs and the "no range"/"ambiguous"
+  states the route refuses to create.
 - The FISC-007 integration suite runs against the in-memory database double,
   which now models `tenant_secret` and `tenant_fiscal_signing_material`. The
   partial unique index and the CHECK constraints are enforced by PostgreSQL
@@ -653,7 +757,12 @@ because they are deployment concerns rather than tenant behavior.
   largest limitation and the one that keeps `done` from meaning ready.
 - **The worker's assembly needs the tenant's declared fiscal identity**: a
   tenant that has not declared its timbrado, its activity and its default
-  issuance point cannot issue ([[DEC-057]]).
+  issuance point cannot issue ([[DEC-057]]). The point is declared through
+  `PUT /fiscal/emitter-profile/issuance-point` ([[FISC-017]]), from the
+  «Configuración fiscal» screen ([[FISC-018]]). The signing certificate has no
+  screen yet ([[DEC-095]] delivery 3); the CSC has API routes ([[FISC-019]]) but
+  no screen yet, so a tenant still cannot reach an APPROVED DE from the app
+  alone.
 - **The AFE and the NRE render their header, their items and their CDC, and name
   the rest**: their own blocks are `gDtipDE` members the assembly does not emit,
   so §13.2's content rule forbids printing them.

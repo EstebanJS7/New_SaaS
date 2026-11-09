@@ -219,4 +219,54 @@ describe("Catalog exact detail", () => {
     expect(screen.queryByText("PRIVATE")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Editar artículo" })).not.toBeInTheDocument();
   });
+
+  it("shows the declared SIFEN unit by its es-PY label (FISC-020 T9)", async () => {
+    global.fetch = vi.fn((input: RequestInfo | URL) =>
+      Promise.resolve(
+        resolveUrl(input).endsWith("/api/catalog/units-of-measure")
+          ? jsonResponse([{ code: "77", description: "Unidad - UNI", symbol: "UNI" }])
+          : jsonResponse({ ...ITEM, unitOfMeasureCode: "77" })
+      )
+    );
+
+    render(
+      <TestWrapper>
+        <CatalogItemDetail />
+      </TestWrapper>
+    );
+
+    expect(await screen.findByText("Unidad - UNI")).toBeInTheDocument();
+    expect(screen.getByText("Unidad de medida")).toBeInTheDocument();
+  });
+
+  it("says no unit is declared without inventing one or reading the unit list", async () => {
+    const fetchMock = mockFetch(() => jsonResponse({ ...ITEM, unitOfMeasureCode: null }));
+
+    render(
+      <TestWrapper>
+        <CatalogItemDetail />
+      </TestWrapper>
+    );
+
+    expect(await screen.findByText("Sin unidad declarada")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the bare code when the unit list is unavailable", async () => {
+    global.fetch = vi.fn((input: RequestInfo | URL) =>
+      Promise.resolve(
+        resolveUrl(input).endsWith("/api/catalog/units-of-measure")
+          ? jsonResponse({ error: { code: "INTERNAL" } }, 500)
+          : jsonResponse({ ...ITEM, unitOfMeasureCode: "77" })
+      )
+    );
+
+    render(
+      <TestWrapper>
+        <CatalogItemDetail />
+      </TestWrapper>
+    );
+
+    expect(await screen.findByText("Código SIFEN 77")).toBeInTheDocument();
+  });
 });

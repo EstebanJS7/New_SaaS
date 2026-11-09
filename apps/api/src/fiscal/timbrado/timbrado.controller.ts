@@ -7,17 +7,20 @@ import {
   toEmitterProfileResponse,
   toEstablishmentResponse,
   toFiscalRangeVoidResponse,
+  toIssuancePointDeclarationResponse,
   toTimbradoRangeResponse,
   type EmitterProfileResponse,
   type EstablishmentListResponse,
   type EstablishmentResponse,
   type FiscalRangeVoidResponse,
+  type IssuancePointDeclarationResponse,
   type TimbradoRangeListResponse,
   type TimbradoRangeResponse,
 } from "./timbrado.dto.js";
 import { FiscalProfileService } from "./timbrado.service.js";
 import {
   createRangeBodySchema,
+  declareIssuancePointBodySchema,
   fiscalIdParamSchema,
   retireRangeBodySchema,
   saveEstablishmentBodySchema,
@@ -72,6 +75,29 @@ export class FiscalProfileController {
   @RequirePermissions(FISCAL_PERMISSIONS.profileManage)
   async getProfile(): Promise<EmitterProfileResponse> {
     return toEmitterProfileResponse(await this.service.getProfile());
+  }
+
+  /**
+   * FISC-017 — declares the issuance point: `{ establishmentId, expeditionPoint,
+   * documentType }`, strict. The point must resolve to exactly one ACTIVE range
+   * of the tenant; declaring again replaces it.
+   */
+  @Put("emitter-profile/issuance-point")
+  @HttpCode(200)
+  @RequirePermissions(FISCAL_PERMISSIONS.profileManage)
+  async declareIssuancePoint(@Body() body: unknown): Promise<IssuancePointDeclarationResponse> {
+    const parsed = parseInput(
+      declareIssuancePointBodySchema,
+      body,
+      "Invalid issuance point declaration body."
+    );
+    return toIssuancePointDeclarationResponse(
+      await this.service.declareIssuancePoint({
+        establishmentId: parsed.establishmentId,
+        expeditionPoint: parsed.expeditionPoint,
+        documentType: parsed.documentType,
+      })
+    );
   }
 
   @Get("establishments")

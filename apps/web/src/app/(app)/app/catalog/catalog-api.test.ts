@@ -10,6 +10,7 @@ import {
   getCatalogItem,
   listCatalogItems,
   listTaxRates,
+  listUnitsOfMeasure,
   updateCatalogItem,
   userFacingCatalogError,
   type CatalogItem,
@@ -101,6 +102,37 @@ describe("catalog-api transport contract", () => {
 
     const [input] = fetchMock.mock.calls[0] as unknown as [RequestInfo | URL];
     expect(resolveRequestUrl(input)).toBe("/api/catalog/tax-rates");
+  });
+
+  it("listUnitsOfMeasure GETs /api/catalog/units-of-measure and sorts by es-PY description", async () => {
+    const units = [
+      { code: "83", description: "Kilogramos - kg", symbol: "kg" },
+      { code: "77", description: "Unidad - UNI", symbol: "UNI" },
+      { code: "97", description: "Año - AA", symbol: "AA" },
+    ];
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(units)));
+    global.fetch = fetchMock;
+
+    await expect(listUnitsOfMeasure()).resolves.toEqual([units[2], units[0], units[1]]);
+
+    const [input] = fetchMock.mock.calls[0] as unknown as [RequestInfo | URL];
+    expect(resolveRequestUrl(input)).toBe("/api/catalog/units-of-measure");
+  });
+
+  it("listUnitsOfMeasure drops malformed entries instead of rendering them", async () => {
+    global.fetch = vi.fn(() =>
+      Promise.resolve(
+        jsonResponse([
+          { code: "77", description: "Unidad - UNI", symbol: "UNI" },
+          { id: "x" },
+          null,
+        ])
+      )
+    );
+
+    await expect(listUnitsOfMeasure()).resolves.toEqual([
+      { code: "77", description: "Unidad - UNI", symbol: "UNI" },
+    ]);
   });
 
   it("createCatalogItem POSTs the body to the collection root", async () => {
