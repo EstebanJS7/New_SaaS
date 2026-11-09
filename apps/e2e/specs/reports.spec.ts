@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { expect, test, type APIRequestContext } from "@playwright/test";
+import { esPyDecimal, esPyMoney } from "../support/es-py-format.js";
 import { DEMO } from "./fixtures.js";
 
 /**
@@ -26,7 +27,7 @@ import { DEMO } from "./fixtures.js";
  * **WHAT THE SEEDED TENANT CAN AND CANNOT SHOW.** The demo seed creates
  * customers, patients, clinical records and one appointment; it creates **no
  * catalog item, no sale and no cash session**. So on a freshly seeded database
- * the four cards honestly read `0.00`, `0`, `0.00` and "no threshold is set".
+ * the four cards honestly read `Gs. 0`, `0`, `0` and "no threshold is set".
  * Rather than hardcode those zeros — which would keep passing while a card was
  * wired to the wrong report — this spec reads the SAME reports through the
  * browser's own session (`page.request` shares the context's cookies) and
@@ -116,7 +117,7 @@ test.describe("the staff reporting surfaces", () => {
     await page.goto("/login");
     await page.fill("#login-email", DEMO.staffEmail);
     await page.fill("#login-password", DEMO.staffPassword);
-    await page.getByRole("button", { name: "Sign in" }).click();
+    await page.getByRole("button", { name: "Iniciar sesión" }).click();
 
     // Signing in lands on the dashboard, and the cookie that got here is the one
     // every card's read is authenticated with.
@@ -130,13 +131,17 @@ test.describe("the staff reporting surfaces", () => {
       `/api/reports/sales-by-period?preset=${OPENING_PRESET}`
     );
     const grossCard = page.getByTestId("dashboard-card-gross");
-    // `totalGross` is a fixed-scale decimal STRING and the card prints it
-    // verbatim: the assertion is on the API's exact characters, not on a rounded
-    // number the surface might have computed.
+    // `totalGross` is a fixed-scale decimal STRING and the card prints it in its
+    // currency, localized for es-PY for reading only (PYG as `Gs.` with no minor
+    // unit). The expectation is built from the API's exact characters and its
+    // currency, not from a rounded number the surface might have computed, so a
+    // card wired to the wrong report or the wrong currency still fails here.
     await expect(grossCard.getByTestId("dashboard-card-gross-value")).toContainText(
-      requireString(salesByPeriod, "totalGross")
+      esPyMoney(
+        requireString(salesByPeriod, "totalGross"),
+        requireString(salesByPeriod, "currency")
+      )
     );
-    await expect(grossCard).toContainText(requireString(salesByPeriod, "currency"));
 
     await expect(page.getByTestId("dashboard-card-sales-value")).toContainText(
       String(requireNumber(salesByPeriod, "saleCount"))
@@ -148,7 +153,7 @@ test.describe("the staff reporting surfaces", () => {
     );
     const cashTotals = requireObject(cashSessions, "totals");
     await expect(page.getByTestId("dashboard-card-cash-difference-value")).toContainText(
-      requireString(cashTotals, "difference")
+      esPyDecimal(requireString(cashTotals, "difference"))
     );
 
     // `low-stock` takes NO query (it is a current-state report), so the correct

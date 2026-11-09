@@ -215,12 +215,12 @@ test.describe("the staff imports surface", () => {
     await page.goto("/login");
     await page.fill("#login-email", DEMO.staffEmail);
     await page.fill("#login-password", DEMO.staffPassword);
-    await page.getByRole("button", { name: "Sign in" }).click();
+    await page.getByRole("button", { name: "Iniciar sesión" }).click();
     await expect(page).toHaveURL(/\/app$/);
 
     // Reached the way staff reach it: the nav. Imports carries no feature gate
     // ([[DEC-072]]), so the link is there for every tenant.
-    await page.getByRole("link", { name: "Imports" }).click();
+    await page.getByRole("link", { name: "Importaciones" }).click();
     await expect(page).toHaveURL(/\/app\/imports$/);
     await expect(page.getByTestId("imports-index")).toBeVisible();
 
@@ -380,10 +380,10 @@ test.describe("the staff imports surface", () => {
     await page.goto("/login");
     await page.fill("#login-email", DEMO.staffEmail);
     await page.fill("#login-password", DEMO.staffPassword);
-    await page.getByRole("button", { name: "Sign in" }).click();
+    await page.getByRole("button", { name: "Iniciar sesión" }).click();
     await expect(page).toHaveURL(/\/app$/);
 
-    await page.getByRole("link", { name: "Imports" }).click();
+    await page.getByRole("link", { name: "Importaciones" }).click();
     await expect(page.getByTestId("imports-index")).toBeVisible();
 
     await page.getByLabel("Import entity").selectOption("CUSTOMER");

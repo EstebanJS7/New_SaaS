@@ -54,17 +54,23 @@ test.describe("the clinical record entry surface", () => {
     const administeredAt = "2026-11-01";
     const recordedDueAt = "2027-11-01";
     const correctedDueAt = "2027-03-01";
+    // How the row renders each of those dates: the staff surface formats a whole
+    // calendar date for es-PY (`formatEsPyDateOnly`). Written out, not computed,
+    // so a renderer that shifted the day or changed the format fails here.
+    const administeredShown = "1 nov. 2026";
+    const recordedDueShown = "1 nov. 2027";
+    const correctedDueShown = "1 mar. 2027";
 
     await page.goto("/login");
     await page.fill("#login-email", DEMO.staffEmail);
     await page.fill("#login-password", DEMO.staffPassword);
-    await page.getByRole("button", { name: "Sign in" }).click();
+    await page.getByRole("button", { name: "Iniciar sesión" }).click();
     await expect(page).toHaveURL(/\/app$/);
 
     // Reached the way staff reach it: the nav, then the patient list, then the
     // patient. The clinical section is per-patient and has no route of its own
     // (DEC-067 decided that deliberately: no new page, no new route).
-    await page.getByRole("link", { name: "Patients" }).click();
+    await page.getByRole("link", { name: "Pacientes" }).click();
     await expect(page).toHaveURL(/\/app\/patients$/);
     await page.getByRole("link", { name: DEMO_PATIENT_NAME }).click();
     await expect(page).toHaveURL(/\/app\/patients\/[0-9a-f-]{36}$/);
@@ -77,44 +83,44 @@ test.describe("the clinical record entry surface", () => {
     // CREATE — a due date entered as a calendar date. The surface pins it to noon
     // UTC on the wire, which is what keeps the tenant-local day equal to the day
     // typed even when the browser's zone is not the tenant's.
-    await vaccinations.getByRole("button", { name: "Record vaccination" }).click();
-    await vaccinations.getByLabel("Vaccine").fill(vaccineName);
+    await vaccinations.getByRole("button", { name: "Registrar vacuna" }).click();
+    await vaccinations.getByLabel("Vacuna", { exact: true }).fill(vaccineName);
     await vaccinations.getByLabel("Administered on").fill(administeredAt);
-    await vaccinations.getByLabel("Next dose due (optional)").fill(recordedDueAt);
-    await vaccinations.getByRole("button", { name: "Save vaccination" }).click();
+    await vaccinations.getByLabel("Próxima dosis (opcional)").fill(recordedDueAt);
+    await vaccinations.getByRole("button", { name: "Guardar vacuna" }).click();
 
     // The notice is a live status region, and the row exists only if the list
     // invalidation refetched from the API: a form that writes and never shows
     // the row passes every component test that stubs the refetch.
-    await expect(vaccinations.getByRole("status")).toHaveText("Vaccination recorded.");
+    await expect(vaccinations.getByRole("status")).toHaveText("Vacuna registrada.");
     const row = vaccinations.getByRole("listitem").filter({ hasText: vaccineName });
     await expect(row).toBeVisible();
     // The row shows the date the staff member typed, as a date. This is the
     // assertion that would have caught the browser-zone defect: an instant
     // converted through the wrong zone renders the PREVIOUS day here.
-    await expect(row.getByText(administeredAt)).toBeVisible();
-    await expect(row.getByText(recordedDueAt)).toBeVisible();
+    await expect(row.getByText(administeredShown)).toBeVisible();
+    await expect(row.getByText(recordedDueShown)).toBeVisible();
 
     // CORRECT — the due date changes and the administered instant does not.
-    await row.getByRole("button", { name: "Correct" }).click();
-    await vaccinations.getByLabel("Next dose due (optional)").fill(correctedDueAt);
-    await vaccinations.getByRole("button", { name: "Save changes" }).click();
+    await row.getByRole("button", { name: "Corregir" }).click();
+    await vaccinations.getByLabel("Próxima dosis (opcional)").fill(correctedDueAt);
+    await vaccinations.getByRole("button", { name: "Guardar cambios" }).click();
 
-    await expect(vaccinations.getByRole("status")).toHaveText("Vaccination corrected.");
-    await expect(row.getByText(correctedDueAt)).toBeVisible();
+    await expect(vaccinations.getByRole("status")).toHaveText("Vacuna corregida.");
+    await expect(row.getByText(correctedDueShown)).toBeVisible();
     // The administered date is NOT part of a correction of the due date.
-    await expect(row.getByText(administeredAt)).toBeVisible();
+    await expect(row.getByText(administeredShown)).toBeVisible();
 
     // CLEAR — an explicit removal, not a blank. [[DEC-065]] made NULL a real
     // state ("no due date recorded"), and the upcoming/overdue reports omit the
     // row rather than deriving a date nobody entered. A surface that could only
     // REPLACE a wrong due date would reintroduce, in the UI, exactly the defect
     // the API was fixed to avoid.
-    await row.getByRole("button", { name: "Correct" }).click();
-    await vaccinations.getByRole("button", { name: "Clear due date" }).click();
+    await row.getByRole("button", { name: "Corregir" }).click();
+    await vaccinations.getByRole("button", { name: "Quitar próxima fecha" }).click();
 
-    await expect(vaccinations.getByRole("status")).toHaveText("Due date removed.");
-    await expect(row.getByText("No due date recorded")).toBeVisible();
-    await expect(row.getByText(correctedDueAt)).toHaveCount(0);
+    await expect(vaccinations.getByRole("status")).toHaveText("Próxima fecha quitada.");
+    await expect(row.getByText("Sin fecha indicada")).toBeVisible();
+    await expect(row.getByText(correctedDueShown)).toHaveCount(0);
   });
 });

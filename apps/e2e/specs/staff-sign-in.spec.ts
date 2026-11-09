@@ -15,7 +15,7 @@ test.describe("the staff sign-in surface", () => {
 
     await page.fill("#login-email", DEMO.staffEmail);
     await page.fill("#login-password", DEMO.staffPassword);
-    await page.getByRole("button", { name: "Sign in" }).click();
+    await page.getByRole("button", { name: "Iniciar sesión" }).click();
 
     // The cookie is set by the API and relayed by the BFF, and the page cannot see it: landing here
     // proves the whole hop, which is what a component test cannot prove.
@@ -25,7 +25,7 @@ test.describe("the staff sign-in surface", () => {
 
     // A list, reached the way a user reaches it — through the nav — and with DATA, because an empty
     // state renders just as successfully as a working one.
-    await page.getByRole("link", { name: "Customers" }).click();
+    await page.getByRole("link", { name: "Clientes" }).click();
     await expect(page).toHaveURL(/\/app\/customers$/);
     await expect(page.getByRole("link", { name: DEMO.customerName })).toBeVisible();
   });
@@ -49,7 +49,7 @@ test.describe("the staff sign-in surface", () => {
     await page.goto("/login");
     await page.fill("#login-email", DEMO.staffEmail);
     await page.fill("#login-password", "not-the-password");
-    await page.getByRole("button", { name: "Sign in" }).click();
+    await page.getByRole("button", { name: "Iniciar sesión" }).click();
 
     await expect(page.getByTestId("login-problem")).toBeVisible();
     await expect(page).toHaveURL(/\/login$/);
