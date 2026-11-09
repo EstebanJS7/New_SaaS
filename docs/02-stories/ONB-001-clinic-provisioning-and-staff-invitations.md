@@ -175,6 +175,10 @@ Pendiente: suite completa con PostgreSQL (pnpm test) y recorrido en navegador.
   solo mensaje.
 - El botón "Suspender" aparece también en la fila propia; la API lo rechaza con
   un mensaje claro, pero la pantalla no sabe todavía quién es el usuario actual.
+- Una persona suspendida todavía inicia sesión (el login solo valida la
+  contraseña); la API rechaza cada pedido de la clínica con `403` y, desde el
+  2026-11-09, la web muestra «Tu acceso no está activo» con «Cerrar sesión» en
+  lugar del espacio de trabajo.
 
 ## Deuda técnica
 

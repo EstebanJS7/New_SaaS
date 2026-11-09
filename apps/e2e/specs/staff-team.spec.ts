@@ -165,17 +165,20 @@ test.describe("the staff screen", () => {
     await expect(row).toContainText("Suspendido");
     await expect(role).toBeDisabled();
 
-    // What suspension means in this product: the credential still authenticates — the shell opens —
-    // but the clinic is closed to the person. Every clinic request answers 403 ("An active tenant
-    // membership is required."), for a fresh sign-in and for the session that was already open,
-    // and the screens say so.
+    // What suspension means in this product: the credential still authenticates, but the clinic is
+    // closed to the person. Every clinic request answers 403 ("An active tenant membership is
+    // required."), for a fresh sign-in and for the session that was already open, and instead of a
+    // workspace full of permission errors the person sees one explanation and a way out.
     const suspended = await browser.newContext();
     const suspendedPage = await suspended.newPage();
     await signInAsStaff(suspendedPage, email, PASSWORD);
     await suspendedPage.goto("/app/cash");
-    await expect(suspendedPage.getByTestId("registers-error")).toContainText(
-      "No tenés permiso para gestionar Caja."
-    );
+    await expect(
+      suspendedPage.getByRole("heading", { name: "Tu acceso no está activo" })
+    ).toBeVisible();
+    await expect(suspendedPage.getByRole("button", { name: "Cerrar sesión" })).toBeVisible();
+    await expect(suspendedPage.getByTestId("nav-sidebar")).toHaveCount(0);
+    await expect(suspendedPage.getByTestId("registers-error")).toHaveCount(0);
     expect((await suspendedPage.request.get("/api/cash/registers")).status()).toBe(403);
     expect((await inviteePage.request.get("/api/cash/registers")).status()).toBe(403);
 

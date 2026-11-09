@@ -94,6 +94,33 @@ describe("AppShellLayout", () => {
     }
   });
 
+  /**
+   * ONB-001: a suspended member keeps a valid session, but the API refuses every
+   * tenant request with 403. The shell would render module after module of
+   * permission errors, so the layout shows one clear screen instead.
+   */
+  it("shows the no-access screen instead of the shell when the private read says 403", async () => {
+    redirect.mockClear();
+    global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 403 });
+
+    render(await AppShellLayout({ children: <p>contenido privado</p> }));
+
+    expect(screen.getByRole("heading", { name: "Tu acceso no está activo" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cerrar sesión" })).toBeInTheDocument();
+    expect(screen.queryByTestId("nav-sidebar")).not.toBeInTheDocument();
+    expect(screen.queryByText("contenido privado")).not.toBeInTheDocument();
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("still renders the shell when the private read fails with a server error", async () => {
+    global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 });
+
+    render(await AppShellLayout({ children: <p>contenido privado</p> }));
+
+    expect(screen.getByText("contenido privado")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Tu acceso no está activo" })).toBeNull();
+  });
+
   it("does NOT send a signed-in visitor anywhere when branding is merely broken", async () => {
     redirect.mockClear();
     // A 500, a timeout or an unparseable body is an OUTAGE. Treating it as "signed out" would

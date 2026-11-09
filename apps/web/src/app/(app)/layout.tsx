@@ -4,6 +4,7 @@ import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { activeProductPreset, resolveBrand, type ResolvedBrand } from "@newsaas/ui/branding";
 import { WorkspaceShell } from "@/components/shell/workspace-shell";
+import { NoActiveMembership } from "@/components/shell/no-active-membership";
 import { BrandStyle } from "@/providers/document-nonce";
 import { appearanceBootstrapScriptWithTenantDefault } from "@/lib/appearance";
 import { readCspNonce } from "@/lib/csp-nonce";
@@ -22,12 +23,15 @@ interface BrandResolution {
    * True only when the API answered `401`.
    *
    * The asymmetry is the design, not a detail: `/branding/current` is a PRIVATE route, so a
-   * 401 is the ONLY thing that proves this visitor has no session. Every other failure — a
-   * 500, a timeout, an unparseable body — is an OUTAGE, and treating it as "signed out"
+   * 401 is the ONLY thing that proves this visitor has no session. Apart from the 403 below,
+   * every other failure — a 500, a timeout, an unparseable body — is an OUTAGE, and treating
+   * it as "signed out"
    * would send every signed-in staff member to the login page the moment branding has a bad
    * minute ([[SHELL-001]]).
    */
   readonly unauthenticated: boolean;
+  /** `403` on a read that needs no permission: the session has no ACTIVE membership. */
+  readonly noActiveMembership: boolean;
 }
 
 async function fetchResolvedBrand(): Promise<BrandResolution> {
@@ -41,16 +45,19 @@ async function fetchResolvedBrand(): Promise<BrandResolution> {
     });
 
     if (response.status === 401) {
-      return { brand: fallback, unauthenticated: true };
+      return { brand: fallback, unauthenticated: true, noActiveMembership: false };
+    }
+    if (response.status === 403) {
+      return { brand: fallback, unauthenticated: false, noActiveMembership: true };
     }
     if (!response.ok) {
-      return { brand: fallback, unauthenticated: false };
+      return { brand: fallback, unauthenticated: false, noActiveMembership: false };
     }
 
     const data = (await response.json()) as BrandingCurrentResponse;
-    return { brand: data.brand ?? fallback, unauthenticated: false };
+    return { brand: data.brand ?? fallback, unauthenticated: false, noActiveMembership: false };
   } catch {
-    return { brand: fallback, unauthenticated: false };
+    return { brand: fallback, unauthenticated: false, noActiveMembership: false };
   }
 }
 
@@ -78,7 +85,7 @@ export default async function AppShellLayout({
 }: {
   children: ReactNode;
 }): Promise<JSX.Element> {
-  const { brand, unauthenticated } = await fetchResolvedBrand();
+  const { brand, unauthenticated, noActiveMembership } = await fetchResolvedBrand();
   // Per-request CSP nonce ([[DEC-075]]); see lib/csp.ts for why inline nodes here
   // cannot be replaced by external stylesheets or scripts.
   const nonce = await readCspNonce();
@@ -86,6 +93,9 @@ export default async function AppShellLayout({
   // would swallow the redirect and render the shell anyway.
   if (unauthenticated) {
     redirect(staffSignInPath((await headers()).get("x-staff-return-path")));
+  }
+  if (noActiveMembership) {
+    return <NoActiveMembership />;
   }
 
   return (
