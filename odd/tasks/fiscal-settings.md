@@ -15,7 +15,9 @@ Playwright lane.
 - S3 — Delivery 2: «Configuración fiscal» screen: profile, establishments,
   timbrado ranges (create, retire) and issuance point over the existing routes;
   the web proxy adds only those routes; `CREDIT_NOTE_NO_RANGE_MESSAGE` points to
-  a real screen; NCE-001 browser criterion. (Story to be written before T2.)
+  a real screen; NCE-001 browser criterion. Story:
+  `docs/02-stories/FISC-018-fiscal-settings-screen.md`, every acceptance
+  criterion.
 - S4 — Delivery 3: signing certificate upload and retire, own delivery and
   review (high risk, item 2). (Story to be written before T3.)
 
