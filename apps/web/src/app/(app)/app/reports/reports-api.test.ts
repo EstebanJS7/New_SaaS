@@ -195,7 +195,7 @@ describe("the reports client · the read and its refusals", () => {
     );
     const forbidden = await rejection(fetchReport("stock", { kind: "preset", preset: "today" }));
     expect(isReportAccessDenied(forbidden)).toBe(true);
-    expect(userFacingReportError(forbidden)).toBe("You do not have permission to read reports.");
+    expect(userFacingReportError(forbidden)).toBe("No tenés permiso para ver los informes.");
 
     vi.stubGlobal(
       "fetch",
@@ -214,12 +214,14 @@ describe("the reports client · the read and its refusals", () => {
       fetchReport("stock", { kind: "preset", preset: "today" })
     );
     expect(isReportAccessDenied(unauthenticated)).toBe(true);
-    expect(userFacingReportError(unauthenticated)).toBe("You must be signed in to read reports.");
+    expect(userFacingReportError(unauthenticated)).toBe(
+      "Tenés que iniciar sesión para ver los informes."
+    );
 
     const transport = new Error("network down");
     expect(isReportAccessDenied(transport)).toBe(false);
     expect(userFacingReportError(transport)).toBe(
-      "The request could not reach the server. Check your connection and try again."
+      "No se pudo conectar con el servidor. Revisá tu conexión y volvé a intentar."
     );
   });
 });

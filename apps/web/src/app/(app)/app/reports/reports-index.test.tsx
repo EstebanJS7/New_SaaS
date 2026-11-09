@@ -131,7 +131,7 @@ describe("ReportsIndex", () => {
     renderIndex();
 
     const denied = await screen.findByTestId("reports-permission-denied");
-    expect(denied).toHaveTextContent("You do not have permission to read reports.");
+    expect(denied).toHaveTextContent("No tenés permiso para ver los informes.");
     expect(screen.queryByTestId("reports-error")).not.toBeInTheDocument();
     expect(screen.getAllByTestId("report-index-entry")).toHaveLength(12);
   });

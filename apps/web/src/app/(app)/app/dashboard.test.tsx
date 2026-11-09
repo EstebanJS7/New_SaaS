@@ -460,10 +460,10 @@ describe("Dashboard · every state", () => {
     renderDashboard();
 
     const denied = await screen.findByTestId("dashboard-card-gross-permission-denied");
-    expect(denied).toHaveTextContent("You do not have permission to read reports.");
+    expect(denied).toHaveTextContent("No tenés permiso para ver los informes.");
     expect(
       screen.getByTestId("dashboard-card-cash-difference-permission-denied")
-    ).toHaveTextContent("You do not have permission to read reports.");
+    ).toHaveTextContent("No tenés permiso para ver los informes.");
     expect(screen.getByTestId("dashboard-card-low-stock-permission-denied")).toBeInTheDocument();
     // A refusal is NOT a generic failure, and the two must not be confused.
     expect(screen.queryByTestId("dashboard-card-gross-error")).not.toBeInTheDocument();
