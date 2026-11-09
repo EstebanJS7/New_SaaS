@@ -175,6 +175,17 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "GET /patients/:patientId/clinical/weights/:id",
   "POST /patients/:patientId/clinical/weights",
   "PUT /patients/:patientId/clinical/weights/:id",
+  // UX-024 / DEC-087 — author-private clinical drafts. The route guard is
+  // read; the service revalidates create/update for the draft's kind on every write.
+  "POST /patients/:patientId/clinical/drafts/search",
+  "GET /patients/:patientId/clinical/drafts/:id",
+  "PUT /patients/:patientId/clinical/drafts/:id",
+  "POST /patients/:patientId/clinical/drafts/:id/discard",
+  "POST /patients/:patientId/clinical/drafts/:id/submit",
+  "POST /patients/:patientId/clinical/drafts/:id/complete",
+  // UX-023 / DEC-086 — specialized correction history.
+  "GET /patients/:patientId/clinical/history-access",
+  "POST /patients/:patientId/clinical/:kind/:id/history/search",
   // EPIC-07 — staff scheduling (WU3)
   "GET /appointments",
   "POST /appointments",
@@ -433,6 +444,17 @@ const CLINICAL_PERMISSION_BY_ROUTE: Readonly<Record<string, string | readonly st
   "GET /patients/:patientId/clinical/weights/:id": "vet.clinical.read",
   "POST /patients/:patientId/clinical/weights": "vet.clinical.create",
   "PUT /patients/:patientId/clinical/weights/:id": "vet.clinical.update",
+  "POST /patients/:patientId/clinical/drafts/search": "vet.clinical.read",
+  "GET /patients/:patientId/clinical/drafts/:id": "vet.clinical.read",
+  "PUT /patients/:patientId/clinical/drafts/:id": "vet.clinical.read",
+  "POST /patients/:patientId/clinical/drafts/:id/discard": "vet.clinical.read",
+  "POST /patients/:patientId/clinical/drafts/:id/submit": "vet.clinical.read",
+  "POST /patients/:patientId/clinical/drafts/:id/complete": "vet.clinical.read",
+  "GET /patients/:patientId/clinical/history-access": "vet.clinical.read",
+  "POST /patients/:patientId/clinical/:kind/:id/history/search": [
+    "vet.clinical.read",
+    "vet.clinical.history_read",
+  ],
 };
 
 /**
