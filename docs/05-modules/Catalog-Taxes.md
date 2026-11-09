@@ -95,7 +95,8 @@ Four granular keys, seeded and granted with the decided role matrix
 | `CASHIER`           |  ✓   |        |        |            |
 
 - `catalog.read` — `GET /catalog`, `GET /catalog/:id`, `GET /catalog/tax-rates`,
-  and read-only `POST /catalog/search` (UX-011).
+  `GET /catalog/units-of-measure` (FISC-020 T9) and read-only
+  `POST /catalog/search` (UX-011).
 - `catalog.create` — `POST /catalog`.
 - `catalog.update` — `PUT /catalog/:id`.
 - `catalog.deactivate` — `POST /catalog/:id/deactivate`.
@@ -110,23 +111,26 @@ so `catalog.update` can never perform a deactivation.
 ## API
 
 All routes are unprefixed per [[DEC-002]] and return allowlisted INTERNAL DTOs;
-routes are listed with `/catalog/tax-rates` registered before `/catalog/:id` so
-the static segment can never be captured as an item id.
+routes are listed with `/catalog/tax-rates` and `/catalog/units-of-measure`
+registered before `/catalog/:id` so a static segment can never be captured as an
+item id.
 
-| Route                          | Permission           | Contract                                                                 |
-| ------------------------------ | -------------------- | ------------------------------------------------------------------------ |
-| `GET /catalog/tax-rates`       | `catalog.read`       | The GLOBAL seeded rate list, identical for every tenant.                 |
-| `POST /catalog/search`         | `catalog.read`       | UX-011: read-only bounded name search, filters, snapshot count and page. |
-| `GET /catalog`                 | `catalog.read`       | Caller-tenant items; optional `kind` / `isActive` filters.               |
-| `GET /catalog/:id`             | `catalog.read`       | One item; a foreign or unknown UUID is the same `404`.                   |
-| `POST /catalog`                | `catalog.create`     | Create one item (`201`).                                                 |
-| `PUT /catalog/:id`             | `catalog.update`     | Partial update (`200`); omitted fields stay untouched.                   |
-| `POST /catalog/:id/deactivate` | `catalog.deactivate` | Idempotent soft removal (`201`).                                         |
+| Route                           | Permission           | Contract                                                                 |
+| ------------------------------- | -------------------- | ------------------------------------------------------------------------ |
+| `GET /catalog/tax-rates`        | `catalog.read`       | The GLOBAL seeded rate list, identical for every tenant.                 |
+| `GET /catalog/units-of-measure` | `catalog.read`       | FISC-020 T9: the 64 SIFEN units `{ code, description, symbol }`.         |
+| `POST /catalog/search`          | `catalog.read`       | UX-011: read-only bounded name search, filters, snapshot count and page. |
+| `GET /catalog`                  | `catalog.read`       | Caller-tenant items; optional `kind` / `isActive` filters.               |
+| `GET /catalog/:id`              | `catalog.read`       | One item; a foreign or unknown UUID is the same `404`.                   |
+| `POST /catalog`                 | `catalog.create`     | Create one item (`201`).                                                 |
+| `PUT /catalog/:id`              | `catalog.update`     | Partial update (`200`); omitted fields stay untouched.                   |
+| `POST /catalog/:id/deactivate`  | `catalog.deactivate` | Idempotent soft removal (`201`).                                         |
 
 Web proxy (staff browser transport, no authorization authority of its own):
 
 - `GET|POST|PUT /api/catalog/[...path]` — a strict `(method, path-shape)`
-  allowlist over exactly the six legacy pairs above, forwarding only the staff
+  allowlist over exactly the six legacy pairs above plus
+  `GET /catalog/units-of-measure` (FISC-020 T9), forwarding only the staff
   session cookie. A known path with a disallowed method is `405`, an unknown
   path `404`, a malformed path `400` and a request without a staff session
   `401`, each in the API's own `{ error: { code, message } }` envelope. The
@@ -154,6 +158,7 @@ Two contract details worth stating because clients depend on them:
 | Reference price pair      | Both keys present with values, or both absent       | Omitted ⇒ unchanged; `null` **on both** ⇒ cleared; one key alone ⇒ `400` |
 | `isActive`                | Not accepted (`400`)                                | Not accepted (`400`) — deactivation is its own command                   |
 | `tracksStock`             | Optional boolean; omitted ⇒ the kind default        | Omitted ⇒ unchanged; present boolean ⇒ changed; `null` ⇒ `400`           |
+| `unitOfMeasureCode`       | Optional SIFEN code; omitted or `null` ⇒ no unit    | Omitted ⇒ unchanged; `null` ⇒ cleared; a code ⇒ replaced                 |
 | `tenantId` / unknown keys | Rejected (`400`, `.strict()`)                       | Rejected (`400`, `.strict()`)                                            |
 
 - **A rate is mandatory and no rate-less state exists.** `taxRateId` is required
@@ -174,6 +179,14 @@ Two contract details worth stating because clients depend on them:
 - **Amounts are exact decimals, not floats.** `referencePriceAmount` is an exact
   decimal string matching `^\d{1,12}(\.\d{1,2})?$` (the `Decimal(14, 2)`
   column), so a JavaScript float or a negative amount cannot enter the boundary.
+- **The unit of measure is the protocol's own list (FISC-020 T9, [[DEC-097]]).**
+  `unitOfMeasureCode` must be one of the 64 `tcUniMed` codes in
+  `DTE_UNITS_OF_MEASURE` (`Unidades_Medida_v141.xsd`), matched exactly as the
+  artifact spells it: `"77"` is accepted, `"077"`, `"UNI"`, `""` or a number is
+  `400`. There is no default unit and no backfill: an item without a unit stays
+  `null` (the invoice snapshot then refuses it with `ITEM_UNIT_NOT_DECLARED`)
+  until staff declare one. No migration: the `VARCHAR(4)` column already
+  existed.
 - Rejected input is `400 VALIDATION_FAILED` and persists nothing. An unknown
   **or foreign-tenant** item id on read, update or deactivate is a
   byte-equivalent `404 NOT_FOUND` behind one shared message constant.
@@ -229,6 +242,9 @@ rate projection and the rate list.
   allowlists; Prisma models never cross the HTTP boundary, no catalog response
   or log carries a CONFIDENTIAL payload, and audit metadata carries field
   **names** only (never a name, an amount or a currency value).
+- `unitOfMeasureCode` on an item is **INTERNAL** catalog configuration. The
+  SIFEN unit list served by `GET /catalog/units-of-measure` is **PUBLIC**
+  protocol reference data (published by DNIT), still gated by `catalog.read`.
 - The `TaxRate` rows are global platform data: no tenant column exists and the
   same three rows are served to every entitled tenant.
 - `tenantId` appears in the item DTO as the **caller's own** tenant, matching
@@ -256,6 +272,9 @@ item change, carrying stable ids and field names only:
 - `tracksStock` is named only when the caller actually supplied it: on create
   the by-kind default is fully determined by the `kind` the same row records,
   and on update the field is named exactly when the payload carried it.
+- `unitOfMeasureCode` follows the threshold rule: named on create only when it
+  carries a code, named on update whenever supplied (a `null` clear included);
+  the code itself is never recorded.
 - **No catalog event is emitted.** Nothing reacts post-commit, and the audit row
   is the mutation's only side effect besides the item row.
 

@@ -364,6 +364,28 @@ describe("CatalogRepository — implicit tenant scoping", () => {
     );
   });
 
+  it("forwards unitOfMeasureCode on create and update, clears it with null and leaves it untouched when omitted", async () => {
+    const db = makeFakePrisma([]);
+
+    await withTenantContext(
+      TENANT_A,
+      async (repo) => {
+        const created = await repo.create(createInput({ unitOfMeasureCode: "77" }));
+        expect(db.calls.createData[0]?.unitOfMeasureCode).toBe("77");
+
+        await repo.update(created.id, { unitOfMeasureCode: "83" });
+        expect(db.calls.writeData[0]).toEqual({ unitOfMeasureCode: "83" });
+
+        await repo.update(created.id, { name: "Renamed" });
+        expect(db.calls.writeData[1]).toEqual({ name: "Renamed" });
+
+        await repo.update(created.id, { unitOfMeasureCode: null });
+        expect(db.calls.writeData[2]).toEqual({ unitOfMeasureCode: null });
+      },
+      db.prisma
+    );
+  });
+
   it("prevents CROSS-TENANT writes: a foreign target fails not-found and stays unchanged", async () => {
     const foreign = row({ tenantId: TENANT_B, name: "Foreign" });
     const db = makeFakePrisma([foreign]);

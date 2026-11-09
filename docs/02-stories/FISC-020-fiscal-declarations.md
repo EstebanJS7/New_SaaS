@@ -59,14 +59,15 @@ existen.
 
 ### Unidad de medida del catálogo (unidad T9, [[DEC-097]])
 
-- [ ] Alta y edición de artículos aceptan `unitOfMeasureCode` opcional, validado
+- [x] Alta y edición de artículos aceptan `unitOfMeasureCode` opcional, validado
       contra el catálogo SIFEN de unidades ya implementado; ausente no inventa
       unidad y una edición que omite el campo preserva la anterior; `null`
       explícito la quita.
-- [ ] El detalle de artículo y el formulario de catálogo muestran y editan la
-      unidad con un selector mínimo; textos es-PY.
-- [ ] Se mantienen permisos de catálogo, aislamiento tenant y auditoría vigente.
-- [ ] Pruebas de validación, persistencia/lectura por API, preservación del
+- [x] El detalle de artículo y el formulario de catálogo muestran y editan la
+      unidad con un selector mínimo; textos es-PY. (2026-11-09: 7 pruebas web
+      nuevas de formulario/detalle y 2 de cliente pasan; catálogo web 119/119.)
+- [x] Se mantienen permisos de catálogo, aislamiento tenant y auditoría vigente.
+- [x] Pruebas de validación, persistencia/lectura por API, preservación del
       comportamiento anterior y del formulario.
 
 ### Integración (unidad T3)
@@ -97,3 +98,31 @@ independiente. El gate NCE-001 sigue pendiente: DEC-097 propone agregar la
 unidad fiscal del artículo que el ensamblador ya exige, pero aún no existe una
 ruta para declararla. Esa ampliación requiere decisión explícita y no modifica
 estos criterios sin aprobación.
+
+### Unidad del catálogo — T9 (2026-11-09)
+
+Implementado: `unitOfMeasureCode` opcional en alta/edición (`.strict()`,
+validado contra `DTE_UNITS_OF_MEASURE`; ausente no inventa unidad, una edición
+que lo omite lo preserva, `null` lo quita), incluido en las respuestas y
+nombrado (nunca su valor) en la auditoría existente. Nueva lectura
+`GET /catalog/units-of-measure` (`catalog.read`) y su forma en el proxy;
+selector y detalle web. Sin migraciones ni cambios en artículos existentes.
+
+Observado: API catálogo + sonda de rutas 96/96 (RED previo: 17 fallas); web
+catálogo 119/119 (RED previo: 11 fallas); typecheck API/web y lint/formato de
+archivos cambiados limpios. Diferencial contra c96fb45 sin el campo nuevo:
+mismos estados, errores y auditoría en 14 solicitudes; solo se agrega
+`unitOfMeasureCode: null` a cada respuesta de artículo y
+`/catalog/units-of-measure` pasa de 400 a 200.
+
+Bloqueante abierto: la suite completa de API falla 1 prueba
+(`fiscal-boundary.test.ts`: los imports de `@newsaas/fiscal` deben quedar en
+`apps/api/src/fiscal/`). El catálogo debe consumir la lista mediante un archivo
+del área fiscal; hasta resolverlo, los criterios de API, permisos/auditoría y
+pruebas quedan sin marcar. La persistencia por HTTP se prueba con un fake del
+servicio, porque la base en memoria compartida aún no guarda la columna.
+
+2026-11-09 (T9 cierre): el test de frontera fiscal fallaba porque Catalog
+importaba `@newsaas/fiscal`; ahora importa
+`apps/api/src/fiscal/units-of-measure.ts` (reexport). `fiscal-boundary` +
+catalog + rbac: 146/146; tsc, eslint y prettier limpios.

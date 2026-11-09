@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DTE_UNITS_OF_MEASURE } from "../fiscal/units-of-measure.js";
 import type { CatalogItemKindDto } from "./catalog.dto.js";
 
 /**
@@ -113,6 +114,24 @@ const catalogLowStockThreshold = z
   );
 
 /**
+ * FISC-020 T9 (DEC-097): the item's SIFEN unit of measure (`cUniMed`), the
+ * tenant declaration `catalog_item.unit_of_measure_code` holds and the invoice
+ * snapshot requires before a line can be issued. The accepted set is the
+ * protocol's own list (`DTE_UNITS_OF_MEASURE`, generated from
+ * `Unidades_Medida_v141.xsd`), matched exactly as the artifact spells each code:
+ * `"77"` is accepted, `"077"`, `"UNI"` and a number are `400 VALIDATION_FAILED`.
+ *
+ * Optional and NULLABLE with the threshold convention: absent leaves the stored
+ * value untouched (create: no unit, never a default), `null` clears it.
+ */
+const catalogUnitOfMeasureCode = z
+  .string()
+  .refine(
+    (code) => DTE_UNITS_OF_MEASURE.has(code),
+    "Unit of measure must be a code published by the SIFEN unit catalog."
+  );
+
+/**
  * The reference price is ONE pair (DEC-010 boundary 2): amount and currency are
  * both present or both absent. Applied to create and update alike.
  *
@@ -179,6 +198,7 @@ const createCatalogItemPayload = z
     referencePriceCurrency: catalogReferencePriceCurrency.nullable().optional(),
     tracksStock: z.boolean().optional(),
     lowStockThreshold: catalogLowStockThreshold.nullable().optional(),
+    unitOfMeasureCode: catalogUnitOfMeasureCode.nullable().optional(),
   })
   .strict();
 
@@ -219,6 +239,7 @@ const updateCatalogItemPayload = z
     referencePriceCurrency: catalogReferencePriceCurrency.nullable().optional(),
     tracksStock: z.boolean().optional(),
     lowStockThreshold: catalogLowStockThreshold.nullable().optional(),
+    unitOfMeasureCode: catalogUnitOfMeasureCode.nullable().optional(),
   })
   .strict();
 

@@ -204,6 +204,8 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "POST /catalog/search",
   "POST /catalog",
   "GET /catalog/tax-rates",
+  // FISC-020 T9 (DEC-097): the SIFEN unit list the catalog form selects from.
+  "GET /catalog/units-of-measure",
   "GET /catalog/:id",
   "PUT /catalog/:id",
   "POST /catalog/:id/deactivate",
@@ -513,6 +515,7 @@ const CATALOG_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
   "GET /catalog": CATALOG_PERMISSIONS.read,
   "POST /catalog/search": CATALOG_PERMISSIONS.read,
   "GET /catalog/tax-rates": CATALOG_PERMISSIONS.read,
+  "GET /catalog/units-of-measure": CATALOG_PERMISSIONS.read,
   "GET /catalog/:id": CATALOG_PERMISSIONS.read,
   "POST /catalog": CATALOG_PERMISSIONS.create,
   "PUT /catalog/:id": CATALOG_PERMISSIONS.update,

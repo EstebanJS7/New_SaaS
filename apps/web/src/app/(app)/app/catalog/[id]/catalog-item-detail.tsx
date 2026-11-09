@@ -17,9 +17,11 @@ import {
 import {
   ApiRequestError,
   getCatalogItem,
+  listUnitsOfMeasure,
   userFacingCatalogError,
   type CatalogItem,
   type CatalogItemKind,
+  type UnitOfMeasure,
 } from "../catalog-api";
 
 const KIND_LABELS: Record<CatalogItemKind, string> = {
@@ -61,6 +63,18 @@ function DetailRow({
 }
 
 /**
+ * FISC-020 T9: the declared SIFEN unit by its es-PY label, the bare code while
+ * the list is unavailable, or an explicit "none declared" — never a default.
+ */
+function unitOfMeasureLabel(
+  code: string | null,
+  units: readonly UnitOfMeasure[] | undefined
+): string {
+  if (code === null) return "Sin unidad declarada";
+  return units?.find((unit) => unit.code === code)?.description ?? `Código SIFEN ${code}`;
+}
+
+/**
  * Read-only staff detail for one catalog item.
  *
  * It exists so a role that holds only `catalog.read` can inspect an item without
@@ -79,6 +93,15 @@ export function CatalogItemDetail(): JSX.Element {
     queryKey: ["catalog", "item", itemId],
     queryFn: () => getCatalogItem(itemId),
     retry: false,
+  });
+
+  // The unit list is read only when the item declares a unit to label.
+  const unitCode = query.data?.unitOfMeasureCode ?? null;
+  const units = useQuery({
+    queryKey: ["catalog", "units-of-measure"],
+    queryFn: listUnitsOfMeasure,
+    retry: false,
+    enabled: unitCode !== null,
   });
 
   if (query.isLoading) {
@@ -141,6 +164,7 @@ export function CatalogItemDetail(): JSX.Element {
                 : formatEsPyDecimal(item.lowStockThreshold)
             }
           />
+          <DetailRow label="Unidad de medida" value={unitOfMeasureLabel(unitCode, units.data)} />
           <DetailRow label="Estado" value={item.isActive ? "Activo" : "Inactivo"} />
         </CardContent>
       </Card>

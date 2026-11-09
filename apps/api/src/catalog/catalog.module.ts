@@ -8,6 +8,7 @@ import { CatalogRepository } from "./catalog.repository.js";
 import { CatalogService } from "./catalog.service.js";
 import { CatalogController } from "./catalog.controller.js";
 import { CatalogTaxRatesController } from "./catalog-tax-rates.controller.js";
+import { CatalogUnitsOfMeasureController } from "./catalog-units-of-measure.controller.js";
 
 /**
  * Catalog module (EPIC-09 WU2). A leaf consumer of the platform: it imports
@@ -16,16 +17,21 @@ import { CatalogTaxRatesController } from "./catalog-tax-rates.controller.js";
  * Core module. PrismaService arrives through the @Global PrismaModule, as in
  * the Patients/Customers modules.
  *
- * Controller ORDER is contract: the static `/catalog/tax-rates` surface is
- * registered BEFORE the `/catalog/:id` parameter route, so the static segment
- * can never be captured as an item id.
+ * Controller ORDER is contract: the static `/catalog/tax-rates` and
+ * `/catalog/units-of-measure` surfaces are registered BEFORE the `/catalog/:id`
+ * parameter route, so a static segment can never be captured as an item id.
  *
  * There is no entitlement gate: the catalog is Core Business configuration, not
  * a Veterinary capability (the Patients module is the entitlement-gated twin).
  */
 @Module({
   imports: [ContextModule, RbacModule, AuditModule],
-  controllers: [CatalogTaxRatesController, CatalogSearchController, CatalogController],
+  controllers: [
+    CatalogTaxRatesController,
+    CatalogUnitsOfMeasureController,
+    CatalogSearchController,
+    CatalogController,
+  ],
   providers: [CatalogRepository, CatalogService, CatalogSearchService],
 })
 export class CatalogModule {}
