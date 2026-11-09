@@ -10,7 +10,7 @@ prd_sections: ["§7", "§8", "§9", "§36"]
 permissions: [users.membership.manage]
 branch:
 created: 2026-11-02
-updated: 2026-11-02
+updated: 2026-11-09
 ---
 
 # ONB-001 — Alta de clínicas e invitación de personal
@@ -76,7 +76,9 @@ lugar de 30 min) y el texto del mensaje.
 - [x] Pantalla web de personal (WU-B): lista, invitar, reenviar, cambiar rol,
       suspender y reactivar, con confirmación y estados de carga, error y
       permiso.
-- [ ] Recorrido completo en el carril de navegador (WU-B).
+- [x] Recorrido completo en el carril de navegador (WU-B)
+      (`apps/e2e/specs/staff-team.spec.ts`: invitar, duplicado, reenviar,
+      cambiar rol, activar e ingresar, permisos, suspender y reactivar).
 - [x] Aislamiento por tenant: todas las lecturas y escrituras usan el tenant del
       contexto; una membresía de otra clínica responde `NOT_FOUND`.
 
