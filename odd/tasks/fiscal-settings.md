@@ -19,7 +19,9 @@ Playwright lane.
   `docs/02-stories/FISC-018-fiscal-settings-screen.md`, every acceptance
   criterion.
 - S4 — Delivery 3: signing certificate upload and retire, own delivery and
-  review (high risk, item 2). (Story to be written before T3.)
+  review (high risk, item 2), plus the CSC (L4). Story:
+  `docs/02-stories/FISC-019-signing-certificate-and-csc.md`, every acceptance
+  criterion.
 
 ## Tasks
 
@@ -36,3 +38,5 @@ Playwright lane.
 - L3: Delivery 2: proxy keeps 404 for refused paths (story wording corrected
   from 400). NCE-001 browser blocked: an APPROVED FE needs the signing
   certificate (API only) and the CSC, which no API route writes.
+- L4 (2026-11-09, user): "hazlo y soluciona las observaciones" — CSC added to
+  delivery 3; fix the delivery-2 review observations.
