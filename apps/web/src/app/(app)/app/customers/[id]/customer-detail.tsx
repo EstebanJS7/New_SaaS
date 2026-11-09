@@ -28,6 +28,7 @@ import {
   listContacts,
   customerError,
   customerWriteBlocked,
+  fiscalOperationTypeLabel,
   type CustomerAddress,
   type CustomerContact,
 } from "../customers-api";
@@ -474,6 +475,9 @@ export function CustomerDetail() {
                   {customer.documentNumber && <p>Documento: {customer.documentNumber}</p>}
                 </>
               )}
+              <p>
+                Tipo de operación fiscal: {fiscalOperationTypeLabel(customer.fiscalOperationType)}
+              </p>
             </div>
             <div className="flex flex-wrap gap-2">
               <Button

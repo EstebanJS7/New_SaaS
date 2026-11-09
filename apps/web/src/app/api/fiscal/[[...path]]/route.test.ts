@@ -13,6 +13,72 @@ vi.mock("next/headers", () => ({
 }));
 import { GET, POST, PUT } from "./route";
 
+describe("FISC-019/020 restricted setup proxy additions", () => {
+  beforeEach(() => {
+    cookiesMock.mockReset();
+    fetchMock.mockReset();
+    cookiesMock.mockResolvedValue(cookieStore({ name: STAFF_SESSION_COOKIE, value: "staff" }));
+    fetchMock.mockImplementation(() => Promise.resolve(upstreamOk(200)));
+  });
+  it("streams the certificate multipart without reading the file or password", async () => {
+    const text = vi.fn();
+    const formData = vi.fn();
+    const body = new ReadableStream<Uint8Array>();
+    const request = {
+      ...mockNextRequest({
+        pathname: "/api/fiscal/signing-material",
+        headers: new Headers({ "content-type": "multipart/form-data; boundary=opaque" }),
+      }),
+      text,
+      formData,
+      body,
+    };
+    expect((await POST(request as never)).status).toBe(200);
+    expect(text).not.toHaveBeenCalled();
+    expect(formData).not.toHaveBeenCalled();
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit & { duplex: string };
+    expect(init.body).toBe(body);
+    expect(init.duplex).toBe("half");
+    expect(new Headers(init.headers).get("content-type")).toBe(
+      "multipart/form-data; boundary=opaque"
+    );
+    expect(new Headers(init.headers).get("cookie")).toBe(`${STAFF_SESSION_COOKIE}=staff`);
+  });
+  it("forwards only the explicit metadata/CSC/retirement/classification pairs", async () => {
+    for (const [method, path, body] of [
+      ["GET", "/api/fiscal/signing-material", ""],
+      ["GET", "/api/fiscal/csc", ""],
+      [
+        "POST",
+        "/api/fiscal/csc",
+        JSON.stringify({ environment: "TEST", idCsc: "0001", value: "Aa12".repeat(8) }),
+      ],
+      ["POST", `/api/fiscal/signing-material/${ID}/retire`, RETIRE_BODY],
+      ["POST", `/api/fiscal/csc/${ID}/retire`, RETIRE_BODY],
+      ["GET", "/api/fiscal/tax-classifications", ""],
+      [
+        "PUT",
+        "/api/fiscal/tax-classifications/IVA_10",
+        JSON.stringify({ affectation: "GRAVADO_IVA", proportionality: null }),
+      ],
+    ] as const)
+      expect((await missing(method, path, undefined, body)).status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(7);
+  });
+  it("rejects non-UUID secret ids, unexpected methods/body keys and malformed multipart", async () => {
+    for (const [method, path, body] of [
+      ["POST", "/api/fiscal/csc/no-id/retire", RETIRE_BODY],
+      ["POST", "/api/fiscal/signing-material/no-id/retire", RETIRE_BODY],
+      ["PUT", "/api/fiscal/csc", "{}"],
+      ["POST", "/api/fiscal/csc", '{"tenantId":"spoof"}'],
+      ["PUT", "/api/fiscal/tax-classifications/IVA_10", '{"tenantId":"spoof"}'],
+      ["POST", "/api/fiscal/signing-material", "{}"],
+    ] as const)
+      expect((await missing(method, path, undefined, body)).status).toBeGreaterThanOrEqual(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
 const ID = "99999999-9999-4999-8999-999999999999";
 interface MockNextRequest {
   nextUrl: { pathname: string; searchParams: URLSearchParams };
@@ -385,12 +451,9 @@ describe("/api/fiscal proxy — FISC-018 settings routes", () => {
     }
   );
 
-  it("keeps the void, signing material and every other method or path out of the proxy", async () => {
+  it("keeps the void and every other unapproved method or path out of the proxy", async () => {
     for (const [method, path, body] of [
       ["POST", `/api/fiscal/timbrado-ranges/${ID}/void`, RETIRE_BODY],
-      ["GET", "/api/fiscal/signing-material", ""],
-      ["POST", "/api/fiscal/signing-material", "{}"],
-      ["POST", `/api/fiscal/signing-material/${ID}/retire`, RETIRE_BODY],
       ["POST", "/api/fiscal/emitter-profile", PROFILE_BODY],
       ["GET", "/api/fiscal/emitter-profile/issuance-point", ""],
       ["POST", "/api/fiscal/emitter-profile/issuance-point", POINT_BODY],
@@ -401,8 +464,8 @@ describe("/api/fiscal proxy — FISC-018 settings routes", () => {
       ["GET", `/api/fiscal/timbrado-ranges/${ID}`, ""],
       ["PUT", `/api/fiscal/timbrado-ranges/${ID}/retire`, RETIRE_BODY],
       ["GET", `/api/fiscal/timbrado-ranges/${ID}/retire`, ""],
-      ["PUT", "/api/fiscal/fiscal-documents", ISSUE_BODY],
-      ["PUT", `/api/fiscal/fiscal-documents/${ID}/cancel`, CANCEL_BODY],
+      ["PUT", "/api/fiscal/unknown", "{}"],
+      ["PUT", `/api/fiscal/fiscal-documents/${ID}/extra`, "{}"],
       ["GET", "/api/fiscal/fiscal/emitter-profile", ""],
     ] as const) {
       await expectError(
@@ -413,6 +476,59 @@ describe("/api/fiscal proxy — FISC-018 settings routes", () => {
       );
     }
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  // Before FISC-018 exported PUT, Next.js answered 405 to a PUT on the documents
+  // routes; the proxy keeps that answer, with the methods each shape accepts.
+  it("answers PUT on a fiscal-documents shape with 405 and its Allow header", async () => {
+    for (const [path, body, allow] of [
+      ["/api/fiscal/fiscal-documents", ISSUE_BODY, "GET, POST"],
+      [`/api/fiscal/fiscal-documents/${ID}`, "{}", "GET"],
+      [`/api/fiscal/fiscal-documents/${ID}/cancel`, CANCEL_BODY, "POST"],
+    ] as const) {
+      const response = await missing("PUT", path, undefined, body);
+      expect(response.headers.get("allow")).toBe(allow);
+      await expectError(
+        response,
+        405,
+        "METHOD_NOT_ALLOWED",
+        "Fiscal route does not accept this method."
+      );
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a trailing slash and an encoded slash in an id slot", async () => {
+    for (const [method, path, body] of [
+      ["GET", "/api/fiscal/establishments/", ""],
+      ["PUT", `/api/fiscal/establishments/${ID}/`, ESTABLISHMENT_BODY],
+      ["POST", `/api/fiscal/timbrado-ranges/${ID}/retire/`, RETIRE_BODY],
+      ["PUT", "/api/fiscal/establishments/abc%2Fdef", ESTABLISHMENT_BODY],
+      ["PUT", `/api/fiscal/establishments/${ID}%2F..`, ESTABLISHMENT_BODY],
+    ] as const) {
+      await expectError(
+        await missing(method, path, undefined, body),
+        400,
+        "VALIDATION_FAILED",
+        "Invalid fiscal request path."
+      );
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts an uppercase UUID, which the API's uuid() accepts too", async () => {
+    fetchMock.mockResolvedValue(upstreamOk(200));
+    const upper = "ABCDEF12-3456-4789-8ABC-DEF012345678";
+    const response = await missing(
+      "PUT",
+      `/api/fiscal/establishments/${upper}`,
+      undefined,
+      ESTABLISHMENT_BODY
+    );
+    expect(response.status).toBe(200);
+    expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe(
+      `http://localhost:3001/fiscal/establishments/${upper}`
+    );
   });
 
   it("forwards ids only as UUIDs", async () => {

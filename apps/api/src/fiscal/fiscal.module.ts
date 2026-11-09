@@ -8,6 +8,12 @@ import {
 import { createFiscalCredentialReader } from "@newsaas/fiscal-persistence";
 import { SECRET_STORE, type SecretStore } from "@newsaas/secret-store";
 import { FiscalController } from "./fiscal.controller.js";
+import { FiscalCscController } from "./csc/csc.controller.js";
+import { FiscalCscService } from "./csc/csc.service.js";
+import {
+  TaxClassificationController,
+  TaxClassificationService,
+} from "./tax-classification/tax-classification.js";
 import { FiscalAllocationService } from "./fiscal-allocation.service.js";
 import { FiscalCreditNoteService } from "./fiscal-credit-note.service.js";
 import { FiscalRepository } from "./fiscal.repository.js";
@@ -97,7 +103,13 @@ const signingEnvironment: Provider = {
     AuditModule,
     EntitlementsModule,
   ],
-  controllers: [FiscalController, SigningMaterialController, FiscalProfileController],
+  controllers: [
+    FiscalController,
+    SigningMaterialController,
+    FiscalProfileController,
+    FiscalCscController,
+    TaxClassificationController,
+  ],
   exports: [
     FiscalService,
     FiscalSigningMaterialService,
@@ -108,6 +120,8 @@ const signingEnvironment: Provider = {
   providers: [
     FiscalRepository,
     FiscalService,
+    FiscalCscService,
+    TaxClassificationService,
     signingEnvironment,
     FiscalAllocationService,
     FiscalCreditNoteService,

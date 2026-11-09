@@ -274,6 +274,11 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   // from the surface and a generic status patch is forbidden.
   "GET /notifications/deliveries",
   "GET /notifications/deliveries/:id",
+  "GET /fiscal/tax-classifications",
+  "PUT /fiscal/tax-classifications/:rateCode",
+  "GET /fiscal/csc",
+  "POST /fiscal/csc",
+  "POST /fiscal/csc/:id/retire",
   "POST /fiscal/signing-material",
   "GET /fiscal/signing-material",
   "POST /fiscal/signing-material/:id/retire",
@@ -625,6 +630,11 @@ const CASH_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
  * creation and its lifecycle is the two explicit commands (DEC-038, DEC-043).
  */
 const FISCAL_PERMISSION_BY_ROUTE: Readonly<Record<string, string>> = {
+  "GET /fiscal/tax-classifications": FISCAL_PERMISSIONS.profileManage,
+  "PUT /fiscal/tax-classifications/:rateCode": FISCAL_PERMISSIONS.profileManage,
+  "GET /fiscal/csc": FISCAL_PERMISSIONS.signingMaterialManage,
+  "POST /fiscal/csc": FISCAL_PERMISSIONS.signingMaterialManage,
+  "POST /fiscal/csc/:id/retire": FISCAL_PERMISSIONS.signingMaterialManage,
   "POST /fiscal/signing-material": FISCAL_PERMISSIONS.signingMaterialManage,
   "GET /fiscal/signing-material": FISCAL_PERMISSIONS.signingMaterialManage,
   "POST /fiscal/signing-material/:id/retire": FISCAL_PERMISSIONS.signingMaterialManage,

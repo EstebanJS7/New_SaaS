@@ -57,4 +57,28 @@ describe("Customer transport safety", () => {
       },
     ]);
   });
+  it("carries an explicit fiscal declaration and never adds the field to an omission", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('{"id":"confirmed"}'))
+      .mockResolvedValueOnce(new Response('{"id":"confirmed"}'));
+    vi.stubGlobal("fetch", fetch);
+
+    await createCustomer({
+      kind: "COMPANY",
+      displayName: "Paws S.A.",
+      legalName: "Paws Sociedad Anónima",
+      taxId: "80012345-6",
+      fiscalOperationType: "B2G",
+    });
+    expect(fetch.mock.calls[0]?.[1]).toMatchObject({
+      method: "POST",
+      body: '{"kind":"COMPANY","displayName":"Paws S.A.","legalName":"Paws Sociedad Anónima","taxId":"80012345-6","fiscalOperationType":"B2G"}',
+    });
+
+    await updateCustomer("id", { displayName: "Paws S.A." });
+    const omission = fetch.mock.calls[1]?.[1] as { body: string };
+    expect(omission.body).toBe('{"displayName":"Paws S.A."}');
+    expect(omission.body).not.toContain("fiscalOperationType");
+  });
 });

@@ -15,6 +15,7 @@ const PROFILE: EmitterProfile = {
   regimeCode: null,
   legalName: "Clínica Demo S.A.",
   tradeName: "Vet Demo",
+  responsibleIssuer: null,
   transactionType: 2,
   taxType: 1,
   emissionType: 1,
@@ -28,9 +29,16 @@ const ESTABLISHMENT: Establishment = {
   code: "001",
   addressLine: "Av. España",
   houseNumber: 1234,
+  addressComplement1: "Piso 2",
+  addressComplement2: null,
   departmentCode: 1,
-  districtCode: null,
+  districtCode: 5,
+  districtName: "Recoleta",
   cityCode: 1,
+  cityName: "Asunción",
+  phone: "021600000",
+  email: "fiscal@demo.test",
+  branchName: "Central",
   createdAt: "2026-11-01T10:00:00.000Z",
   updatedAt: "2026-11-01T10:00:00.000Z",
 };
@@ -92,6 +100,10 @@ function installFetch(fixture: Fixture, route: Route = () => undefined): Call[] 
       return Promise.resolve(read(fixture.establishments, () => json({ items: [ESTABLISHMENT] })));
     if (call.method === "GET" && url === "/api/fiscal/timbrado-ranges")
       return Promise.resolve(read(fixture.ranges, () => json({ items: [FE_RANGE, NC_RANGE] })));
+    if (call.method === "GET" && ["/api/fiscal/signing-material", "/api/fiscal/csc"].includes(url))
+      return Promise.resolve(json({ items: [] }));
+    if (call.method === "GET" && url === "/api/fiscal/tax-classifications")
+      return Promise.resolve(json({ items: [], rates: [] }));
     return Promise.resolve(apiError(500, "INTERNAL", "unexpected"));
   });
   return calls;
@@ -186,6 +198,39 @@ describe("FiscalSettingsSurface (FISC-018)", () => {
         emissionType: 1,
         activities: [{ code: "75000", description: "Actividades veterinarias" }],
       });
+    });
+
+    it("prefills the declared responsible issuer and keeps it on save, with no retype notice", async () => {
+      const issuer = {
+        type: 1,
+        typeName: "Cédula paraguaya",
+        id: "1234567",
+        name: "Ana Pérez",
+        role: "Contadora",
+      };
+      const calls = installFetch(
+        { profile: () => json({ ...PROFILE, responsibleIssuer: issuer }) },
+        (call) =>
+          call.method === "PUT" && call.url === "/api/fiscal/emitter-profile"
+            ? json({ ...PROFILE, responsibleIssuer: issuer })
+            : undefined
+      );
+      renderSurface();
+      const profile = await screen.findByRole("region", { name: "Perfil del emisor" });
+      fireEvent.click(await within(profile).findByRole("button", { name: "Editar perfil" }));
+      expect(within(profile).getByLabelText("Declarar un responsable de la emisión")).toBeChecked();
+      expect(within(profile).getByLabelText("Número de documento del responsable")).toHaveValue(
+        "1234567"
+      );
+      expect(within(profile).getByLabelText("Nombre del responsable")).toHaveValue("Ana Pérez");
+      expect(within(profile).getByLabelText("Cargo del responsable")).toHaveValue("Contadora");
+      expect(within(profile).queryByText(/volvé a escribir/)).toBeNull();
+      fireEvent.click(within(profile).getByRole("button", { name: "Guardar perfil" }));
+      expect(await screen.findByText("Se guardó el perfil fiscal.")).toBeInTheDocument();
+      const put = calls.find((call) => call.method === "PUT");
+      expect((JSON.parse(put?.body ?? "{}") as Record<string, unknown>).responsibleIssuer).toEqual(
+        issuer
+      );
     });
 
     it("says there is no profile yet and offers to create it", async () => {
@@ -310,23 +355,35 @@ describe("FiscalSettingsSurface (FISC-018)", () => {
       fireEvent.click(within(row).getByRole("button", { name: "Editar" }));
       const form = within(establishments).getByRole("form", { name: "Editar establecimiento 001" });
       expect(within(form).getByLabelText("Dirección")).toHaveValue("Av. España");
+      // Every saved field is prefilled: the PUT replaces the row, and nothing
+      // has to be written again.
+      expect(within(form).getByLabelText("Ciudad")).toHaveValue("Asunción");
+      expect(within(form).getByLabelText("Teléfono")).toHaveValue("021600000");
+      expect(within(form).getByLabelText("Correo")).toHaveValue("fiscal@demo.test");
+      expect(within(form).getByLabelText(/^Complemento de dirección 1/)).toHaveValue("Piso 2");
+      expect(within(form).getByLabelText(/^Distrito/)).toHaveValue("Recoleta");
+      expect(within(form).getByLabelText(/^Nombre de la sucursal/)).toHaveValue("Central");
+      expect(within(form).queryByText(/volvé a escribir/)).toBeNull();
       fireEvent.change(within(form).getByLabelText("Dirección"), {
         target: { value: "Av. Brasil" },
-      });
-      fireEvent.change(within(form).getByLabelText("Ciudad"), { target: { value: "Asunción" } });
-      fireEvent.change(within(form).getByLabelText("Teléfono"), {
-        target: { value: "021600000" },
-      });
-      fireEvent.change(within(form).getByLabelText("Correo"), {
-        target: { value: "fiscal@demo.test" },
       });
       fireEvent.click(within(form).getByRole("button", { name: "Guardar establecimiento" }));
       expect(await screen.findByText("Se guardó el establecimiento 001.")).toBeInTheDocument();
       const put = calls.find((call) => call.method === "PUT");
       expect(put?.url).toBe(`/api/fiscal/establishments/${EST_ID}`);
-      expect(JSON.parse(put?.body ?? "{}")).toMatchObject({
+      expect(JSON.parse(put?.body ?? "{}")).toEqual({
         code: "001",
         addressLine: "Av. Brasil",
+        houseNumber: 1234,
+        addressComplement1: "Piso 2",
+        addressComplement2: null,
+        departmentCode: 1,
+        district: { code: 5, name: "Recoleta" },
+        cityCode: 1,
+        cityName: "Asunción",
+        phone: "021600000",
+        email: "fiscal@demo.test",
+        branchName: "Central",
       });
     });
 

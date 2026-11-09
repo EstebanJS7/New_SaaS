@@ -39,6 +39,12 @@ export interface CustomerUpdateData {
   firstName?: string | null;
   lastName?: string | null;
   documentNumber?: string | null;
+  /**
+   * Present ONLY when the request sent it. An update that omits the field
+   * preserves the declared `iTiOpe`; `null` is the explicit "undeclared" state
+   * ([[DEC-057]] Q2 chose a declaration, and no default is ever invented).
+   */
+  fiscalOperationType?: CustomerRow["fiscalOperationType"];
   isActive?: boolean;
 }
 
@@ -176,6 +182,9 @@ function buildUpdateData(input: UpdateCustomerInput): CustomerUpdateData {
   if (input.documentNumber !== undefined) data.documentNumber = input.documentNumber;
   if (input.legalName !== undefined) data.legalName = input.legalName;
   if (input.taxId !== undefined) data.taxId = input.taxId;
+  if (input.fiscalOperationType !== undefined) {
+    data.fiscalOperationType = input.fiscalOperationType;
+  }
   return data;
 }
 

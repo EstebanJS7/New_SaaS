@@ -14,6 +14,8 @@ import { EstablishmentsSection } from "./establishments-section";
 import { IssuancePointSection } from "./issuance-point-section";
 import { ProfileSection } from "./profile-section";
 import { RangesSection } from "./ranges-section";
+import { FiscalSecretsSection } from "./fiscal-secrets-section";
+import { TaxClassificationSection } from "./tax-classification-section";
 
 /**
  * FISC-018 (DEC-095 delivery 2): «Configuración fiscal» — the emitter profile,
@@ -96,6 +98,9 @@ export function FiscalSettingsSurface(): JSX.Element {
             onRetry={() => void ranges.refetch()}
             onSaved={() => refresh("ranges")}
           />
+          <TaxClassificationSection />
+          <FiscalSecretsSection kind="signing-material" />
+          <FiscalSecretsSection kind="csc" />
           <IssuancePointSection
             profile={profile.data}
             establishments={establishments.data ?? []}

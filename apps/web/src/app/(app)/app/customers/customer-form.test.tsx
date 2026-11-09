@@ -15,9 +15,22 @@ const existing: Customer = {
   documentNumber: "123",
   legalName: null,
   taxId: null,
+  fiscalOperationType: "B2B",
   isActive: true,
   createdAt: "2026-10-31T12:00:00Z",
   updatedAt: "2026-10-31T12:00:00Z",
+};
+const company: Customer = {
+  ...existing,
+  id: "33333333-3333-4333-8333-333333333333",
+  kind: "COMPANY",
+  displayName: "Empresa guardada",
+  firstName: null,
+  lastName: null,
+  documentNumber: null,
+  legalName: "Sociedad",
+  taxId: "80012345-6",
+  fiscalOperationType: null,
 };
 function fill(label: string, value: string) {
   fireEvent.change(screen.getByLabelText(label, { exact: false }), { target: { value } });
@@ -62,6 +75,74 @@ describe("Customer create/edit working copy", () => {
         taxId: "123-4",
       })
     );
+  });
+  it("declares the fiscal operation type on create and omits the key when left undeclared", async () => {
+    const submit = vi.fn().mockResolvedValue({});
+    render(<CustomerForm onSubmit={submit} isPending={false} error={null} />);
+    fill("Nombre visible", "Paws S.A.");
+    fireEvent.change(screen.getByLabelText("Tipo de cliente"), { target: { value: "COMPANY" } });
+    fill("Razón social", "Paws");
+    fill("RUC", "80012345-6");
+    fireEvent.change(screen.getByLabelText("Tipo de operación fiscal (iTiOpe)"), {
+      target: { value: "B2G" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Crear cliente" }));
+    await waitFor(() =>
+      expect(submit).toHaveBeenCalledWith({
+        kind: "COMPANY",
+        displayName: "Paws S.A.",
+        legalName: "Paws",
+        taxId: "80012345-6",
+        fiscalOperationType: "B2G",
+      })
+    );
+  });
+  it("never invents a declaration for a create left undeclared", async () => {
+    const submit = vi.fn().mockResolvedValue({});
+    render(<CustomerForm customer={company} onSubmit={submit} isPending={false} error={null} />);
+
+    // A company whose row has no declaration opens on "Sin declarar".
+    expect(screen.getByLabelText("Tipo de operación fiscal (iTiOpe)")).toHaveValue("");
+    fill("Nombre visible", "Empresa renombrada");
+    fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    await waitFor(() =>
+      expect(submit).toHaveBeenCalledWith({
+        displayName: "Empresa renombrada",
+      })
+    );
+    expect(submit.mock.calls[0][0]).not.toHaveProperty("fiscalOperationType");
+  });
+  it("preserves a declared operation type on an untouched edit and sends an explicit change", async () => {
+    const submit = vi.fn().mockResolvedValue({});
+    render(<CustomerForm customer={existing} onSubmit={submit} isPending={false} error={null} />);
+
+    // The form shows the stored declaration instead of re-picking one.
+    expect(screen.getByLabelText("Tipo de operación fiscal (iTiOpe)")).toHaveValue("B2B");
+    fill("Nombre visible", "Nuevo nombre");
+    fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledWith({ displayName: "Nuevo nombre" }));
+
+    // Omission above never erased the declaration; an explicit change is sent.
+    expect(submit.mock.calls[0][0]).not.toHaveProperty("fiscalOperationType");
+    fireEvent.change(screen.getByLabelText("Tipo de operación fiscal (iTiOpe)"), {
+      target: { value: "B2F" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    await waitFor(() =>
+      expect(submit).toHaveBeenLastCalledWith({
+        displayName: "Nuevo nombre",
+        fiscalOperationType: "B2F",
+      })
+    );
+  });
+  it("clears a declared operation type only when 'Sin declarar' is chosen", async () => {
+    const submit = vi.fn().mockResolvedValue({});
+    render(<CustomerForm customer={existing} onSubmit={submit} isPending={false} error={null} />);
+    fireEvent.change(screen.getByLabelText("Tipo de operación fiscal (iTiOpe)"), {
+      target: { value: "" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledWith({ fiscalOperationType: null }));
   });
   it("preserves edit omission semantics and the immutable kind", async () => {
     const submit = vi.fn().mockResolvedValue({});

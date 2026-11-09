@@ -31,8 +31,8 @@ import {
 
 /**
  * The emitter profile: read, created when the clinic has none, and saved whole
- * (the API's `PUT` replaces it). The responsible issuer is not part of what the
- * API answers, so the form says it must be written again to be kept.
+ * (the API's `PUT` replaces it). The form prefills every field the API answers,
+ * the responsible issuer included, so saving keeps what was there.
  */
 export function ProfileSection({
   profile,
@@ -184,8 +184,14 @@ function ProfileForm({
       ? initial.activities.map((activity) => ({ ...activity }))
       : [{ code: "", description: "" }]
   );
-  const [withResponsible, setWithResponsible] = useState(false);
-  const [responsible, setResponsible] = useState({ type: "1", id: "", name: "", role: "" });
+  const declared = initial?.responsibleIssuer ?? null;
+  const [withResponsible, setWithResponsible] = useState(declared !== null);
+  const [responsible, setResponsible] = useState({
+    type: String(declared?.type ?? 1),
+    id: declared?.id ?? "",
+    name: declared?.name ?? "",
+    role: declared?.role ?? "",
+  });
   const [errors, setErrors] = useState<ProfileErrors>({});
 
   const save = useMutation({
@@ -381,10 +387,6 @@ function ProfileForm({
           />
           Declarar un responsable de la emisión
         </label>
-        <p className="text-xs text-muted-foreground">
-          Por privacidad este dato no se muestra: si ya estaba cargado y querés conservarlo, volvé a
-          escribirlo al guardar.
-        </p>
         {withResponsible ? (
           <div className="grid gap-3 sm:grid-cols-2">
             <SelectField

@@ -92,6 +92,9 @@ identity comes from authenticated server context, not caller input.
 | `POST /fiscal/signing-material`            | `fiscal.signing_material.manage` | Load a signing material (`201`). `multipart/form-data` with `file` (a PKCS#12, at most 64 KiB), `password` and `environment` (`TEST`/`PRODUCTION`); part order is not assumed. A material already `ACTIVE` for that environment is retired and its stored key destroyed in the same transaction. Every rejection carries its own message.                              |
 | `GET /fiscal/signing-material`             | `fiscal.signing_material.manage` | List the tenant's materials, newest first. Metadata only: the `credentialRef`, the certificate PEM and the private key are never returned.                                                                                                                                                                                                                             |
 | `POST /fiscal/signing-material/:id/retire` | `fiscal.signing_material.manage` | Retire (`200`) with a required reason of at most 500 characters. The stored private key is destroyed in the same transaction and the row survives as the record. A repeat is `409`; an unknown or foreign id is a byte-equivalent `404`.                                                                                                                               |
+| `POST /fiscal/csc`                         | `fiscal.signing_material.manage` | Load a CSC (`201`). Strict JSON `{ environment, idCsc, value }`: `TEST`/`PRODUCTION`, a four-character `idCsc` (§24.3) and a 32-character alphanumeric `value` (§24.2). The value goes only to the secret store. An `idCsc` already `ACTIVE` in that environment, or a third `ACTIVE` CSC, is `409` with nothing written.                                              |
+| `GET /fiscal/csc`                          | `fiscal.signing_material.manage` | List the tenant's CSCs, newest first. Metadata only (`id`, `environment`, `idCsc`, `status`, `createdAt`, `retiredAt`, `retirementReason`); the value and `secretRef` are never returned.                                                                                                                                                                              |
+| `POST /fiscal/csc/:id/retire`              | `fiscal.signing_material.manage` | Retire (`200`) with a required reason of 1-500 trimmed characters. The stored value is destroyed in the same transaction and the row survives. A repeat is `409`; an unknown or foreign id is `404`.                                                                                                                                                                   |
 | `POST /fiscal/timbrado-ranges/:id/void`    | `fiscal.range.void`              | Void the range's **remaining numbers** at the provider (`200`). The body carries a reason only — the interval is read from the range — and the answer is the `fiscal_range_void` record. A retired range, an empty tail, a document type the event cannot express and an invalid reason are each a named refusal; an unknown or foreign id is a byte-equivalent `404`. |
 
 ### Declaring the issuance point
@@ -536,6 +539,29 @@ is enforced by `node:crypto` (`X509Certificate.checkPrivateKey` for the pair,
 `modulusLength` for the pinned RSA minimum, `validToDate` for expiry). Node
 cannot open a PKCS#12 in any form, which is why that dependency exists at all.
 
+## The CSC boundary
+
+[[FISC-019]] gives the CSC (the QR's security code, SIFEN-BASELINE §24.2) its
+only write path. The value is **RESTRICTED** and follows the private key's
+rules: it is sealed in `tenant_secret` under an opaque `fcsc_…` `secretRef`,
+never returned, audited, logged or interpolated into an error. `idCsc` is not
+secret — the QR carries it — and is stored on the row.
+
+- **The database owns the SIFEN bounds.** The partial unique index allows one
+  `ACTIVE` row per `(tenant, environment, idCsc)` and the
+  `tenant_fiscal_csc_at_most_two_active` trigger allows two `ACTIVE` per
+  environment. The load inserts the row **before** storing the value, inside one
+  SERIALIZABLE transaction with the audit row, so a refused insert never reaches
+  the secret store and the trigger's READ COMMITTED counting window is closed.
+  Each refusal maps to a stable `409` message; a serialization failure is a
+  `409` asking to retry.
+- **Retirement destroys the value** in the same transaction and keeps the row.
+- **The worker reads what the route wrote.** `createFiscalCscReader`
+  (`packages/fiscal-persistence`) picks the first `ACTIVE` CSC by `idCsc` and
+  reads its value from the same store (live-pg proves the round trip).
+- The routes reuse `fiscal.signing_material.manage`: both are taxpayer secrets
+  that authenticate to SIFEN.
+
 ## Staff surface
 
 `/app/fiscal` provides the status-filtered document list, the document detail
@@ -597,10 +623,12 @@ Accepted mutations write one co-committed audit row:
 `fiscal.document.submitted`, `fiscal.document.submission_failed` and
 `fiscal.document.submission_requeued` from the worker with `actorType: SYSTEM`.
 The signing-material commands write `fiscal.signing_material.uploaded` and
-`fiscal.signing_material.retired`, and the range void writes
-`fiscal.timbrado_range.voided` or `fiscal.timbrado_range.void_failed` (FISC-016
-WU-D). The issuance-point declaration writes `fiscal.issuance_point.declared`
-(target `fiscal_emitter_profile`) with
+`fiscal.signing_material.retired`; the CSC commands write `fiscal.csc.loaded`
+and `fiscal.csc.retired` (target `fiscal_csc`) with `{ environment, idCsc }`
+only ([[FISC-019]]); and the range void writes `fiscal.timbrado_range.voided` or
+`fiscal.timbrado_range.void_failed` (FISC-016 WU-D). The issuance-point
+declaration writes `fiscal.issuance_point.declared` (target
+`fiscal_emitter_profile`) with
 `{ schemaVersion: 1, establishmentCode, expeditionPoint, documentType, creditNoteRangeActive }`
 and no RUC (FISC-017). Audit metadata carries a schema version, the outcome and
 field names only — never the cancellation reason text, never the void's reason
@@ -617,6 +645,20 @@ message are written through the same 500-character scrub the cancellation's
 error columns use. A tenant's signing private key is **RESTRICTED**:
 `tenant_secret` stores only ciphertext, the store never logs, and no DTO exposes
 it. Logs and audit carry IDs and field names only.
+
+The emitter-profile and establishment reads (and the `PUT`/`POST` answers)
+return every saved field so the settings screen prefills its edit forms
+(FISC-018 review). The responsible issuer (`responsibleIssuer`: `type`,
+`typeName`, `id`, `name`, `role`, or `null`) is a natural person's identity: its
+document number `id` and `name` are **CONFIDENTIAL**; `type`, `typeName` and
+`role` are INTERNAL. The establishment's `addressComplement1`,
+`addressComplement2`, `districtName`, `cityName`, `phone`, `email` and
+`branchName` are business contact data, **INTERNAL**. All of them are returned
+only behind `fiscal.profile.manage`, through the DTO mappers, never logged, and
+the profile and establishment audit rows keep field names and the code only. The
+profile and establishment bodies — and every object nested in them
+(`responsibleIssuer`, `activities[]`, `district`) — are `strict()`: an unknown
+key is a `400 VALIDATION_FAILED`, not a silently stripped field.
 
 ## Settings
 
@@ -718,8 +760,9 @@ because they are deployment concerns rather than tenant behavior.
   issuance point cannot issue ([[DEC-057]]). The point is declared through
   `PUT /fiscal/emitter-profile/issuance-point` ([[FISC-017]]), from the
   «Configuración fiscal» screen ([[FISC-018]]). The signing certificate has no
-  screen yet ([[DEC-095]] delivery 3) and no route writes the CSC, so a tenant
-  still cannot reach an APPROVED DE from the app alone.
+  screen yet ([[DEC-095]] delivery 3); the CSC has API routes ([[FISC-019]]) but
+  no screen yet, so a tenant still cannot reach an APPROVED DE from the app
+  alone.
 - **The AFE and the NRE render their header, their items and their CDC, and name
   the rest**: their own blocks are `gDtipDE` members the assembly does not emit,
   so §13.2's content rule forbids printing them.

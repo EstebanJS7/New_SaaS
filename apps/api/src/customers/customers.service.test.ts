@@ -83,6 +83,8 @@ describe("CustomersService", () => {
         if (data.lastName !== undefined) existing.lastName = data.lastName ?? null;
         if (data.documentNumber !== undefined)
           existing.documentNumber = data.documentNumber ?? null;
+        if (data.fiscalOperationType !== undefined)
+          existing.fiscalOperationType = data.fiscalOperationType;
         if (data.isActive !== undefined) existing.isActive = data.isActive;
         existing.updatedAt = new Date();
         return Promise.resolve({ count: 1 });
@@ -254,6 +256,88 @@ describe("CustomersService", () => {
     expect(appendMock).toHaveBeenCalledTimes(1);
   });
 
+  it("persists and returns an explicitly declared fiscal operation type", async () => {
+    const result = await withContext(() =>
+      service.create({ kind: "INDIVIDUAL", displayName: "Ana", fiscalOperationType: "B2G" })
+    );
+
+    expect(result.fiscalOperationType).toBe("B2G");
+    expect(await withContext(() => service.get(result.id))).toMatchObject({
+      fiscalOperationType: "B2G",
+    });
+  });
+
+  it("never invents a declaration for a create that omits it", async () => {
+    const result = await withContext(() =>
+      service.create({
+        kind: "COMPANY",
+        displayName: "Paws",
+        legalName: "Paws S.A.",
+        taxId: "1-2",
+      })
+    );
+
+    expect(result.fiscalOperationType).toBeNull();
+    expect(appendMock.mock.calls[0][0].metadata).toMatchObject({
+      changedFields: ["kind", "displayName", "legalName", "taxId"],
+    });
+  });
+
+  it("preserves the declaration when an update omits it and audits only a sent change", async () => {
+    const customer = await withContext(() =>
+      service.create({ kind: "INDIVIDUAL", displayName: "Ana", fiscalOperationType: "B2B" })
+    );
+    appendMock.mockClear();
+
+    const untouched = await withContext(() =>
+      service.update(customer.id, { displayName: "Ana María" })
+    );
+    expect(untouched.fiscalOperationType).toBe("B2B");
+    expect(appendMock.mock.calls[0][0].metadata).toMatchObject({ changedFields: ["displayName"] });
+
+    appendMock.mockClear();
+    const changed = await withContext(() =>
+      service.update(customer.id, { fiscalOperationType: "B2C" })
+    );
+    expect(changed.fiscalOperationType).toBe("B2C");
+    expect(appendMock.mock.calls[0][0].metadata).toMatchObject({
+      changedFields: ["fiscalOperationType"],
+    });
+  });
+
+  it("treats an explicit null on update as the undeclared state", async () => {
+    const customer = await withContext(() =>
+      service.create({ kind: "INDIVIDUAL", displayName: "Ana", fiscalOperationType: "B2B" })
+    );
+
+    const cleared = await withContext(() =>
+      service.update(customer.id, { fiscalOperationType: null })
+    );
+
+    expect(cleared.fiscalOperationType).toBeNull();
+  });
+
+  it("keeps a foreign tenant's declared operation type untouched", async () => {
+    const customer = await withContext(() =>
+      service.create({ kind: "INDIVIDUAL", displayName: "Ana", fiscalOperationType: "B2C" })
+    );
+
+    await expect(
+      requestContext.run("req-2", () => {
+        requestContext.setUserProfileId("user-2");
+        requestContext.setTenantMembership({
+          tenantId: "tenant-2",
+          membershipId: "mem-2",
+          roleId: "role-2",
+          roleCode: "OWNER",
+        });
+        return service.update(customer.id, { fiscalOperationType: "B2G" });
+      })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    expect(customers.get(customer.id)?.fiscalOperationType).toBe("B2C");
+  });
+
   it("lists only active customers by default", async () => {
     await withContext(() => service.create({ kind: "INDIVIDUAL", displayName: "Active Customer" }));
     const inactive = await withContext(() =>
@@ -341,6 +425,7 @@ describe("CustomersService", () => {
         "firstName",
         "lastName",
         "documentNumber",
+        "fiscalOperationType",
         "isActive",
         "createdAt",
         "updatedAt",

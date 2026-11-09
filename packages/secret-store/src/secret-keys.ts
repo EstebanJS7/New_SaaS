@@ -16,4 +16,5 @@ export function createOpaqueSecretKey(prefix: string): string {
 /** Prefixes used by the boundaries that own stored secrets. */
 export const SECRET_KEY_PREFIXES = Object.freeze({
   fiscalSigningKey: "fsk",
+  fiscalCsc: "fcsc",
 });

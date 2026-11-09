@@ -2,6 +2,7 @@
 export const FISCAL_PERMISSIONS = Object.freeze({
   issue: "fiscal.invoice.issue",
   read: "fiscal.read",
+  // FISC-019: also guards the CSC routes — both are taxpayer secrets that authenticate to SIFEN.
   signingMaterialManage: "fiscal.signing_material.manage",
   // FISC-011: configuring the emitter profile and its numbering ranges. Separate
   // from `signingMaterialManage` because it is a different material and a

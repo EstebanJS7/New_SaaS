@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Test } from "@nestjs/testing";
 import type { NestFastifyApplication } from "@nestjs/platform-fastify";
@@ -53,7 +53,13 @@ import {
   InvoiceSnapshotReadError,
   ReceptorReadError,
 } from "@newsaas/fiscal-persistence";
-import { InMemorySecretStore } from "@newsaas/secret-store";
+import {
+  EnvelopeSecretStore,
+  InMemorySecretStore,
+  parseSecretStoreKeyRing,
+  SECRET_STORE,
+  type SecretStore,
+} from "@newsaas/secret-store";
 
 interface ErrorEnvelope {
   error: { code: string };
@@ -1468,6 +1474,18 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       .useValue(notificationDeliveryProducer)
       .overrideProvider(IMPORT_PREVIEW_PRODUCER)
       .useValue(importPreviewProducer)
+      // FISC-019: the CSC routes must be measured against the transactional,
+      // encrypted driver, not the process-local fake the boot selects without
+      // a master key. A throwaway key exists only for this disposable database.
+      .overrideProvider(SECRET_STORE)
+      .useFactory({
+        factory: (client: PrismaService): SecretStore =>
+          new EnvelopeSecretStore(
+            client,
+            parseSecretStoreKeyRing(`1:${randomBytes(32).toString("base64")}`, undefined)!
+          ),
+        inject: [PrismaService],
+      })
       .compile();
 
     app = moduleRef.createNestApplication<NestFastifyApplication>(
@@ -19493,6 +19511,148 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       const session = await app.get(SessionService).issue(profile.id);
       return { tenantId: tenant.id, cookie: `${STAFF_SESSION_COOKIE}=${session.token}` };
     };
+
+    describe("FISC-019 CSC routes", () => {
+      /**
+       * The CSC is written only over HTTP and read back only through the
+       * worker's own reader, wired to the app's ENCRYPTED secret store: no raw
+       * SQL stands in for the load. The suite overrides `SECRET_STORE` with an
+       * `EnvelopeSecretStore`, so the value really travels through
+       * `tenant_secret` inside the route's transaction.
+       */
+      it("loads over HTTP for the worker reader, isolates tenants and refuses the database bounds with 409", async () => {
+        const tenant = await provisionFiscalTenant(`csc-${randomUUID().slice(0, 8)}`);
+        const other = await provisionFiscalTenant(`csc-other-${randomUUID().slice(0, 8)}`);
+        const unentitled = await provisionFiscalTenant(`csc-off-${randomUUID().slice(0, 8)}`, {
+          features: [],
+        });
+        const store = app.get<SecretStore>(SECRET_STORE);
+        expect(store).toBeInstanceOf(EnvelopeSecretStore);
+        const reader = createFiscalCscReader({ client: prisma, secretStore: store });
+        const value = "Aa12".repeat(8);
+        const load = (idCsc: string) =>
+          supertest(serverUrl)
+            .post("/fiscal/csc")
+            .set("Cookie", tenant.cookie)
+            .send({ environment: "TEST", idCsc, value });
+        const list = async (cookie = tenant.cookie) => {
+          const response = await supertest(serverUrl)
+            .get("/fiscal/csc")
+            .set("Cookie", cookie)
+            .expect(200);
+          expect(response.text).not.toContain(value);
+          expect(response.text).not.toContain("secretRef");
+          return (response.body as { items: { id: string; idCsc: string; status: string }[] })
+            .items;
+        };
+        const state = async () => [
+          await prisma.tenantFiscalCsc.count({ where: { tenantId: tenant.tenantId } }),
+          await prisma.tenantSecret.count({ where: { tenantId: tenant.tenantId } }),
+          await prisma.auditLog.count({ where: { tenantId: tenant.tenantId } }),
+        ];
+
+        await supertest(serverUrl).get("/fiscal/csc").expect(401);
+        await supertest(serverUrl).get("/fiscal/csc").set("Cookie", unentitled.cookie).expect(403);
+
+        const first = await load("0001").expect(201);
+        const id = (first.body as { id: string }).id;
+        expect(Object.keys(first.body as object).sort()).toEqual([
+          "createdAt",
+          "environment",
+          "id",
+          "idCsc",
+          "retiredAt",
+          "retirementReason",
+          "status",
+        ]);
+        expect(first.text).not.toContain(value);
+        const loadedAudit = await prisma.auditLog.findMany({
+          where: { tenantId: tenant.tenantId, action: "fiscal.csc.loaded" },
+        });
+        expect(loadedAudit.map((row) => row.metadata)).toEqual([
+          { environment: "TEST", idCsc: "0001" },
+        ]);
+        // The value is sealed: neither the row nor the stored ciphertext carries it.
+        const secretRows = await prisma.tenantSecret.findMany({
+          where: { tenantId: tenant.tenantId },
+        });
+        expect(secretRows).toHaveLength(1);
+        expect(
+          JSON.stringify(secretRows, (_key, field: unknown) =>
+            Buffer.isBuffer(field) ? field.toString("latin1") : field
+          )
+        ).not.toContain(value);
+
+        expect(await reader.read({ tenantId: tenant.tenantId, environment: "TEST" })).toEqual({
+          idCsc: "0001",
+          csc: value,
+        });
+        expect(
+          await reader.read({ tenantId: tenant.tenantId, environment: "PRODUCTION" })
+        ).toBeNull();
+        expect(await reader.read({ tenantId: other.tenantId, environment: "TEST" })).toBeNull();
+        expect(await list(other.cookie)).toEqual([]);
+
+        const before = await state();
+        // Partial unique index: the identifier is already ACTIVE.
+        const duplicate = await load("0001").expect(409);
+        expect(duplicate.text).not.toContain(value);
+        expect((duplicate.body as { error: { message: string } }).error.message).toBe(
+          "A CSC with this identifier is already active in this environment."
+        );
+        await supertest(serverUrl)
+          .post("/fiscal/csc")
+          .set("Cookie", tenant.cookie)
+          .send({ environment: "TEST", idCsc: "0002", value, tenantId: other.tenantId })
+          .expect(400);
+        await supertest(serverUrl)
+          .post(`/fiscal/csc/${id}/retire`)
+          .set("Cookie", other.cookie)
+          .send({ reason: "foreign" })
+          .expect(404);
+        expect(await state()).toEqual(before);
+
+        await load("0002").expect(201);
+        const two = await state();
+        // The at-most-two trigger refuses the third: a 409, and nothing written.
+        const third = await load("0003").expect(409);
+        expect((third.body as { error: { code: string; message: string } }).error).toMatchObject({
+          code: "CONFLICT",
+          message: "Two CSCs are already active in this environment; retire one first.",
+        });
+        expect(await state()).toEqual(two);
+
+        await supertest(serverUrl)
+          .post(`/fiscal/csc/${id}/retire`)
+          .set("Cookie", tenant.cookie)
+          .send({ reason: "rotation" })
+          .expect(200);
+        const afterRetire = await list();
+        expect(afterRetire.find((row) => row.id === id)).toMatchObject({ status: "RETIRED" });
+        expect(await prisma.tenantSecret.count({ where: { tenantId: tenant.tenantId } })).toBe(1);
+        const retiredAudit = await prisma.auditLog.findMany({
+          where: { tenantId: tenant.tenantId, action: "fiscal.csc.retired" },
+        });
+        expect(retiredAudit.map((row) => row.metadata)).toEqual([
+          { environment: "TEST", idCsc: "0001" },
+        ]);
+        await supertest(serverUrl)
+          .post(`/fiscal/csc/${id}/retire`)
+          .set("Cookie", tenant.cookie)
+          .send({ reason: "again" })
+          .expect(409);
+        expect(await reader.read({ tenantId: tenant.tenantId, environment: "TEST" })).toEqual({
+          idCsc: "0002",
+          csc: value,
+        });
+
+        // Two concurrent loads into the one free slot: exactly one wins.
+        const raced = await Promise.all([load("0003"), load("0004")]);
+        expect(raced.map((response) => response.status).sort()).toEqual([201, 409]);
+        expect((await list()).filter((row) => row.status === "ACTIVE")).toHaveLength(2);
+        expect(await prisma.tenantSecret.count({ where: { tenantId: tenant.tenantId } })).toBe(2);
+      }, 30_000);
+    });
 
     const saveProfile = (cookie: string) =>
       supertest(serverUrl)

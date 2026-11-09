@@ -146,4 +146,62 @@ describe("/api/customers proxy", () => {
     expect(postInit.headers).toHaveProperty("cookie");
     expect(postInit.headers).not.toHaveProperty("x-request-id");
   });
+
+  it("forwards the fiscal declaration verbatim and never adds it to an omission", async () => {
+    cookiesMock.mockResolvedValue({
+      toString: () => "session=token-123",
+    });
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: "cust-1", fiscalOperationType: "B2G" }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: "cust-1", fiscalOperationType: "B2G" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      );
+
+    const declared = JSON.stringify({
+      kind: "COMPANY",
+      displayName: "Paws S.A.",
+      legalName: "Paws Sociedad Anónima",
+      taxId: "80012345-6",
+      fiscalOperationType: "B2G",
+    });
+    await POST(
+      mockNextRequest({
+        pathname: "/api/customers",
+        method: "POST",
+        headers: new Headers({ "content-type": "application/json" }),
+        bodyText: declared,
+      }) as unknown as Parameters<typeof POST>[0]
+    );
+    const createCall = fetchMock.mock.calls[0] as unknown as [
+      string,
+      { method: string; body?: string },
+    ];
+    expect(createCall[0]).toBe("http://localhost:3001/customers");
+    expect(createCall[1].body).toBe(declared);
+
+    const omission = JSON.stringify({ displayName: "Paws S.A." });
+    await PUT(
+      mockNextRequest({
+        pathname: "/api/customers/cust-1",
+        method: "PUT",
+        headers: new Headers({ "content-type": "application/json" }),
+        bodyText: omission,
+      }) as unknown as Parameters<typeof PUT>[0]
+    );
+    const updateCall = fetchMock.mock.calls[1] as unknown as [
+      string,
+      { method: string; body?: string },
+    ];
+    expect(updateCall[0]).toBe("http://localhost:3001/customers/cust-1");
+    expect(updateCall[1].body).toBe(omission);
+    expect(updateCall[1].body).not.toContain("fiscalOperationType");
+  });
 });

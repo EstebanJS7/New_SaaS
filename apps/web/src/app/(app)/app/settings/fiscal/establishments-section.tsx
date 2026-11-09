@@ -170,16 +170,16 @@ function EstablishmentForm({
   const [houseNumber, setHouseNumber] = useState(
     initial === undefined ? "" : String(initial.houseNumber)
   );
-  const [complement1, setComplement1] = useState("");
-  const [complement2, setComplement2] = useState("");
+  const [complement1, setComplement1] = useState(initial?.addressComplement1 ?? "");
+  const [complement2, setComplement2] = useState(initial?.addressComplement2 ?? "");
   const [departmentCode, setDepartmentCode] = useState(String(initial?.departmentCode ?? 1));
   const [districtCode, setDistrictCode] = useState(optionalText(initial?.districtCode));
-  const [districtName, setDistrictName] = useState("");
+  const [districtName, setDistrictName] = useState(initial?.districtName ?? "");
   const [cityCode, setCityCode] = useState(initial === undefined ? "" : String(initial.cityCode));
-  const [cityName, setCityName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
-  const [branchName, setBranchName] = useState("");
+  const [cityName, setCityName] = useState(initial?.cityName ?? "");
+  const [phone, setPhone] = useState(initial?.phone ?? "");
+  const [email, setEmail] = useState(initial?.email ?? "");
+  const [branchName, setBranchName] = useState(initial?.branchName ?? "");
   const [errors, setErrors] = useState<EstablishmentErrors>({});
 
   const save = useMutation({ mutationFn: onSave, onSuccess: onSaved });
@@ -240,12 +240,6 @@ function EstablishmentForm({
       }}
     >
       <h3 className="text-sm font-semibold sm:col-span-3">{title}</h3>
-      {initial ? (
-        <p className="text-xs text-muted-foreground sm:col-span-3">
-          Se guardan todos los datos juntos: volvé a escribir ciudad, teléfono, correo y los campos
-          opcionales, que no se muestran.
-        </p>
-      ) : null}
       <TextField
         label="Código"
         value={code}

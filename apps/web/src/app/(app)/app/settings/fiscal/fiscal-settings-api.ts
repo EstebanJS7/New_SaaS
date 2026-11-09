@@ -20,6 +20,8 @@ export interface EmitterProfile {
   readonly regimeCode: number | null;
   readonly legalName: string;
   readonly tradeName: string | null;
+  /** `null` while none is declared; the five fields travel together. */
+  readonly responsibleIssuer: ResponsibleIssuerInput | null;
   readonly transactionType: number | null;
   readonly taxType: number;
   readonly emissionType: number;
@@ -56,9 +58,16 @@ export interface Establishment {
   readonly code: string;
   readonly addressLine: string;
   readonly houseNumber: number;
+  readonly addressComplement1: string | null;
+  readonly addressComplement2: string | null;
   readonly departmentCode: number;
   readonly districtCode: number | null;
+  readonly districtName: string | null;
   readonly cityCode: number;
+  readonly cityName: string;
+  readonly phone: string;
+  readonly email: string;
+  readonly branchName: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -140,14 +149,14 @@ async function parseError(response: Response): Promise<FiscalSettingsApiError> {
   );
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function fiscalSettingsRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/fiscal/${path}`, { cache: "no-store", ...init });
   if (!response.ok) throw await parseError(response);
   return response.json() as Promise<T>;
 }
 
 function send<T>(method: "POST" | "PUT", path: string, body: unknown): Promise<T> {
-  return request<T>(path, {
+  return fiscalSettingsRequest<T>(path, {
     method,
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -157,7 +166,7 @@ function send<T>(method: "POST" | "PUT", path: string, body: unknown): Promise<T
 /** The tenant's emitter profile, or `null` while it has none (the API's 404). */
 export async function getEmitterProfile(): Promise<EmitterProfile | null> {
   try {
-    return await request<EmitterProfile>("emitter-profile");
+    return await fiscalSettingsRequest<EmitterProfile>("emitter-profile");
   } catch (error) {
     if (error instanceof FiscalSettingsApiError && error.code === "NOT_FOUND") return null;
     throw error;
@@ -173,7 +182,7 @@ export function declareIssuancePoint(input: IssuancePointInput): Promise<Issuanc
 }
 
 export async function listEstablishments(): Promise<Establishment[]> {
-  return (await request<{ items: Establishment[] }>("establishments")).items;
+  return (await fiscalSettingsRequest<{ items: Establishment[] }>("establishments")).items;
 }
 
 export function createEstablishment(input: EstablishmentInput): Promise<Establishment> {
@@ -185,7 +194,7 @@ export function updateEstablishment(id: string, input: EstablishmentInput): Prom
 }
 
 export async function listTimbradoRanges(): Promise<TimbradoRange[]> {
-  return (await request<{ items: TimbradoRange[] }>("timbrado-ranges")).items;
+  return (await fiscalSettingsRequest<{ items: TimbradoRange[] }>("timbrado-ranges")).items;
 }
 
 export function createTimbradoRange(input: TimbradoRangeInput): Promise<TimbradoRange> {

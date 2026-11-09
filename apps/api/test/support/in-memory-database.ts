@@ -197,6 +197,12 @@ export interface CustomerRow {
   firstName: string | null;
   lastName: string | null;
   documentNumber: string | null;
+  /**
+   * The receptor's declared `iTiOpe`, mirroring the nullable
+   * `fiscal_operation_type` column. Optional like Prisma's create input, so a
+   * caller that never declares one keeps compiling; reads normalize to `null`.
+   */
+  fiscalOperationType?: "B2B" | "B2C" | "B2G" | "B2F" | null;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -3878,6 +3884,7 @@ export function createIsolationDatabase(): IsolationDatabase {
           id: randomUUID(),
           ...data,
           isActive: data.isActive ?? true,
+          fiscalOperationType: data.fiscalOperationType ?? null,
           createdAt: now,
           updatedAt: now,
         };
@@ -3899,6 +3906,8 @@ export function createIsolationDatabase(): IsolationDatabase {
         if (data.firstName !== undefined) updated.firstName = data.firstName ?? null;
         if (data.lastName !== undefined) updated.lastName = data.lastName ?? null;
         if (data.documentNumber !== undefined) updated.documentNumber = data.documentNumber ?? null;
+        if (data.fiscalOperationType !== undefined)
+          updated.fiscalOperationType = data.fiscalOperationType;
         if (data.isActive !== undefined) updated.isActive = data.isActive;
         customers.set(updated.id, updated);
         return { count: 1 };

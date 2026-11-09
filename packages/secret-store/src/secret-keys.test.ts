@@ -15,4 +15,11 @@ describe("createOpaqueSecretKey", () => {
     expect(SECRET_KEY_PREFIXES.fiscalSigningKey).toBe("fsk");
     expect(Object.isFrozen(SECRET_KEY_PREFIXES)).toBe(true);
   });
+
+  it("exposes a distinct prefix for the fiscal CSC", () => {
+    expect(SECRET_KEY_PREFIXES.fiscalCsc).toBe("fcsc");
+    expect(createOpaqueSecretKey(SECRET_KEY_PREFIXES.fiscalCsc)).toMatch(
+      /^fcsc_[A-Za-z0-9_-]{22}$/
+    );
+  });
 });

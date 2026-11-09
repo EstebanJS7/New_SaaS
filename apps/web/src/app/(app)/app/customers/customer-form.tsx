@@ -9,7 +9,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@newsaas/ui/components/ui/card";
-import { customerError, customerWriteBlocked, type Customer } from "./customers-api";
+import {
+  FISCAL_OPERATION_TYPES,
+  customerError,
+  customerWriteBlocked,
+  type Customer,
+  type FiscalOperationType,
+} from "./customers-api";
 import { CustomerField, useCustomerExit, useCustomerValidation } from "./customer-form-interaction";
 interface CustomerFormValues {
   kind: "INDIVIDUAL" | "COMPANY";
@@ -19,6 +25,8 @@ interface CustomerFormValues {
   documentNumber: string;
   legalName: string;
   taxId: string;
+  /** Empty string is the form's "not declared" choice; the wire uses omission/null. */
+  fiscalOperationType: "" | FiscalOperationType;
 }
 
 function emptyValues(): CustomerFormValues {
@@ -30,6 +38,7 @@ function emptyValues(): CustomerFormValues {
     documentNumber: "",
     legalName: "",
     taxId: "",
+    fiscalOperationType: "",
   };
 }
 
@@ -42,6 +51,7 @@ function customerToValues(customer: Customer): CustomerFormValues {
     documentNumber: customer.documentNumber ?? "",
     legalName: customer.legalName ?? "",
     taxId: customer.taxId ?? "",
+    fiscalOperationType: customer.fiscalOperationType ?? "",
   };
 }
 
@@ -62,6 +72,9 @@ function buildCreateBody(values: CustomerFormValues): Record<string, unknown> {
     body.legalName = values.legalName.trim();
     body.taxId = values.taxId.trim();
   }
+
+  // "Sin declarar" sends nothing: the create must not invent a declaration.
+  if (values.fiscalOperationType) body.fiscalOperationType = values.fiscalOperationType;
 
   return body;
 }
@@ -88,6 +101,13 @@ function buildUpdateBody(values: CustomerFormValues, customer: Customer): Record
     const taxId = values.taxId.trim();
     if (legalName && legalName !== (customer.legalName ?? "")) body.legalName = legalName;
     if (taxId && taxId !== (customer.taxId ?? "")) body.taxId = taxId;
+  }
+
+  // Omission preserves the stored declaration; only an explicit change is sent,
+  // and "Sin declarar" sends `null` (the intentional undeclared state).
+  const fiscalOperationType = values.fiscalOperationType || null;
+  if (fiscalOperationType !== (customer.fiscalOperationType ?? null)) {
+    body.fiscalOperationType = fiscalOperationType;
   }
 
   return body;
@@ -201,6 +221,34 @@ export function CustomerForm({
                 />
               );
             })}
+          </div>
+          <div className="space-y-2">
+            <label htmlFor="fiscalOperationType" className="text-sm font-medium">
+              Tipo de operación fiscal (iTiOpe)
+            </label>
+            <select
+              id="fiscalOperationType"
+              value={values.fiscalOperationType}
+              disabled={blocked}
+              onChange={(e) =>
+                setValues({
+                  ...values,
+                  fiscalOperationType: e.target.value as "" | FiscalOperationType,
+                })
+              }
+              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+            >
+              <option value="">Sin declarar</option>
+              {FISCAL_OPERATION_TYPES.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground">
+              Se declara por cliente y no se deduce de su tipo. Sin declararlo, la emisión
+              electrónica rechaza a este cliente en lugar de suponer una operación.
+            </p>
           </div>
           <p className="text-xs text-muted-foreground">
             Los cambios sin guardar se conservan solo mientras este formulario está abierto.
