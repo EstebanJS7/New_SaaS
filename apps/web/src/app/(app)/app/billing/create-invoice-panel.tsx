@@ -79,10 +79,10 @@ export function CreateInvoicePanel({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Create invoice</CardTitle>
+        <CardTitle>Crear factura</CardTitle>
         <CardDescription>
-          A draft is created from one completed sale. Its lines, totals, currency, series and number
-          are copied or allocated by the API, never typed here.
+          El borrador se crea a partir de una venta completada. El servidor copia o asigna sus
+          líneas, totales, moneda, serie y número; nada de eso se carga acá.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -92,9 +92,9 @@ export function CreateInvoicePanel({
             data-testid="invoice-created"
             className="rounded-lg border border-border bg-muted p-4 text-sm"
           >
-            <p className="font-medium text-foreground">Draft invoice created</p>
+            <p className="font-medium text-foreground">Borrador de factura creado</p>
             <p className="text-muted-foreground">
-              {`The API created a ${INVOICE_STATUS_LABELS[created.status].toLowerCase()} invoice #${shortId(created.id)} for this sale, totalling ${formatInvoiceAmount(created.total)}. It has ${invoiceNumberLabel(created.series, created.number).toLowerCase()} until it is confirmed.`}
+              {`Se creó la factura #${shortId(created.id)} en estado ${INVOICE_STATUS_LABELS[created.status].toLowerCase()} para esta venta, por un total de ${formatInvoiceAmount(created.total, created.currency)}. Número: ${invoiceNumberLabel(created.series, created.number).toLowerCase()}; se asigna al confirmarla.`}
             </p>
           </div>
         )}
@@ -106,7 +106,7 @@ export function CreateInvoicePanel({
         <form onSubmit={handleSubmit} className="space-y-3 border-t border-border pt-4">
           <div className="space-y-2">
             <label htmlFor="billing-sale-id" className="text-sm font-medium">
-              Completed sale id
+              Identificador de la venta completada
             </label>
             <input
               id="billing-sale-id"
@@ -120,9 +120,9 @@ export function CreateInvoicePanel({
               className={billingInputClassName}
             />
             <p className="text-xs text-muted-foreground">
-              The UUID of a completed sale of this tenant. The API refuses a sale that is not
-              completed, one the tenant&apos;s policy requires a customer for, and one that already
-              holds an invoice.
+              El UUID de una venta completada de esta organización. Se rechaza una venta que no esté
+              completada, una que según la política de la organización necesita cliente y una que ya
+              tiene factura.
             </p>
           </div>
 
@@ -137,7 +137,7 @@ export function CreateInvoicePanel({
           )}
 
           <Button type="submit" disabled={isCreating}>
-            {isCreating ? "Creating invoice..." : "Create invoice"}
+            {isCreating ? "Creando factura…" : "Crear factura"}
           </Button>
         </form>
       </CardContent>

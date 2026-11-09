@@ -40,7 +40,7 @@ interface InvoiceListPanelProps {
  *
  * Lists the tenant's invoices under an explicit status filter and selects one
  * for inspection. The filter is the API's own `status` query and has NO implicit
- * default, so "All statuses" really asks for all of them. The list is rendered
+ * default, so «Todos los estados» really asks for all of them. The list is rendered
  * in the order the API returned it (newest first); it is never re-sorted here.
  *
  * A refused read is rendered by outcome — a `403 FORBIDDEN` says the operator
@@ -62,16 +62,16 @@ export function InvoiceListPanel({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Invoices</CardTitle>
+        <CardTitle>Facturas</CardTitle>
         <CardDescription>
-          The tenant&apos;s invoices, newest first. A draft has no allocated number yet; the number
-          is written only by confirmation.
+          Las facturas de la organización, de la más reciente a la más antigua. Un borrador todavía
+          no tiene número; el número se asigna solo al confirmar.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-2">
           <label htmlFor="billing-status-filter" className="text-sm font-medium">
-            Status filter
+            Filtrar por estado
           </label>
           <select
             id="billing-status-filter"
@@ -79,7 +79,7 @@ export function InvoiceListPanel({
             onChange={(event) => onStatusFilterChange(event.target.value as InvoiceStatusFilter)}
             className={billingInputClassName}
           >
-            <option value="ALL">All statuses</option>
+            <option value="ALL">Todos los estados</option>
             {INVOICE_STATUSES.map((status) => (
               <option key={status} value={status}>
                 {INVOICE_STATUS_LABELS[status]}
@@ -90,13 +90,13 @@ export function InvoiceListPanel({
 
         {isLoading ? (
           <p data-testid="invoices-loading" className="text-sm text-muted-foreground">
-            Loading invoices...
+            Cargando facturas…
           </p>
         ) : loadError !== null ? (
           <BillingErrorAlert error={loadError} testId="invoices-error" />
         ) : invoices.length === 0 ? (
           <p data-testid="invoices-empty" className="text-sm text-muted-foreground">
-            No invoices match this filter.
+            Ninguna factura coincide con este filtro.
           </p>
         ) : (
           <ul className="space-y-2">
@@ -111,15 +111,15 @@ export function InvoiceListPanel({
                 >
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium text-foreground">
-                      {`${INVOICE_STATUS_LABELS[invoice.status]} invoice ${invoiceNumberLabel(invoice.series, invoice.number)}`}
+                      {`Factura ${INVOICE_STATUS_LABELS[invoice.status].toLowerCase()} · ${invoiceNumberLabel(invoice.series, invoice.number)}`}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {`#${shortId(invoice.id)} · sale #${shortId(invoice.saleId)} · ${formatTimestamp(invoice.createdAt)}`}
+                      {`#${shortId(invoice.id)} · venta #${shortId(invoice.saleId)} · ${formatTimestamp(invoice.createdAt)}`}
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-3">
                     <span className="text-right text-sm text-foreground">
-                      {formatInvoiceAmount(invoice.total)}
+                      {formatInvoiceAmount(invoice.total, invoice.currency)}
                     </span>
                     <Button
                       type="button"
@@ -128,7 +128,7 @@ export function InvoiceListPanel({
                       aria-pressed={selected}
                       onClick={() => onSelectInvoice(invoice)}
                     >
-                      {selected ? "Selected" : "Select invoice"}
+                      {selected ? "Seleccionada" : "Seleccionar factura"}
                     </Button>
                   </div>
                 </li>

@@ -34,16 +34,17 @@ function CommandOutcome({ outcome }: { readonly outcome: FiscalCommandOutcome })
       data-testid={`fiscal-${outcome.kind}`}
       className="rounded-lg border border-border bg-muted p-4 text-sm"
     >
-      <p className="font-medium text-foreground">Fiscal document {outcome.kind}</p>
+      <p className="font-medium text-foreground">
+        {outcome.kind === "issued" ? "Documento fiscal emitido" : "Documento fiscal cancelado"}
+      </p>
       <p className="text-muted-foreground">
-        The API returned this fiscal document as{" "}
-        {FISCAL_STATUS_LABELS[outcome.document.status as keyof typeof FISCAL_STATUS_LABELS]}.
+        {`El documento fiscal quedó en estado «${FISCAL_STATUS_LABELS[outcome.document.status as keyof typeof FISCAL_STATUS_LABELS]}».`}
       </p>
     </div>
   );
 }
 function valueOrPlaceholder(value: string | null): string {
-  return value ?? "Not provided";
+  return value ?? "No informado";
 }
 export function FiscalDetailPanel({
   document,
@@ -77,21 +78,21 @@ export function FiscalDetailPanel({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Fiscal document detail</CardTitle>
+        <CardTitle>Detalle del documento fiscal</CardTitle>
         <CardDescription>
-          The allowlisted representation returned by the Fiscal API.
+          Los datos del documento fiscal tal como los devuelve el servidor.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {isLoading ? (
           <p data-testid="fiscal-detail-loading" className="text-sm text-muted-foreground">
-            Loading fiscal document...
+            Cargando documento fiscal…
           </p>
         ) : loadError !== null ? (
           <FiscalErrorAlert error={loadError} testId="fiscal-detail-error" />
         ) : document === null ? (
           <p data-testid="fiscal-no-selection" className="text-sm text-muted-foreground">
-            Select a fiscal document above to inspect its details.
+            Seleccioná un documento fiscal de la lista para ver su detalle.
           </p>
         ) : (
           <>
@@ -101,26 +102,26 @@ export function FiscalDetailPanel({
                 [
                   [
                     "status",
-                    "Status",
+                    "Estado",
                     FISCAL_STATUS_LABELS[document.status as keyof typeof FISCAL_STATUS_LABELS],
                   ],
-                  ["provider", "Provider", document.provider],
-                  ["attempt-count", "Attempt count", String(document.attemptCount)],
-                  ["external-id", "External id", valueOrPlaceholder(document.externalId)],
+                  ["provider", "Proveedor", document.provider],
+                  ["attempt-count", "Intentos", String(document.attemptCount)],
+                  ["external-id", "Identificador externo", valueOrPlaceholder(document.externalId)],
                   ["cdc", "CDC", valueOrPlaceholder(document.cdc)],
                   [
                     "last-error-code",
-                    "Last error code",
+                    "Último código de error",
                     valueOrPlaceholder(document.lastErrorCode),
                   ],
-                  ["created-at", "Created at", formatTimestamp(document.createdAt)],
-                  ["updated-at", "Updated at", formatTimestamp(document.updatedAt)],
+                  ["created-at", "Creado el", formatTimestamp(document.createdAt)],
+                  ["updated-at", "Actualizado el", formatTimestamp(document.updatedAt)],
                   ...(document.cancelledAt === null
                     ? []
                     : [
                         [
                           "cancelled-at",
-                          "Cancelled at",
+                          "Cancelado el",
                           formatTimestamp(document.cancelledAt),
                         ] as const,
                       ]),
@@ -144,14 +145,14 @@ export function FiscalDetailPanel({
               <form onSubmit={handleSubmit} className="space-y-3 border-t border-border pt-4">
                 <div className="space-y-2">
                   <label htmlFor="fiscal-cancel-reason" className="text-sm font-medium">
-                    Cancellation reason
+                    Motivo de la cancelación
                   </label>
                   <textarea
                     id="fiscal-cancel-reason"
                     value={reason}
                     onChange={(event) => setReason(event.target.value)}
                     disabled={isCancelling}
-                    placeholder="Why the fiscal document is being cancelled"
+                    placeholder="Por qué se cancela el documento fiscal"
                     className={fiscalTextareaClassName}
                   />
                 </div>
@@ -168,7 +169,7 @@ export function FiscalDetailPanel({
                   <FiscalErrorAlert error={cancelError} testId="fiscal-cancel-error" />
                 )}
                 <Button type="submit" variant="outline" disabled={isCancelling}>
-                  {isCancelling ? "Cancelling fiscal document..." : "Cancel fiscal document"}
+                  {isCancelling ? "Cancelando documento fiscal…" : "Cancelar documento fiscal"}
                 </Button>
               </form>
             )}

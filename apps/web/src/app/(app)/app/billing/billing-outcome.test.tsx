@@ -14,46 +14,60 @@ import { BillingErrorAlert, billingErrorTitle } from "./billing-outcome";
 describe("billingErrorTitle", () => {
   it("names the entitlement refusal distinctly from the permission one", () => {
     expect(billingErrorTitle(new ApiRequestError("FEATURE_NOT_ENTITLED", "x", 403))).toBe(
-      "Billing features are not enabled for this tenant"
+      "Facturación no habilitada"
     );
-    expect(billingErrorTitle(new ApiRequestError("FORBIDDEN", "x", 403))).toBe("Permission denied");
+    expect(billingErrorTitle(new ApiRequestError("FORBIDDEN", "x", 403))).toBe("Sin permiso");
   });
 
   it("names the shared 404 without distinguishing an unknown id from a foreign one", () => {
-    expect(billingErrorTitle(new ApiRequestError("NOT_FOUND", "x", 404))).toBe("Invoice not found");
+    expect(billingErrorTitle(new ApiRequestError("NOT_FOUND", "x", 404))).toBe(
+      "No encontramos la factura"
+    );
   });
 
   it("separates the named 409 outcomes from the generic one", () => {
     expect(
       billingErrorTitle(new ApiRequestError("CONFLICT", INVOICE_SALE_NOT_COMPLETED_MESSAGE, 409))
-    ).toBe("Only a completed sale can be invoiced");
+    ).toBe("Solo se puede facturar una venta completada");
     expect(
       billingErrorTitle(new ApiRequestError("CONFLICT", INVOICE_CUSTOMER_REQUIRED_MESSAGE, 409))
-    ).toBe("This tenant requires a customer before an invoice can be issued");
+    ).toBe("Esta organización exige un cliente para emitir una factura");
     expect(
       billingErrorTitle(new ApiRequestError("CONFLICT", INVOICE_SALE_ALREADY_INVOICED_MESSAGE, 409))
-    ).toBe("This sale already has an invoice");
+    ).toBe("Esta venta ya tiene una factura");
     expect(billingErrorTitle(new ApiRequestError("CONFLICT", INVOICE_NOT_DRAFT_MESSAGE, 409))).toBe(
-      "Only a draft invoice can be confirmed"
+      "Solo se puede confirmar una factura en borrador"
     );
     expect(
       billingErrorTitle(new ApiRequestError("CONFLICT", INVOICE_NOT_CANCELLABLE_MESSAGE, 409))
-    ).toBe("Only a draft or confirmed invoice can be cancelled");
+    ).toBe("Solo se puede anular una factura en borrador o confirmada");
     expect(billingErrorTitle(new ApiRequestError("CONFLICT", "Some other conflict.", 409))).toBe(
-      "The API refused the request"
+      "La operación fue rechazada"
     );
   });
 
   it("names the stable 400 and the transport failure", () => {
     expect(billingErrorTitle(new ApiRequestError("VALIDATION_FAILED", "Invalid body.", 400))).toBe(
-      "The request was rejected as invalid"
+      "Revisá los datos de la operación"
     );
-    expect(billingErrorTitle(new Error("fetch failed"))).toBe("Could not reach the server");
+    expect(billingErrorTitle(new Error("fetch failed"))).toBe(
+      "No se pudo conectar con el servidor"
+    );
+  });
+
+  it("falls back to a Spanish heading and body for an unknown failure", () => {
+    const unknown = new ApiRequestError("UNKNOWN", "Request failed (500)", 500);
+    expect(billingErrorTitle(unknown)).toBe("No pudimos completar la operación");
+    render(<BillingErrorAlert error={unknown} />);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "No pudimos completar la operación. Revisá los datos y volvé a intentar."
+    );
+    expect(screen.getByRole("alert")).not.toHaveTextContent("Request failed");
   });
 });
 
 describe("BillingErrorAlert", () => {
-  it("renders the stable heading and the value-free API copy", () => {
+  it("renders the stable heading and the Spanish copy instead of the API English", () => {
     render(
       <BillingErrorAlert
         error={
@@ -65,25 +79,26 @@ describe("BillingErrorAlert", () => {
 
     const alert = screen.getByTestId("billing-error");
     expect(alert).toHaveAttribute("role", "alert");
-    expect(alert).toHaveTextContent("Billing features are not enabled for this tenant");
-    expect(alert).toHaveTextContent(BILLING_FEATURE_NOT_ENTITLED_MESSAGE);
+    expect(alert).toHaveTextContent("Facturación no habilitada");
+    expect(alert).toHaveTextContent("Facturación no está habilitada para esta organización.");
+    expect(alert).not.toHaveTextContent(BILLING_FEATURE_NOT_ENTITLED_MESSAGE);
   });
 
   it("renders the permission copy for a forbidden billing call", () => {
     render(<BillingErrorAlert error={new ApiRequestError("FORBIDDEN", "Access denied.", 403)} />);
 
-    expect(screen.getByRole("alert")).toHaveTextContent("Permission denied");
+    expect(screen.getByRole("alert")).toHaveTextContent("Sin permiso");
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "You do not have permission to manage invoices."
+      "No tenés permiso para gestionar facturas."
     );
   });
 
   it("renders its own copy for a transport failure instead of a raw browser string", () => {
     render(<BillingErrorAlert error={new TypeError("Failed to fetch")} />);
 
-    expect(screen.getByRole("alert")).toHaveTextContent("Could not reach the server");
+    expect(screen.getByRole("alert")).toHaveTextContent("No se pudo conectar con el servidor");
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "The request could not reach the server. Check your connection and try again."
+      "No se pudo conectar con el servidor. Revisá tu conexión y volvé a intentar."
     );
   });
 });

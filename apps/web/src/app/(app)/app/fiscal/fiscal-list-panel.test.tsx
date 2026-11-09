@@ -52,23 +52,25 @@ describe("FiscalListPanel", () => {
     expect(screen.getByTestId("fiscal-list-empty")).toBeInTheDocument();
     unmount();
     renderPanel({ loadError: new ApiRequestError("FORBIDDEN", "Denied", 403) });
-    expect(screen.getByTestId("fiscal-list-error")).toHaveTextContent("Permission denied");
+    expect(screen.getByTestId("fiscal-list-error")).toHaveTextContent("Sin permiso");
   });
   it("renders API values and reports filter and selection changes", () => {
     const { onSelectDocument, onStatusFilterChange } = renderPanel();
     const row = screen.getByTestId("fiscal-list-item");
-    expect(row).toHaveTextContent("Pending");
-    expect(row).toHaveTextContent("2 attempts");
-    expect(row).toHaveTextContent("2026-10-01 08:00 UTC");
-    fireEvent.change(screen.getByLabelText("Status filter"), { target: { value: "APPROVED" } });
+    expect(row).toHaveTextContent("Documento fiscal #99999999 · Pendiente");
+    expect(row).toHaveTextContent("Factura #aaaaaaaa · 2 intentos");
+    expect(row).toHaveTextContent("1 oct. 2026, 05:00 a. m.");
+    fireEvent.change(screen.getByLabelText("Filtrar por estado"), {
+      target: { value: "APPROVED" },
+    });
     expect(onStatusFilterChange).toHaveBeenCalledWith("APPROVED");
-    fireEvent.click(screen.getByRole("button", { name: "Select document" }));
+    fireEvent.click(screen.getByRole("button", { name: "Seleccionar documento" }));
     expect(onSelectDocument).toHaveBeenCalledWith(DOCUMENT);
   });
   it("marks the selected row", () => {
     renderPanel({ selectedDocumentId: DOCUMENT.id });
     expect(screen.getByTestId("fiscal-list-item")).toHaveAttribute("data-selected", "true");
-    expect(screen.getByRole("button", { name: "Selected" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Seleccionado" })).toHaveAttribute(
       "aria-pressed",
       "true"
     );

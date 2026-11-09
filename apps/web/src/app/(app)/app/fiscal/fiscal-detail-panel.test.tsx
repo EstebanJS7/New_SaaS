@@ -41,35 +41,35 @@ describe("FiscalDetailPanel", () => {
     unmount();
     renderPanel({ loadError: new ApiRequestError("NOT_FOUND", "Missing", 404) });
     expect(screen.getByTestId("fiscal-detail-error")).toHaveTextContent(
-      "Fiscal document not found"
+      "No encontramos el documento fiscal"
     );
   });
   it("shows the allowlisted representation and explicit null placeholders", () => {
     renderPanel();
-    expect(screen.getByTestId("fiscal-status")).toHaveTextContent("Pending");
+    expect(screen.getByTestId("fiscal-status")).toHaveTextContent("Pendiente");
     expect(screen.getByTestId("fiscal-provider")).toHaveTextContent("TEST");
     expect(screen.getByTestId("fiscal-attempt-count")).toHaveTextContent("2");
-    expect(screen.getByTestId("fiscal-external-id")).toHaveTextContent("Not provided");
-    expect(screen.getByTestId("fiscal-cdc")).toHaveTextContent("Not provided");
-    expect(screen.getByTestId("fiscal-last-error-code")).toHaveTextContent("Not provided");
+    expect(screen.getByTestId("fiscal-external-id")).toHaveTextContent("No informado");
+    expect(screen.getByTestId("fiscal-cdc")).toHaveTextContent("No informado");
+    expect(screen.getByTestId("fiscal-last-error-code")).toHaveTextContent("No informado");
     expect(screen.getByTestId("fiscal-created-at")).toBeInTheDocument();
     expect(screen.getByTestId("fiscal-updated-at")).toBeInTheDocument();
   });
   it("validates and submits cancellation, then disables while pending", () => {
     const { onCancel, unmount } = renderPanel();
-    fireEvent.click(screen.getByRole("button", { name: "Cancel fiscal document" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar documento fiscal" }));
     expect(onCancel).not.toHaveBeenCalled();
     expect(screen.getByTestId("fiscal-cancel-validation-error")).toBeInTheDocument();
     unmount();
     renderPanel({ isCancelling: true });
-    expect(screen.getByRole("button", { name: "Cancelling fiscal document..." })).toBeDisabled();
-    expect(screen.getByLabelText("Cancellation reason")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancelando documento fiscal…" })).toBeDisabled();
+    expect(screen.getByLabelText("Motivo de la cancelación")).toBeDisabled();
   });
   it("hides cancellation for sending and cancelled states and renders API conflict verbatim", () => {
     const { unmount } = renderPanel({ document: { ...DOCUMENT, status: "SENDING" } });
-    expect(screen.queryByLabelText("Cancellation reason")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Motivo de la cancelación")).not.toBeInTheDocument();
     unmount();
     renderPanel({ document: { ...DOCUMENT, status: "CANCELLED" } });
-    expect(screen.queryByLabelText("Cancellation reason")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Motivo de la cancelación")).not.toBeInTheDocument();
   });
 });

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { FiscalDocument } from "./fiscal-api";
+import { FISCAL_DOCUMENT_CANCEL_REFUSED_MESSAGE, type FiscalDocument } from "./fiscal-api";
 import { FiscalSurface } from "./fiscal-surface";
 const DOCUMENT: FiscalDocument = {
   id: "99999999-9999-4999-8999-999999999999",
@@ -76,13 +76,13 @@ describe("FiscalSurface reads", () => {
     });
     renderSurface();
     await screen.findByTestId("fiscal-list-item");
-    fireEvent.change(screen.getByLabelText("Status filter"), { target: { value: "PENDING" } });
+    fireEvent.change(screen.getByLabelText("Filtrar por estado"), { target: { value: "PENDING" } });
     await waitFor(() =>
       expect(fetchMock.mock.calls.map((call) => resolveUrl(call[0]))).toContain(
         `${BASE}?status=PENDING`
       )
     );
-    fireEvent.click(await screen.findByRole("button", { name: "Select document" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Seleccionar documento" }));
     expect(await screen.findByTestId("fiscal-provider")).toHaveTextContent("TEST");
   });
   it("shows entitlement and permission denied states", async () => {
@@ -118,36 +118,37 @@ describe("FiscalSurface commands", () => {
       cancel: () => jsonResponse({ ...DOCUMENT, status: "CANCELLED" }),
     });
     renderSurface();
-    fireEvent.change(screen.getByLabelText("Invoice id"), {
+    fireEvent.change(screen.getByLabelText("Identificador de la factura"), {
       target: { value: DOCUMENT.invoiceId },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Issue fiscal document" }));
+    fireEvent.click(screen.getByRole("button", { name: "Emitir documento fiscal" }));
     expect(await screen.findByTestId("fiscal-issued")).toBeInTheDocument();
     await screen.findByTestId("fiscal-provider");
-    fireEvent.change(screen.getByLabelText("Cancellation reason"), {
+    fireEvent.change(screen.getByLabelText("Motivo de la cancelación"), {
       target: { value: "Duplicate" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Cancel fiscal document" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar documento fiscal" }));
     expect(await screen.findByTestId("fiscal-cancelled")).toBeInTheDocument();
     const posts = fetchMock.mock.calls.filter((call) => call[1]?.method === "POST");
     expect(posts.length).toBeGreaterThan(0);
     expect(JSON.parse(posts[0]?.[1]?.body as string)).toEqual({ invoiceId: DOCUMENT.invoiceId });
   });
-  it("renders cancel conflict verbatim", async () => {
+  it("renders the provider cancel refusal in Spanish, not the server English", async () => {
     installFetch({
       list: () => jsonResponse([DOCUMENT]),
       detail: () => jsonResponse(DOCUMENT),
-      cancel: () => errorResponse("CONFLICT", "Provider refuses cancellation verbatim.", 409),
+      cancel: () => errorResponse("CONFLICT", FISCAL_DOCUMENT_CANCEL_REFUSED_MESSAGE, 409),
     });
     renderSurface();
-    fireEvent.click(await screen.findByRole("button", { name: "Select document" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Seleccionar documento" }));
     await screen.findByTestId("fiscal-provider");
-    fireEvent.change(screen.getByLabelText("Cancellation reason"), {
+    fireEvent.change(screen.getByLabelText("Motivo de la cancelación"), {
       target: { value: "Duplicate" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Cancel fiscal document" }));
-    expect(await screen.findByTestId("fiscal-cancel-error")).toHaveTextContent(
-      "Provider refuses cancellation verbatim."
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar documento fiscal" }));
+    const alert = await screen.findByTestId("fiscal-cancel-error");
+    expect(alert).toHaveTextContent("La operación fue rechazada");
+    expect(alert).toHaveTextContent("El proveedor fiscal rechazó la cancelación.");
+    expect(alert).not.toHaveTextContent(FISCAL_DOCUMENT_CANCEL_REFUSED_MESSAGE);
   });
 });

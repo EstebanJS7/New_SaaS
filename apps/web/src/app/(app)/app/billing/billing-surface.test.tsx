@@ -156,7 +156,7 @@ function renderSurface(): void {
 }
 
 async function selectFirstInvoice(): Promise<void> {
-  fireEvent.click(await screen.findByRole("button", { name: "Select invoice" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Seleccionar factura" }));
   await screen.findByTestId("invoice-line");
 }
 
@@ -174,7 +174,7 @@ describe("BillingSurface reads", () => {
     renderSurface();
     await selectFirstInvoice();
 
-    expect(screen.getByTestId("invoice-total")).toHaveTextContent("1,500.00");
+    expect(screen.getByTestId("invoice-total")).toHaveTextContent("Gs. 1.500");
     const urls = typedCalls(fetchMock).map((call) => resolveUrl(call[0]));
     expect(urls).toContain(BASE);
     expect(urls).toContain(`${BASE}/${DRAFT_INVOICE.id}`);
@@ -188,7 +188,7 @@ describe("BillingSurface reads", () => {
     renderSurface();
     await screen.findByTestId("invoice-list-item");
 
-    fireEvent.change(screen.getByLabelText("Status filter"), { target: { value: "DRAFT" } });
+    fireEvent.change(screen.getByLabelText("Filtrar por estado"), { target: { value: "DRAFT" } });
 
     await waitFor(() => {
       expect(typedCalls(fetchMock).map((call) => resolveUrl(call[0]))).toContain(
@@ -204,7 +204,7 @@ describe("BillingSurface reads", () => {
 
     renderSurface();
 
-    expect(await screen.findByTestId("invoices-error")).toHaveTextContent("Permission denied");
+    expect(await screen.findByTestId("invoices-error")).toHaveTextContent("Sin permiso");
   });
 
   it("hides the workspace when the tenant lacks the billing capability", async () => {
@@ -220,11 +220,11 @@ describe("BillingSurface reads", () => {
     renderSurface();
 
     expect(await screen.findByTestId("billing-entitlement-denied")).toHaveTextContent(
-      "Billing features are not enabled for this tenant"
+      "Facturación no habilitada"
     );
     // The UX gate hides the surface; the backend remains the authority.
     expect(screen.queryByLabelText("Status filter")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Completed sale id")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Identificador de la venta completada")).not.toBeInTheDocument();
   });
 
   it("renders a backend 404 on the detail read as an error state, never as data", async () => {
@@ -234,9 +234,11 @@ describe("BillingSurface reads", () => {
     });
 
     renderSurface();
-    fireEvent.click(await screen.findByRole("button", { name: "Select invoice" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Seleccionar factura" }));
 
-    expect(await screen.findByTestId("invoice-error")).toHaveTextContent("Invoice not found");
+    expect(await screen.findByTestId("invoice-error")).toHaveTextContent(
+      "No encontramos la factura"
+    );
     expect(screen.queryByTestId("invoice-line")).not.toBeInTheDocument();
     expect(screen.queryByTestId("invoice-total")).not.toBeInTheDocument();
   });
@@ -257,10 +259,14 @@ describe("BillingSurface commands", () => {
     renderSurface();
     await screen.findByTestId("invoices-empty");
 
-    fireEvent.change(screen.getByLabelText("Completed sale id"), { target: { value: SALE_ID } });
-    fireEvent.click(screen.getByRole("button", { name: "Create invoice" }));
+    fireEvent.change(screen.getByLabelText("Identificador de la venta completada"), {
+      target: { value: SALE_ID },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Crear factura" }));
 
-    expect(await screen.findByTestId("invoice-created")).toHaveTextContent("Draft invoice created");
+    expect(await screen.findByTestId("invoice-created")).toHaveTextContent(
+      "Borrador de factura creado"
+    );
 
     const post = callsTo(fetchMock, BASE).find((call) => call[1]?.method === "POST");
     expect(post).toBeDefined();
@@ -285,14 +291,14 @@ describe("BillingSurface commands", () => {
     renderSurface();
     await selectFirstInvoice();
 
-    fireEvent.click(screen.getByRole("button", { name: "Confirm invoice" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar factura" }));
 
     const confirmed = await screen.findByTestId("invoice-confirmed");
-    expect(confirmed).toHaveTextContent("Invoice confirmed");
-    expect(confirmed).toHaveTextContent("numbered A-12");
-    expect(screen.getByTestId("invoice-status")).toHaveTextContent("Confirmed");
+    expect(confirmed).toHaveTextContent("Factura confirmada");
+    expect(confirmed).toHaveTextContent("con el número A-12");
+    expect(screen.getByTestId("invoice-status")).toHaveTextContent("Confirmada");
     // No second allocation and no second confirmation are claimed.
-    expect(confirmed).toHaveTextContent("no second number is allocated");
+    expect(confirmed).toHaveTextContent("no se asigna un segundo número");
     expect(screen.queryByTestId("invoice-confirm-error")).not.toBeInTheDocument();
 
     const post = callsTo(fetchMock, BASE).find((call) => resolveUrl(call[0]).endsWith("/confirm"));
@@ -310,10 +316,10 @@ describe("BillingSurface commands", () => {
     renderSurface();
     await selectFirstInvoice();
 
-    fireEvent.click(screen.getByRole("button", { name: "Confirm invoice" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar factura" }));
 
     expect(await screen.findByTestId("invoice-confirm-error")).toHaveTextContent(
-      "Only a draft invoice can be confirmed"
+      "Solo se puede confirmar una factura en borrador"
     );
     expect(screen.queryByTestId("invoice-confirmed")).not.toBeInTheDocument();
   });
@@ -327,11 +333,13 @@ describe("BillingSurface commands", () => {
     renderSurface();
     await screen.findByTestId("invoices-empty");
 
-    fireEvent.change(screen.getByLabelText("Completed sale id"), { target: { value: SALE_ID } });
-    fireEvent.click(screen.getByRole("button", { name: "Create invoice" }));
+    fireEvent.change(screen.getByLabelText("Identificador de la venta completada"), {
+      target: { value: SALE_ID },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Crear factura" }));
 
     expect(await screen.findByTestId("invoice-create-error")).toHaveTextContent(
-      "This sale already has an invoice"
+      "Esta venta ya tiene una factura"
     );
     expect(screen.queryByTestId("invoice-created")).not.toBeInTheDocument();
   });
@@ -345,11 +353,13 @@ describe("BillingSurface commands", () => {
     renderSurface();
     await screen.findByTestId("invoices-empty");
 
-    fireEvent.change(screen.getByLabelText("Completed sale id"), { target: { value: SALE_ID } });
-    fireEvent.click(screen.getByRole("button", { name: "Create invoice" }));
+    fireEvent.change(screen.getByLabelText("Identificador de la venta completada"), {
+      target: { value: SALE_ID },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Crear factura" }));
 
     expect(await screen.findByTestId("invoice-create-error")).toHaveTextContent(
-      "This tenant requires a customer before an invoice can be issued"
+      "Esta organización exige un cliente para emitir una factura"
     );
   });
 
@@ -361,27 +371,27 @@ describe("BillingSurface commands", () => {
     });
 
     renderSurface();
-    fireEvent.click(await screen.findByRole("button", { name: "Select invoice" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Seleccionar factura" }));
     await screen.findByTestId("invoice-line");
 
     // A blank reason never reaches the API.
-    fireEvent.click(screen.getByRole("button", { name: "Cancel invoice" }));
+    fireEvent.click(screen.getByRole("button", { name: "Anular factura" }));
     expect(screen.getByTestId("invoice-cancel-validation-error")).toHaveTextContent(
-      "An invoice cancel reason is required."
+      "Ingresá el motivo de la anulación."
     );
     expect(
       callsTo(fetchMock, BASE).filter((call) => resolveUrl(call[0]).endsWith("/cancel"))
     ).toHaveLength(0);
 
-    fireEvent.change(screen.getByLabelText("Cancellation reason"), {
+    fireEvent.change(screen.getByLabelText("Motivo de la anulación"), {
       target: { value: "Duplicated" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Cancel invoice" }));
+    fireEvent.click(screen.getByRole("button", { name: "Anular factura" }));
 
     const cancelled = await screen.findByTestId("invoice-cancelled");
-    expect(cancelled).toHaveTextContent("Invoice cancelled");
-    expect(cancelled).toHaveTextContent("Cancelled is terminal");
-    expect(screen.getByTestId("invoice-status")).toHaveTextContent("Cancelled");
+    expect(cancelled).toHaveTextContent("Factura anulada");
+    expect(cancelled).toHaveTextContent("La anulación es definitiva");
+    expect(screen.getByTestId("invoice-status")).toHaveTextContent("Anulada");
 
     const post = callsTo(fetchMock, BASE).find((call) => resolveUrl(call[0]).endsWith("/cancel"));
     const body = JSON.parse(post?.[1]?.body as string) as Record<string, unknown>;
@@ -400,16 +410,16 @@ describe("BillingSurface commands", () => {
     });
 
     renderSurface();
-    fireEvent.click(await screen.findByRole("button", { name: "Select invoice" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Seleccionar factura" }));
     await screen.findByTestId("invoice-line");
 
-    fireEvent.change(screen.getByLabelText("Cancellation reason"), {
+    fireEvent.change(screen.getByLabelText("Motivo de la anulación"), {
       target: { value: "Duplicated" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Cancel invoice" }));
+    fireEvent.click(screen.getByRole("button", { name: "Anular factura" }));
 
     expect(await screen.findByTestId("invoice-cancel-error")).toHaveTextContent(
-      "Only a draft or confirmed invoice can be cancelled"
+      "Solo se puede anular una factura en borrador o confirmada"
     );
   });
 
@@ -449,15 +459,15 @@ describe("BillingSurface command isolation", () => {
 
   /** Selects the first of the two invoices and starts its confirm. */
   async function startPendingConfirm(): Promise<void> {
-    fireEvent.click((await screen.findAllByRole("button", { name: "Select invoice" }))[0]);
+    fireEvent.click((await screen.findAllByRole("button", { name: "Seleccionar factura" }))[0]);
     await screen.findByTestId("invoice-line");
-    fireEvent.click(screen.getByRole("button", { name: "Confirm invoice" }));
-    await screen.findByRole("button", { name: "Confirming invoice..." });
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar factura" }));
+    await screen.findByRole("button", { name: "Confirmando factura…" });
   }
 
   /** Moves the selection to the invoice that is not currently selected. */
   async function switchInvoice(): Promise<void> {
-    fireEvent.click(screen.getByRole("button", { name: "Select invoice" }));
+    fireEvent.click(screen.getByRole("button", { name: "Seleccionar factura" }));
     await screen.findByTestId("invoice-line");
   }
 
@@ -468,14 +478,14 @@ describe("BillingSurface command isolation", () => {
     );
 
     renderSurface();
-    fireEvent.click((await screen.findAllByRole("button", { name: "Select invoice" }))[0]);
+    fireEvent.click((await screen.findAllByRole("button", { name: "Seleccionar factura" }))[0]);
     await screen.findByTestId("invoice-line");
-    fireEvent.change(screen.getByLabelText("Cancellation reason"), {
+    fireEvent.change(screen.getByLabelText("Motivo de la anulación"), {
       target: { value: "Duplicated" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Cancel invoice" }));
+    fireEvent.click(screen.getByRole("button", { name: "Anular factura" }));
     expect(await screen.findByTestId("invoice-cancel-error")).toHaveTextContent(
-      "Only a draft or confirmed invoice can be cancelled"
+      "Solo se puede anular una factura en borrador o confirmada"
     );
 
     await switchInvoice();
@@ -496,20 +506,20 @@ describe("BillingSurface command isolation", () => {
 
     // While the confirm is in flight, the second invoice shows neither the first
     // invoice's pending label nor its outcome, and offers its own action.
-    expect(screen.queryByRole("button", { name: "Confirming invoice..." })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirmando factura…" })).not.toBeInTheDocument();
     expect(screen.queryByTestId("invoice-confirmed")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Confirm invoice" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Confirmar factura" })).toBeEnabled();
 
     // The first invoice's command succeeds only after the operator moved on, and
     // settling late must not render its success on the second invoice.
     confirmed = true;
     pendingConfirm.resolve(jsonResponse(CONFIRMED_INVOICE));
-    await screen.findByText(/Confirmed invoice A-12/);
+    await screen.findByText(/Factura confirmada · A-12/);
     expect(screen.queryByTestId("invoice-confirmed")).not.toBeInTheDocument();
-    expect(screen.getByTestId("invoice-status")).toHaveTextContent("Draft");
+    expect(screen.getByTestId("invoice-status")).toHaveTextContent("Borrador");
 
     // Returning to the first invoice shows its own settled outcome, not a stale one.
     await switchInvoice();
-    expect(await screen.findByTestId("invoice-confirmed")).toHaveTextContent("numbered A-12");
+    expect(await screen.findByTestId("invoice-confirmed")).toHaveTextContent("con el número A-12");
   });
 });

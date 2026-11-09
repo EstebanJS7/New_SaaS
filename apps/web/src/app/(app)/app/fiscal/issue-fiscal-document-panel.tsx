@@ -50,9 +50,9 @@ export function IssueFiscalDocumentPanel({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Issue fiscal document</CardTitle>
+        <CardTitle>Emitir documento fiscal</CardTitle>
         <CardDescription>
-          Issue a fiscal document for a confirmed invoice using its id.
+          Emití el documento fiscal de una factura confirmada a partir de su identificador.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -62,15 +62,15 @@ export function IssueFiscalDocumentPanel({
             data-testid="fiscal-issued"
             className="rounded-lg border border-border bg-muted p-4 text-sm"
           >
-            <p className="font-medium text-foreground">Fiscal document issued</p>
-            <p className="text-muted-foreground">{`The API returned ${FISCAL_STATUS_LABELS[issued.status as keyof typeof FISCAL_STATUS_LABELS].toLowerCase()} fiscal document #${shortId(issued.id)}.`}</p>
+            <p className="font-medium text-foreground">Documento fiscal emitido</p>
+            <p className="text-muted-foreground">{`Se emitió el documento fiscal #${shortId(issued.id)} con estado «${FISCAL_STATUS_LABELS[issued.status as keyof typeof FISCAL_STATUS_LABELS]}».`}</p>
           </div>
         )}
         {issueError !== null && <FiscalErrorAlert error={issueError} testId="fiscal-issue-error" />}
         <form onSubmit={handleSubmit} className="space-y-3 border-t border-border pt-4">
           <div className="space-y-2">
             <label htmlFor="fiscal-invoice-id" className="text-sm font-medium">
-              Invoice id
+              Identificador de la factura
             </label>
             <input
               id="fiscal-invoice-id"
@@ -84,7 +84,7 @@ export function IssueFiscalDocumentPanel({
               className={fiscalInputClassName}
             />
             <p className="text-xs text-muted-foreground">
-              The UUID of a confirmed invoice belonging to this tenant.
+              El UUID de una factura confirmada de esta organización.
             </p>
           </div>
           {localError !== null && (
@@ -97,7 +97,7 @@ export function IssueFiscalDocumentPanel({
             </p>
           )}
           <Button type="submit" disabled={isIssuing}>
-            {isIssuing ? "Issuing fiscal document..." : "Issue fiscal document"}
+            {isIssuing ? "Emitiendo documento fiscal…" : "Emitir documento fiscal"}
           </Button>
         </form>
       </CardContent>

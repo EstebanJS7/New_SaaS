@@ -61,9 +61,9 @@ function CommandOutcome({ outcome }: { readonly outcome: InvoiceCommandOutcome }
         data-testid="invoice-confirmed"
         className="rounded-lg border border-border bg-muted p-4 text-sm"
       >
-        <p className="font-medium text-foreground">Invoice confirmed</p>
+        <p className="font-medium text-foreground">Factura confirmada</p>
         <p className="text-muted-foreground">
-          {`The API returned this invoice as confirmed, numbered ${invoiceNumberLabel(outcome.invoice.series, outcome.invoice.number)}. Confirmation is state-guarded, so a repeat returns this same representation: no second number is allocated and no second confirmation is claimed.`}
+          {`La factura quedó confirmada con el número ${invoiceNumberLabel(outcome.invoice.series, outcome.invoice.number)}. Si la confirmación se repite, se devuelve esta misma factura: no se asigna un segundo número ni se confirma dos veces.`}
         </p>
       </div>
     );
@@ -74,11 +74,11 @@ function CommandOutcome({ outcome }: { readonly outcome: InvoiceCommandOutcome }
       data-testid="invoice-cancelled"
       className="rounded-lg border border-border bg-muted p-4 text-sm"
     >
-      <p className="font-medium text-foreground">Invoice cancelled</p>
+      <p className="font-medium text-foreground">Factura anulada</p>
       <p className="text-muted-foreground">
         {outcome.invoice.cancelReason === null
-          ? "The API returned this invoice as cancelled. Cancelled is terminal: the invoice is never reopened, edited or deleted, and cancelling reverses no money."
-          : `The API returned this invoice as cancelled with the reason "${outcome.invoice.cancelReason}". Cancelled is terminal: the invoice is never reopened, edited or deleted, and cancelling reverses no money.`}
+          ? "La factura quedó anulada. La anulación es definitiva: la factura no se reabre, no se edita ni se elimina, y anularla no revierte dinero."
+          : `La factura quedó anulada con el motivo «${outcome.invoice.cancelReason}». La anulación es definitiva: la factura no se reabre, no se edita ni se elimina, y anularla no revierte dinero.`}
       </p>
     </div>
   );
@@ -150,22 +150,22 @@ export function InvoiceDetailPanel({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Invoice detail</CardTitle>
+        <CardTitle>Detalle de la factura</CardTitle>
         <CardDescription>
-          The frozen snapshot of one invoice. It is an internal document: it carries no fiscal state
-          and no fiscal action exists for it in this epic.
+          La copia fija de una factura. Es un documento interno: no tiene estado fiscal ni acciones
+          fiscales en esta pantalla.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {isLoading ? (
           <p data-testid="invoice-loading" className="text-sm text-muted-foreground">
-            Loading invoice...
+            Cargando factura…
           </p>
         ) : loadError !== null ? (
           <BillingErrorAlert error={loadError} testId="invoice-error" />
         ) : invoice === null ? (
           <p data-testid="invoice-no-selection" className="text-sm text-muted-foreground">
-            Select an invoice above to inspect its lines and totals.
+            Seleccioná una factura de la lista para ver sus líneas y totales.
           </p>
         ) : (
           <>
@@ -173,42 +173,42 @@ export function InvoiceDetailPanel({
 
             <dl className="space-y-2 text-sm">
               <div className="flex items-center justify-between gap-4 border-b border-border pb-2">
-                <dt className="text-muted-foreground">Status</dt>
+                <dt className="text-muted-foreground">Estado</dt>
                 <dd data-testid="invoice-status" className="font-medium text-foreground">
                   {INVOICE_STATUS_LABELS[invoice.status]}
                 </dd>
               </div>
               <div className="flex items-center justify-between gap-4 border-b border-border pb-2">
-                <dt className="text-muted-foreground">Series and number</dt>
+                <dt className="text-muted-foreground">Serie y número</dt>
                 <dd data-testid="invoice-number" className="font-medium text-foreground">
                   {invoiceNumberLabel(invoice.series, invoice.number)}
                 </dd>
               </div>
               <div className="flex items-center justify-between gap-4 border-b border-border pb-2">
-                <dt className="text-muted-foreground">Currency</dt>
+                <dt className="text-muted-foreground">Moneda</dt>
                 <dd data-testid="invoice-currency" className="font-medium text-foreground">
                   {invoice.currency}
                 </dd>
               </div>
               <div className="flex items-center justify-between gap-4 border-b border-border pb-2">
-                <dt className="text-muted-foreground">Confirmed at</dt>
+                <dt className="text-muted-foreground">Confirmada el</dt>
                 <dd data-testid="invoice-confirmed-at" className="font-medium text-foreground">
                   {invoice.confirmedAt === null
-                    ? "Not confirmed"
+                    ? "Sin confirmar"
                     : formatTimestamp(invoice.confirmedAt)}
                 </dd>
               </div>
               <div className="flex items-center justify-between gap-4 border-b border-border pb-2">
-                <dt className="text-muted-foreground">Cancelled at</dt>
+                <dt className="text-muted-foreground">Anulada el</dt>
                 <dd data-testid="invoice-cancelled-at" className="font-medium text-foreground">
                   {invoice.cancelledAt === null
-                    ? "Not cancelled"
+                    ? "Sin anular"
                     : formatTimestamp(invoice.cancelledAt)}
                 </dd>
               </div>
               {invoice.cancelReason !== null && (
                 <div className="flex items-center justify-between gap-4">
-                  <dt className="text-muted-foreground">Cancellation reason</dt>
+                  <dt className="text-muted-foreground">Motivo de la anulación</dt>
                   <dd
                     data-testid="invoice-cancel-reason"
                     className="text-right font-medium text-foreground"
@@ -220,10 +220,10 @@ export function InvoiceDetailPanel({
             </dl>
 
             <div className="space-y-2">
-              <p className="text-sm font-medium text-foreground">Lines</p>
+              <p className="text-sm font-medium text-foreground">Líneas</p>
               {invoice.lines.length === 0 ? (
                 <p data-testid="invoice-lines-empty" className="text-sm text-muted-foreground">
-                  This invoice has no lines.
+                  Esta factura no tiene líneas.
                 </p>
               ) : (
                 <ul className="space-y-2">
@@ -238,14 +238,14 @@ export function InvoiceDetailPanel({
                           {line.description}
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          {`Qty ${formatQuantity(line.quantity)} · unit ${formatInvoiceAmount(line.unitPrice)}`}
+                          {`Cant. ${formatQuantity(line.quantity)} · unitario ${formatInvoiceAmount(line.unitPrice, invoice.currency)}`}
                         </p>
                       </div>
                       <span
                         data-testid="invoice-line-total"
                         className="shrink-0 text-right text-sm text-foreground"
                       >
-                        {formatInvoiceAmount(line.lineTotal)}
+                        {formatInvoiceAmount(line.lineTotal, invoice.currency)}
                       </span>
                     </li>
                   ))}
@@ -257,36 +257,36 @@ export function InvoiceDetailPanel({
               <div className="flex items-center justify-between gap-4">
                 <dt className="text-muted-foreground">Total</dt>
                 <dd data-testid="invoice-total" className="text-right font-medium text-foreground">
-                  {formatInvoiceAmount(invoice.total)}
+                  {formatInvoiceAmount(invoice.total, invoice.currency)}
                 </dd>
               </div>
               <div className="flex items-center justify-between gap-4">
-                <dt className="text-muted-foreground">Tax total</dt>
+                <dt className="text-muted-foreground">Total IVA</dt>
                 <dd
                   data-testid="invoice-tax-total"
                   className="text-right font-medium text-foreground"
                 >
-                  {formatInvoiceAmount(invoice.taxTotal)}
+                  {formatInvoiceAmount(invoice.taxTotal, invoice.currency)}
                 </dd>
               </div>
             </dl>
 
             <p data-testid="invoice-no-fiscal-state" className="text-xs text-muted-foreground">
-              This invoice is not a fiscal document and carries no fiscal status. Totals are the
-              server-computed values, displayed exactly as the API returned them.
+              Esta factura no es un documento fiscal y no tiene estado fiscal. Los totales son los
+              calculados por el servidor y se muestran tal como llegaron.
             </p>
 
             {invoice.status === "DRAFT" && (
               <div className="space-y-3 border-t border-border pt-4">
                 <p className="text-sm text-muted-foreground">
-                  Confirming allocates the invoice number. It is a one-way command: a confirmed
-                  invoice is never returned to draft.
+                  Al confirmar se asigna el número de la factura. No tiene vuelta atrás: una factura
+                  confirmada nunca vuelve a borrador.
                 </p>
                 {confirmError !== null && (
                   <BillingErrorAlert error={confirmError} testId="invoice-confirm-error" />
                 )}
                 <Button type="button" disabled={isConfirming} onClick={() => void submitConfirm()}>
-                  {isConfirming ? "Confirming invoice..." : "Confirm invoice"}
+                  {isConfirming ? "Confirmando factura…" : "Confirmar factura"}
                 </Button>
               </div>
             )}
@@ -296,25 +296,25 @@ export function InvoiceDetailPanel({
                 data-testid="invoice-cancelled-terminal"
                 className="border-t border-border pt-4 text-sm text-muted-foreground"
               >
-                This invoice is cancelled. Cancelled is terminal: there is no reopen and no edit,
-                and a replacement draft must be created from a new sale.
+                Esta factura está anulada. La anulación es definitiva: no se puede reabrir ni
+                editar; para reemplazarla hay que crear un borrador nuevo desde otra venta.
               </p>
             ) : (
               <form onSubmit={handleCancel} className="space-y-3 border-t border-border pt-4">
                 <div className="space-y-2">
                   <label htmlFor="billing-cancel-reason" className="text-sm font-medium">
-                    Cancellation reason
+                    Motivo de la anulación
                   </label>
                   <textarea
                     id="billing-cancel-reason"
                     value={reason}
                     onChange={(event) => setReason(event.target.value)}
                     disabled={isCancelling}
-                    placeholder="Why the invoice is being cancelled"
+                    placeholder="Por qué se anula la factura"
                     className={billingTextareaClassName}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Required. The API stores the reason on the invoice and cancels no money.
+                    Obligatorio. Se guarda en la factura y no revierte dinero.
                   </p>
                 </div>
 
@@ -333,7 +333,7 @@ export function InvoiceDetailPanel({
                 )}
 
                 <Button type="submit" variant="outline" disabled={isCancelling}>
-                  {isCancelling ? "Cancelling invoice..." : "Cancel invoice"}
+                  {isCancelling ? "Anulando factura…" : "Anular factura"}
                 </Button>
               </form>
             )}

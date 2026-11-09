@@ -150,20 +150,18 @@ export function BillingSurface(): JSX.Element {
     return (
       <div className="mx-auto max-w-4xl space-y-6">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Billing</h1>
-          <p className="text-sm text-muted-foreground">
-            Invoices, their snapshot lines and their lifecycle commands.
-          </p>
+          <h1 className="text-2xl font-semibold tracking-tight">Facturación</h1>
+          <p className="text-sm text-muted-foreground">Facturas, sus líneas y sus acciones.</p>
         </div>
         <div
           role="alert"
           data-testid="billing-entitlement-denied"
           className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
         >
-          <p className="font-medium">Billing features are not enabled for this tenant</p>
+          <p className="font-medium">Facturación no habilitada</p>
           <p>
-            The tenant does not have the billing capability, so the workspace is not available. The
-            API enforces this gate; this message is only what the browser shows.
+            Esta organización no tiene habilitada la facturación, así que este espacio no está
+            disponible. El servidor aplica esta restricción; este mensaje solo la informa.
           </p>
         </div>
       </div>
@@ -173,11 +171,11 @@ export function BillingSurface(): JSX.Element {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Billing</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Facturación</h1>
         <p className="text-sm text-muted-foreground">
-          Invoices over completed sales. Every amount is the server-computed value shown as
-          returned; the API is the authority for every action and the browser only reflects its
-          outcomes.
+          Facturas de ventas completadas. Cada importe es el valor calculado por el servidor y se
+          muestra tal como llega; el servidor decide cada acción y esta pantalla solo refleja el
+          resultado.
         </p>
       </div>
 
