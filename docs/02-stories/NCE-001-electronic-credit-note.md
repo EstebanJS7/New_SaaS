@@ -10,7 +10,7 @@ prd_sections: ["§21", "§22", "§40"]
 permissions: [sales.reverse]
 branch:
 created: 2026-11-02
-updated: 2026-11-02
+updated: 2026-11-09
 ---
 
 # NCE-001 — Nota de crédito electrónica al anular una venta facturada
@@ -53,7 +53,8 @@ Decisión: [[DEC-090]]. Completa [[SAL-REV-001]].
 - [ ] Validación del XML de la nota contra el XSD oficial (caso agregado, corre
       en CI con `DTE_XSD_REQUIRED=1`).
 - [ ] Prueba en el ambiente de test de SIFEN (habilitación).
-- [ ] Prueba en navegador.
+- [ ] Prueba en navegador. Bloqueada: ningún camino soportado declara el
+      establecimiento y punto de expedición del perfil fiscal ([[TD-075]]).
 
 ## Base de datos
 
