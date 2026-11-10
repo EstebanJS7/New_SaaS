@@ -261,6 +261,22 @@ Archivos: `apps/web/src/app/api/fiscal/[[...path]]/route.ts` y
 Risk: item 2 (tope de tamaño de la petición); verificación independiente al
 cierre de la entrega.
 
+## Verificación de las observaciones (2026-11-10)
+
+- Proxy y formularios fiscales: 66 pruebas pasan; CSC/signing-material/RBAC: 111
+  pruebas pasan. Verificación independiente: CSC 11/11 y proxy/formulario 46/46,
+  sin bloqueantes de producto.
+- Después de reparar las dependencias locales con autorización del usuario:
+  `pnpm build` 17/17; `pnpm lint`, `pnpm format-check` y `pnpm typecheck` pasan.
+- Navegador afectado: sucursales, anulación de venta y nota de crédito
+  electrónica, 3/3. El flujo fiscal usa los XSD oficiales, certificado y CSC
+  desde la pantalla y descifrado compartido con el worker.
+- Suites completas unitarias de API/web y CI remoto: no ejecutadas en este
+  cierre; corresponden al CI según instrucción del usuario.
+- Evaluación nativa adicional indisponible: rechaza la configuración local no
+  rastreada aun después de `inspect` con exclusión y en rango comprometido. No
+  se inició una revisión ni se modificó esa configuración.
+
 ## Decisiones / ADRs
 
 - [[ADR-005]], [[DEC-057]], [[DEC-090]], [[DEC-095]]

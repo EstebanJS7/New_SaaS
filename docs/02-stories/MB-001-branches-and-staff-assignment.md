@@ -3,12 +3,12 @@ id: MB-001
 type: story
 title: Branches and staff assignment
 epic: EPIC-07
-status: in-progress
+status: done
 priority: high
 depends_on: []
 prd_sections: ["§9.1"]
 permissions: ["branches.manage"]
-branch:
+branch: test/sal-rev-concurrency-mb001
 created: 2026-11-03
 updated: 2026-11-10
 ---
@@ -63,6 +63,20 @@ profesional. Primera entrega de [[DEC-094]].
 - Filtro por sucursal en reportes (MB-004).
 - La oferta de horarios del portal todavía no mira la asignación: el portal no
   elige sucursal y la aprobación del personal sí la exige.
+
+## Cierre de verificación (2026-11-10)
+
+Rama `test/sal-rev-concurrency-mb001`: build 17/17; lint, format-check y
+typecheck pasan después de reparar dependencias locales con autorización.
+PostgreSQL: 277/277 casos de aislamiento/aplicación. El primer recorrido
+completo falló solo en el tripwire p95 de reportes (9580 ms > 8000 ms) mientras
+corrían otras verificaciones; el mismo archivo, sin esas cargas, pasó 6/6. No se
+cambiaron umbrales, aserciones ni código de reportes. Navegador afectado:
+sucursales, anulación y nota de crédito electrónica, 3/3. Suites unitarias
+completas API/web y CI remoto quedan a cargo del CI, según el usuario.
+
+Risk: none (pruebas y documentación de comportamiento ya implementado; no se
+modificaron migraciones, servicios ni helpers compartidos).
 
 ## Verificación
 

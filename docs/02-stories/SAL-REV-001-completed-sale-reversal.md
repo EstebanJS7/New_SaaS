@@ -3,14 +3,14 @@ id: SAL-REV-001
 type: story
 title: Reversal of a completed sale
 epic: EPIC-12
-status: in-progress
+status: done
 priority: high
 depends_on: [POS-003, CASH-002]
 prd_sections: ["§16", "§18", "§19", "§20", "§40"]
 permissions: [sales.reverse, sales.read]
 branch: test/sal-rev-concurrency-mb001
 created: 2026-11-03
-updated: 2026-11-09
+updated: 2026-11-10
 ---
 
 # SAL-REV-001 — Anulación de una venta cobrada
@@ -87,6 +87,20 @@ POST /sales/:id/complete    los movimientos de stock y caja que escribe llevan s
   sale_reversal    (UNIQUE tenant+venta, motivo no vacío, solo inserción)
   payment_refund   (UNIQUE tenant+pago, monto > 0, efectivo <=> movimiento, solo inserción)
 ```
+
+## Cierre de verificación (2026-11-10)
+
+Rama `test/sal-rev-concurrency-mb001`: build 17/17; lint, format-check y
+typecheck pasan después de reparar dependencias locales con autorización.
+PostgreSQL: 277/277 casos de aislamiento/aplicación. El primer recorrido
+completo falló solo en el tripwire p95 de reportes (9580 ms > 8000 ms) mientras
+corrían otras verificaciones; el mismo archivo, sin esas cargas, pasó 6/6. No se
+cambiaron umbrales, aserciones ni código de reportes. Navegador afectado:
+sucursales, anulación y nota de crédito electrónica, 3/3. Suites unitarias
+completas API/web y CI remoto quedan a cargo del CI, según el usuario.
+
+Risk: item 4 (prueba de concurrencia real sobre una operación financiera; sin
+cambio del servicio de anulación).
 
 ## Verificación
 

@@ -49,16 +49,16 @@ across separate behavior units.
 
 ## Tasks
 
-| ID  | Specs | Route                        | Status      | Commit / evidence                                                                                                                                                                                                                                           |
-| --- | ----- | ---------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| T1  | S1,S8 | inline                       | done        | Build 13/13; live-pg block 5/5, including deterministic concurrent 201/409, one set of effects and winner-only idempotency. Commit `5d8262c`. Risk: item 4 (real PostgreSQL concurrency); independent verification at feature end.                          |
-| T2  | S2,S8 | delegated (context backstop) | done        | Worker and parent GREEN: nine assertion groups, 60 historical migrations, four tenants, four members, six assignments, preserved operational rows and no orphans. Script 1,330 lines uses explicit fixtures; no product/migration change. Commit `f63bc3f`. |
-| T3  | S3,S8 | delegated (context backstop) | done        | Worker build 17/17; browser 1/1 twice, e2e lint/typecheck/format pass; parent format/diff spot-check pass. Only missing libasound requires documented LD_LIBRARY_PATH. Commit below.                                                                        |
-| T4  | S4,S8 | inline                       | in_progress | Preserve and document permission-first 403.                                                                                                                                                                                                                 |
-| T5  | S5,S8 | inline                       | pending     | Printable ASCII idCsc.                                                                                                                                                                                                                                      |
-| T6  | S6,S8 | inline                       | pending     | Bounded JSON proxy. Risk: item 2 (payload guard).                                                                                                                                                                                                           |
-| T7  | S7,S8 | inline                       | pending     | Stable retirement serialization conflict.                                                                                                                                                                                                                   |
-| T8  | S1-S8 | independent verify + inline  | pending     | Final checks, review as due, evidence and handoff.                                                                                                                                                                                                          |
+| ID  | Specs | Route                        | Status | Commit / evidence                                                                                                                                                                                                                                                                                                                           |
+| --- | ----- | ---------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| T1  | S1,S8 | inline                       | done   | Build 13/13; live-pg block 5/5, including deterministic concurrent 201/409, one set of effects and winner-only idempotency. Commit `5d8262c`. Risk: item 4 (real PostgreSQL concurrency); independent verification at feature end.                                                                                                          |
+| T2  | S2,S8 | delegated (context backstop) | done   | Worker and parent GREEN: nine assertion groups, 60 historical migrations, four tenants, four members, six assignments, preserved operational rows and no orphans. Script 1,330 lines uses explicit fixtures; no product/migration change. Commit `f63bc3f`.                                                                                 |
+| T3  | S3,S8 | delegated (context backstop) | done   | Worker build 17/17; browser 1/1 twice, e2e lint/typecheck/format pass; parent format/diff spot-check pass. Only missing libasound requires documented LD_LIBRARY_PATH. Commit `3da8142`.                                                                                                                                                    |
+| T4  | S4,S8 | inline                       | done   | Documented controller-permission-first behavior; no runtime change; Prettier corrected then passed. Commit `6a789f1`.                                                                                                                                                                                                                       |
+| T5  | S5,S8 | inline                       | done   | RED: punctuation rejected (1 fail/10 pass); GREEN fiscal settings 31/31. Commit `175ed25`. Risk: item 2 (secret form validation); final verifier.                                                                                                                                                                                           |
+| T6  | S6,S8 | delegated (context backstop) | done   | RED 8 fail/27 pass; GREEN route 35/35, combined fiscal web 66/66 parent; types/lint/format pass; differential 32 unchanged + expected oversized rejection. Commit `797d448`. Risk: item 2; final verifier.                                                                                                                                  |
+| T7  | S7,S8 | inline                       | done   | Commit `5445aee`: RED 1 fail/10 pass → GREEN fiscal CSC/signing/RBAC 111/111, including rollback and unrelated error propagation. Risk: item 2 (secret lifecycle error handling); final verifier.                                                                                                                                           |
+| T8  | S1-S8 | independent verify + inline  | done   | Build 17/17; root lint/format/types pass after repair; API isolation 277/277, reporting 6/6 on single isolated rerun after initial p95 failure; browser 3/3. Independent probes 57/57, no product blockers, environmental incident resolved without verifier retry. Native assessment unavailable; no lineage. Final evidence commit below. |
 
 ## Log
 
@@ -89,6 +89,65 @@ across separate behavior units.
   scheduled once at feature end; native assessment initially unassessable
   because untracked local configuration has not been selected. Next unit
   delegated due runtime context backstop.
+- L6 (2026-11-10): Final root gates job-4 passed: lint=0, format=0, typecheck=0
+  (31/31 Turbo tasks). Independent verifier ran one archived-candidate scratch
+  setup: CSC 11/11, proxy+form 46/46; no product blockers. HOWEVER scratch
+  workspace node_modules symlinks let pnpm's install rewrite main workspace
+  dependency links into the ephemeral child scratch and run Prisma postinstall.
+  Child scratch removal left broken links in 17 packages (e.g.
+  packages/database/node_modules/prisma). No tracked dependency/lock/schema
+  files changed; generated schema only appears reformatted/reordered but
+  semantic comparison could not run because Prisma resolution is now broken.
+  Parent stopped, did not delete/reinstall/restore or rerun verifier. Ask user
+  to authorize local frozen-lockfile/offline dependency repair preserving all
+  tracked files and local configs; then resume remaining build, live-pg, browser
+  and review routing. Independent verifier is not relaunched. Native ASSESS was
+  unassessable due undeclared local untracked config; no review lineage or
+  consent created.
+- L7 (2026-11-10): User "ok hazlo" explicitly authorizes the proposed
+  `pnpm install --frozen-lockfile --offline` local dependency repair preserving
+  user configs, tracked dependency versions and lockfile, followed by pending
+  functional verification. This is not permission to publish or repeat the
+  independent verifier.
+- L8 (2026-11-10): Authorized repair job-5 succeeded
+  (`pnpm install --frozen-lockfile --offline`, exit 0, lockfile up to date,
+  Prisma 6.19.3 regenerated from repository schema). Main-tree Prisma resolves
+  again and no broken package dependency symlinks were found. SHA-256 of
+  user-local configs, pnpm-lock.yaml, root package.json and tracked Prisma
+  schema stayed identical. No cleanup/reset or version upgrade used. Final
+  build/schema preparation job-6 running. Native inspect with untracked
+  exclusion reports ready/no lineages, but ASSESS still rejects undeclared
+  untracked files even for committed-only range; no reviewDue/continuation is
+  available, no lineage started. Independent verifier is not rerun. Engram
+  observation read then failed with runtime-contract probe timeout; no writes
+  retried blindly.
+- L9 (2026-11-10): Final build job-6 GREEN 17/17; 11 official DNIT XSDs
+  prepared. Affected browser job-8 GREEN 3/3 (branches, sale reversal,
+  electronic credit note with real signing/XSD path). Post-repair root gates
+  job-9 GREEN lint=0, format=0, typecheck=0 (31/31 cached Turbo tasks). Full
+  live-pg job-7 remains running; do not close until its completion event.
+  API/web full unit suites remain CI-owned per user. No source changes since
+  product commit 5445aee.
+- L10 (2026-11-10): Full live-pg job-7: 282 pass / 1 fail (283 total). All 277
+  isolation/application cases passed; reporting-performance passed 5/6, p95
+  tripwire failed at 9580.0 ms > 8000 ms while browser/root checks also ran.
+  This load-sensitive failure was already documented in Engram 4729; no
+  causality claim or threshold change. One bounded rerun of the same
+  reporting-performance file launched as job-10 without other checks; if it
+  still fails, stop with that concrete missing gate. No product edits or
+  verifier retry.
+- L11 (2026-11-10): Isolated reporting job-10 GREEN 6/6; initial suite failure
+  remains disclosed, not relabeled as a green full run. Every required
+  functional gate now has observed passing proof. SAL-REV-001 and MB-001 marked
+  done with dated evidence; FISC-019 advisories complete. Independent verifier's
+  source review/probes found no product blockers; its environment mutation was
+  separately repaired under explicit authorization and build/browser/root checks
+  subsequently passed. Additional native assessment unavailable (untracked
+  selection not accepted by ASSESS); no native verdict/approval claimed. Full
+  API/web unit suites and remote CI intentionally not run per user. Final
+  documentation/format/diff check and local evidence commit close this feature;
+  no push/PR. Risk: items 2 (fiscal secret validation/guard/error handling) and
+  4 (financial reversal concurrency proof).
 - L4: Test-only gates may already pass without product changes; no artificial
   RED or intentional product regression will be introduced when no meaningful
   RED applies. New behavioral fixes require observed RED first.
