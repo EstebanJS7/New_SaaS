@@ -3,14 +3,14 @@ id: SAL-REV-001
 type: story
 title: Reversal of a completed sale
 epic: EPIC-12
-status: in-progress
+status: done
 priority: high
 depends_on: [POS-003, CASH-002]
 prd_sections: ["§16", "§18", "§19", "§20", "§40"]
 permissions: [sales.reverse, sales.read]
-branch:
+branch: test/sal-rev-concurrency-mb001
 created: 2026-11-03
-updated: 2026-11-09
+updated: 2026-11-10
 ---
 
 # SAL-REV-001 — Anulación de una venta cobrada
@@ -88,6 +88,20 @@ POST /sales/:id/complete    los movimientos de stock y caja que escribe llevan s
   payment_refund   (UNIQUE tenant+pago, monto > 0, efectivo <=> movimiento, solo inserción)
 ```
 
+## Cierre de verificación (2026-11-10)
+
+Rama `test/sal-rev-concurrency-mb001`: build 17/17; lint, format-check y
+typecheck pasan después de reparar dependencias locales con autorización.
+PostgreSQL: 277/277 casos de aislamiento/aplicación. El primer recorrido
+completo falló solo en el tripwire p95 de reportes (9580 ms > 8000 ms) mientras
+corrían otras verificaciones; el mismo archivo, sin esas cargas, pasó 6/6. No se
+cambiaron umbrales, aserciones ni código de reportes. Navegador afectado:
+sucursales, anulación y nota de crédito electrónica, 3/3. Suites unitarias
+completas API/web y CI remoto quedan a cargo del CI, según el usuario.
+
+Risk: item 4 (prueba de concurrencia real sobre una operación financiera; sin
+cambio del servicio de anulación).
+
 ## Verificación
 
 ```text
@@ -112,8 +126,13 @@ No se pudo correr: suites que necesitan el motor de consultas de Prisma
     misma clave: 409; nueva anulación: 409 "La venta ya fue anulada."
   venta de otro tenant: 404 en anular y en leer la anulación, sin escrituras
   pnpm test:live-pg completo: 276/276
-Pendiente: concurrencia real (dos anulaciones simultáneas). Navegador cubierto
-  el 2026-11-09 por specs/sale-reversal.spec.ts.
+2026-11-09 (rama test/sal-rev-concurrency-mb001): dos anulaciones simultáneas
+  con claves distintas, detenidas juntas sobre el bloqueo de la fila sale:
+  exactamente 201/409 "La venta ya fue anulada."; una sale_reversal, un REFUND,
+  una SALE_REVERSAL enlazada al SALE, una payment_refund y una auditoría;
+  solo la clave ganadora se guarda y su replay 200 no agrega filas.
+  Bloque SAL-REV-001: 5/5; build API y dependencias: 13/13. Sin cambio del servicio.
+  Navegador cubierto el 2026-11-09 por specs/sale-reversal.spec.ts.
 ```
 
 ## Tests agregados
@@ -129,8 +148,8 @@ Pendiente: concurrencia real (dos anulaciones simultáneas). Navegador cubierto
 - Una venta anulada sale de los informes de ventas del período en que se cobró.
 - El detalle de una venta completada no muestra sus pagos (limitación previa de
   la lectura); la anulación sí muestra las devoluciones.
-- Aún no hay prueba de concurrencia contra PostgreSQL real (el recorrido
-  secuencial sí está cubierto por la suite live-pg).
+- Concurrencia PostgreSQL cubierta el 2026-11-09 con barrera de bloqueo de fila;
+  no se depende de que dos solicitudes coincidan por azar.
 
 ## Observaciones fuera de alcance
 

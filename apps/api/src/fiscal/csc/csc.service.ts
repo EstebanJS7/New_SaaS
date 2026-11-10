@@ -202,34 +202,42 @@ export class FiscalCscService {
     await this.authorize();
     const tenantId = this.context.requireTenantId();
     const actorUserProfileId = this.context.requireUserProfileId();
-    return this.prisma.$transaction(async (tx) => {
-      const row = await tx.tenantFiscalCsc.findFirst({ where: { tenantId, id: input.id } });
-      if (!row) throw new DomainError("NOT_FOUND", FISCAL_CSC_NOT_FOUND_MESSAGE);
-      const retiredAt = new Date();
-      const result = await tx.tenantFiscalCsc.updateMany({
-        where: { tenantId, id: row.id, status: "ACTIVE" },
-        data: {
-          status: "RETIRED",
-          retiredAt,
-          retiredByUserProfileId: actorUserProfileId,
-          retirementReason: input.reason,
-        },
+    return this.prisma
+      .$transaction(async (tx) => {
+        const row = await tx.tenantFiscalCsc.findFirst({ where: { tenantId, id: input.id } });
+        if (!row) throw new DomainError("NOT_FOUND", FISCAL_CSC_NOT_FOUND_MESSAGE);
+        const retiredAt = new Date();
+        const result = await tx.tenantFiscalCsc.updateMany({
+          where: { tenantId, id: row.id, status: "ACTIVE" },
+          data: {
+            status: "RETIRED",
+            retiredAt,
+            retiredByUserProfileId: actorUserProfileId,
+            retirementReason: input.reason,
+          },
+        });
+        if (result.count === 0)
+          throw new DomainError("CONFLICT", FISCAL_CSC_ALREADY_RETIRED_MESSAGE);
+        await this.secrets.delete({ tenantId, key: row.secretRef, tx });
+        await this.audit.append(
+          {
+            tenantId,
+            actorUserProfileId,
+            action: FISCAL_CSC_RETIRE_ACTION,
+            targetType: "fiscal_csc",
+            targetId: row.id,
+            metadata: { environment: row.environment, idCsc: row.idCsc },
+          },
+          tx
+        );
+        return metadata({ ...row, status: "RETIRED", retiredAt, retirementReason: input.reason });
+      })
+      .catch((error: unknown) => {
+        if (isSerializationFailure(error)) {
+          throw new DomainError("CONFLICT", FISCAL_CSC_CONCURRENT_CHANGE_MESSAGE);
+        }
+        throw error;
       });
-      if (result.count === 0) throw new DomainError("CONFLICT", FISCAL_CSC_ALREADY_RETIRED_MESSAGE);
-      await this.secrets.delete({ tenantId, key: row.secretRef, tx });
-      await this.audit.append(
-        {
-          tenantId,
-          actorUserProfileId,
-          action: FISCAL_CSC_RETIRE_ACTION,
-          targetType: "fiscal_csc",
-          targetId: row.id,
-          metadata: { environment: row.environment, idCsc: row.idCsc },
-        },
-        tx
-      );
-      return metadata({ ...row, status: "RETIRED", retiredAt, retirementReason: input.reason });
-    });
   }
 
   private async authorize(): Promise<void> {

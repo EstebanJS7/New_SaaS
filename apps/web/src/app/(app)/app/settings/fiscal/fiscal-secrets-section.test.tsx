@@ -40,6 +40,45 @@ describe("taxpayer secret forms", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("No se pudo guardar");
     expect(input).toHaveValue("");
   });
+  it("submits four printable ASCII CSC identifier characters, including punctuation, unchanged", async () => {
+    const fetcher = vi.fn((_: RequestInfo | URL, init?: RequestInit) =>
+      Promise.resolve(json(init?.method === "POST" ? { id: "loaded" } : { items: [] }))
+    );
+    global.fetch = fetcher;
+    renderSection("csc");
+    const identifier = await screen.findByLabelText("Identificador CSC");
+    const value = screen.getByLabelText("Valor del CSC");
+    fireEvent.change(identifier, { target: { value: "!~A1" } });
+    fireEvent.change(value, { target: { value: "Aa12".repeat(8) } });
+    fireEvent.submit(screen.getByRole("form", { name: "Cargar CSC" }));
+    expect(await screen.findByText("Se guardó el CSC.")).toBeInTheDocument();
+    const posts = fetcher.mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(posts).toHaveLength(1);
+    expect(posts[0]?.[1]?.body).toBe(
+      JSON.stringify({ environment: "TEST", idCsc: "!~A1", value: "Aa12".repeat(8) })
+    );
+    expect(identifier).toHaveValue("");
+    expect(value).toHaveValue("");
+  });
+  it.each(["001", "00001", "00 1", "00é1", "00\u007f1"])(
+    "rejects CSC identifier %j outside the API's four printable ASCII characters without a write",
+    async (idCsc) => {
+      const fetcher = vi.fn(() => Promise.resolve(json({ items: [] })));
+      global.fetch = fetcher;
+      renderSection("csc");
+      fireEvent.change(await screen.findByLabelText("Identificador CSC"), {
+        target: { value: idCsc },
+      });
+      const value = screen.getByLabelText("Valor del CSC");
+      fireEvent.change(value, { target: { value: "Aa12".repeat(8) } });
+      fireEvent.submit(screen.getByRole("form", { name: "Cargar CSC" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Ingresá el identificador de 4 caracteres y el CSC de 32 caracteres alfanuméricos."
+      );
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(value).toHaveValue("");
+    }
+  );
   it("submits certificate multipart and clears password/file before awaiting the response", async () => {
     let resolve: ((response: Response) => void) | undefined;
     const fetcher = vi.fn((_: RequestInfo | URL, init?: RequestInit) =>
