@@ -30,9 +30,10 @@ It was written before the run, not after. The run cannot start without the DNIT
 run short once the data arrives.
 
 **Out of scope, by the sources' own words.** A contingency protocol — the
-Manual's §14 is empty and says so (§5.4). The KuDE's graphical representation
-(WU-C) and the receptor events are named here as blocked, not implemented here.
-Nothing in this document is a production switch.
+Manual's §14 is empty and says so (§5.4). The receptor events are named here as
+blocked, not implemented here. The KuDE is generated, stored and served since
+[[FISC-021]]; its homologation rows (11, 12) have not been run. Nothing in this
+document is a production switch.
 
 ## Evidence grading
 
@@ -72,14 +73,14 @@ page this vault read.
 translation, and the Spanish forms (Formatos N° 1, 2 and 3) are what actually
 travels.
 
-| #   | Who performs it                     | Needs as input                                                                                                             | Produces                                                                                                                                            | Blocked by                                                                                                         |
-| --- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| 1   | The taxpayer's legal representative | An e-kuatia account, the note's facts (representative's name and _cédula_, RUC, the certificate, a working billing system) | A **ticket number** from the Mesa de ayuda SIFEN, which is the thread every later step answers on                                                   | Nothing technical. The note asserts what the law requires; the ticket is the evidence of the request               |
-| 2   | The DNIT (the taxpayer receives)    | The ticket from step 1                                                                                                     | The **test data set**: RUC, test timbrado, validity start, establishment 001, expedition points 001–003, the document list and the two generic CSCs | **The DNIT's own availability.** Only the DNIT hands this over; there is no self-service path                      |
-| 3   | The taxpayer's technical team       | The test data set plus a PSC-issued certificate with the emitter's RUC and EKU `clientAuth`                                | A mutually authenticated session against the test host, per service                                                                                 | A certificate that does not carry the emitter's RUC, or that lacks the EKU the guide requires                      |
-| 4   | The taxpayer's technical team       | The test data set, the certificate and the minimum matrix (§4)                                                             | The run's results, per row, and the evidence of each (§7)                                                                                           | The **KuDE** and the **receptor events** are not available yet (§4.2); a licensed document range for the void rows |
-| 5   | The taxpayer's legal representative | A Marangatu access key, an **ACTIVE** RUC, obligations up to date, and the legal requirements of Decreto 7795/17           | **Form 364 v2 in state _Aceptado_**, and a Marandú mailbox message with the print link                                                              | Marangatu itself refuses to advance when the RUC is not ACTIVE or the obligations are not up to date               |
-| 6   | The taxpayer, then the DNIT         | The ticket from step 1, the run's outcome, and the Form 364's number                                                       | The notice through the same ticket, and then the **SET's approval**, notified in the Marandú mailbox                                                | **The DNIT's approval.** Nothing the taxpayer can do substitutes for it                                            |
+| #   | Who performs it                     | Needs as input                                                                                                             | Produces                                                                                                                                            | Blocked by                                                                                           |
+| --- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| 1   | The taxpayer's legal representative | An e-kuatia account, the note's facts (representative's name and _cédula_, RUC, the certificate, a working billing system) | A **ticket number** from the Mesa de ayuda SIFEN, which is the thread every later step answers on                                                   | Nothing technical. The note asserts what the law requires; the ticket is the evidence of the request |
+| 2   | The DNIT (the taxpayer receives)    | The ticket from step 1                                                                                                     | The **test data set**: RUC, test timbrado, validity start, establishment 001, expedition points 001–003, the document list and the two generic CSCs | **The DNIT's own availability.** Only the DNIT hands this over; there is no self-service path        |
+| 3   | The taxpayer's technical team       | The test data set plus a PSC-issued certificate with the emitter's RUC and EKU `clientAuth`                                | A mutually authenticated session against the test host, per service                                                                                 | A certificate that does not carry the emitter's RUC, or that lacks the EKU the guide requires        |
+| 4   | The taxpayer's technical team       | The test data set, the certificate and the minimum matrix (§4)                                                             | The run's results, per row, and the evidence of each (§7)                                                                                           | The **receptor events** are not available yet (§4.2); a licensed document range for the void rows    |
+| 5   | The taxpayer's legal representative | A Marangatu access key, an **ACTIVE** RUC, obligations up to date, and the legal requirements of Decreto 7795/17           | **Form 364 v2 in state _Aceptado_**, and a Marandú mailbox message with the print link                                                              | Marangatu itself refuses to advance when the RUC is not ACTIVE or the obligations are not up to date |
+| 6   | The taxpayer, then the DNIT         | The ticket from step 1, the run's outcome, and the Form 364's number                                                       | The notice through the same ticket, and then the **SET's approval**, notified in the Marandú mailbox                                                | **The DNIT's approval.** Nothing the taxpayer can do substitutes for it                              |
 
 **[R] S1, step 2's block, verbatim in shape.** The reply names the RUC, the
 timbrado, the validity start, `Establecimiento: 001`,
@@ -244,8 +245,8 @@ operator's inputs exist; `Blocked` names what is missing.
 | 8   | Events, as **emitter**: inutilización                               | 2 of FE, 1 each of NCE, NDE, AFE                                                        | `POST /fiscal/timbrado-ranges/:id/void` → the same builder → `receiveEvent`                                                                         | **Runnable with a caveat** — see §4.3: the void takes the range's tail and burns it              |
 | 9   | Events, as **receptor**                                             | 3 each: conformidad, disconformidad, desconocimiento, notificación de recepción, ajuste | Nothing: the builder's payload union holds only the emitter's two (`DteEventPayload` in `dte.event.types.ts`)                                       | **Blocked** — four payloads have no builder, and "ajuste" has no published payload (§4.4)        |
 | 10  | Query, per type                                                     | 3 each                                                                                  | The provider's `query` (`queryBatch` by reference, `queryDe` by CDC) through the reconciliation sweep (`fiscal-recovery.service.ts`)                | **Runnable with a caveat** — through the worker's reconciliation; no operator-facing query route |
-| 11  | KuDE, one graphical representation per type                         | 1 each                                                                                  | The QR's content builder exists (`dte.qr.ts`), the CSC read exists (`fiscal-csc.reader.ts`) — the representation does not                           | **Blocked** on this story's WU-C                                                                 |
-| 12  | KuDE, query by QR, per type                                         | 2 each                                                                                  | Same as row 11; the QR's composition itself is pinned by S5 §24, including the test consultation address                                            | **Blocked** on this story's WU-C                                                                 |
+| 11  | KuDE, one graphical representation per type                         | 1 each                                                                                  | The worker renders and stores the KuDE with its QR image when it signs; staff open it with «Ver KuDE» ([[FISC-021]])                                | **Runnable for FE and NCE, not executed** — the types the product issues                         |
+| 12  | KuDE, query by QR, per type                                         | 2 each                                                                                  | Same as row 11; the QR's composition itself is pinned by S5 §24, including the test consultation address; the printed QR is not yet scan-verified   | **Runnable for FE and NCE, not executed** — scan the printed QR during the run                   |
 
 **[R] S2's five document types** are all inside the repository's admitted set:
 `TI_DE_VALUES` (`dte.types.ts`) admits `1|[4-7]|9|10`, and the timbrado range's
@@ -278,7 +279,6 @@ until it answers, rows 1's count of seven cannot be completed as written.
 | 4 and 6 — incorrect data          | A harness that builds a deliberately invalid DE and submits it, bypassing the product's gate | Not yet assigned                                 |
 | 5 and 6 — the lot's composition   | A batch surface, or an explicit decision to run five lots of one and record the deviation    | Not yet assigned                                 |
 | 9 — the receptor events           | The four payloads' builders, and a resolution of "ajuste"                                    | A story of its own or [[FISC-016]]'s scope grown |
-| 11 and 12 — the KuDE              | The graphical representation and its QR printing                                             | WU-C                                             |
 
 **[R] Rows 4 and 6 need a bypass, and the bypass is the point.** The worker
 validates the exact bytes it will submit against the official XSD and fails the
@@ -435,7 +435,8 @@ Named here so the run's blockers are not discovered on the day:
    product surface at all.
 5. **The receptor events** (§4.4) — five rows, four payloads, one of them
    unpublished.
-6. **The KuDE** (§4.2) — two rows, one work unit.
+6. **The KuDE** (§4.2) — generated and served since [[FISC-021]]; its two rows
+   are still to be run.
 7. **The first item's description** (§3.1) — tenant data, so a test item must be
    chosen or created to carry the literal.
 

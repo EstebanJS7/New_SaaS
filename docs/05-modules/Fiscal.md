@@ -626,6 +626,10 @@ permission-denied and entitlement-denied states. The navigation entry declares
 The detail offers «Ver KuDE» when `hasKude` is true (invoices and credit notes
 alike): a link that opens `/api/fiscal/fiscal-documents/<id>/kude` in a new tab
 (`noopener noreferrer`); without a stored KuDE it is not offered ([[FISC-021]]).
+The browser lane's `apps/e2e/specs/kude-delivery.spec.ts` drives it end to end:
+a document the worker signed and approved shows the link, the route answers the
+stored HTML through the staff session, the link opens it in a new tab, and the
+approval email carries the same bytes as its attachment.
 
 All browser API calls go through the `/api/fiscal` proxy, which allowlists
 exactly the documents' operations (list, detail, issue, cancel and the KuDE

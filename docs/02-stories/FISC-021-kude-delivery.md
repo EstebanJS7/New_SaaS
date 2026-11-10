@@ -48,15 +48,15 @@ al aprobarse».
 
 ## Criterios de aceptación
 
-- [ ] Un documento firmado guarda su KuDE y su `kude_storage_key`; un proveedor
+- [x] Un documento firmado guarda su KuDE y su `kude_storage_key`; un proveedor
       que no firma no guarda nada.
 - [ ] El KuDE guardado lleva el CDC y un QR escaneable con el contenido de
       `dCarQR`.
-- [ ] La ruta de la API devuelve el KuDE con `fiscal.read`, `403` sin el permiso
+- [x] La ruta de la API devuelve el KuDE con `fiscal.read`, `403` sin el permiso
       y `404` entre clínicas o sin KuDE.
-- [ ] «Ver KuDE» en el detalle fiscal abre el KuDE; sin KuDE no se ofrece.
-- [ ] El mail de aprobación lleva el KuDE adjunto; sin KuDE sale sin adjunto.
-- [ ] El canal de email sigue sin leer archivos ni URLs ([[ADR-011]]).
+- [x] «Ver KuDE» en el detalle fiscal abre el KuDE; sin KuDE no se ofrece.
+- [x] El mail de aprobación lleva el KuDE adjunto; sin KuDE sale sin adjunto.
+- [x] El canal de email sigue sin leer archivos ni URLs ([[ADR-011]]).
 
 ## Implementación
 
@@ -121,6 +121,63 @@ al aprobarse».
   registra el motivo de un aviso sin adjunto: el handler no tiene un log sin
   contenido y DEC-098 dice «eso queda registrado»; queda como pregunta abierta.
 
+- **T4 — prueba en el navegador y cierre de docs.**
+  `apps/e2e/specs/kude-delivery.spec.ts` (nuevo) recorre la story completa con
+  las apps construidas: configura «Configuración fiscal» por la pantalla, crea
+  un cliente con contacto EMAIL por corrida, vende, confirma y emite la factura;
+  el worker (proveedor fake, TEST, DE firmado) la aprueba. La configuración y la
+  venta hasta `APPROVED` salieron de `electronic-credit-note.spec.ts` a
+  `apps/e2e/support/fiscal-issuance.ts`, sin cambiar lo que esa spec prueba. Un
+  solo worker hace el pipeline fiscal y el correo (`startMailWorker` con
+  `FISCAL_WORKER_ENV`), porque `FiscalApproved` se despacha en proceso.
+  `apps/e2e/support/mime.ts` lee el adjunto del mensaje crudo que captura el
+  sumidero SMTP.
+
 ## Verificación
 
-Pendiente.
+- **T1:** fiscal 829/829, worker 308/308; builds, lint, typecheck y prettier
+  pasan; el padre reejecutó el handler 48/48. Lockfile: solo
+  `qrcode-generator@2.0.4`.
+- **T2:** API 2148 pasan / 277 omitidas; web 2391 pasan con 1 falla de tiempo
+  ajena (recuperación clínica, 67/67 sola); typecheck, lint y prettier pasan; el
+  padre reejecutó la integración fiscal y la sonda de rutas 57/57.
+- **T3:** notificaciones 95, worker 319 en verde; el padre reejecutó el canal de
+  email 20/20.
+- **T4, navegador** (`kude-delivery.spec.ts`, verde dos veces seguidas sobre la
+  base persistente; `electronic-credit-note.spec.ts` verde de nuevo tras extraer
+  los helpers; carril completo: 34/35 con `kude-delivery` en verde; la única
+  falla fue `branches.spec.ts` (`toHaveURL` a `/app/settings/branches` tras un
+  clic de navegación), que corre antes y no toca nada de esta story, y pasó sola
+  a continuación). Observado:
+  - el documento aprobado trae `hasKude: true` (el worker guardó el KuDE al
+    firmar);
+  - el detalle de «Documentos fiscales» muestra «Ver KuDE» con
+    `href=/api/fiscal/fiscal-documents/<id>/kude` y `target=_blank`;
+  - la ruta, con la sesión de la página: `200`, `text/html; charset=utf-8`,
+    `no-store`, `inline; filename="kude-….html"`; el cuerpo lleva `CDC: ` con el
+    CDC en grupos de cuatro y `<img class="qr">` con un SVG en
+    `data:image/svg+xml;base64,`, sin el texto de reemplazo `qr-content`;
+  - el enlace abre una pestaña nueva en esa ruta, con título «KuDE de Factura
+    Electrónica …», el CDC y la imagen del QR visibles;
+  - el mail de aprobación llega al contacto del cliente con un único adjunto
+    `text/html; charset=utf-8`, nombre `kude-….html`, y sus bytes decodificados
+    son idénticos a los que sirve la ruta.
+
+### Limitaciones
+
+- Un aviso que sale sin KuDE (clave nula, lectura fallida, objeto mayor a 512
+  KiB) no deja registro del motivo; queda la pregunta abierta de T3.
+- Si el `put` del KuDE falla al firmar, el documento se envía sin KuDE y en
+  silencio: sin métrica ni registro.
+- Los documentos firmados antes de esta story no tienen KuDE y no se
+  reconstruye.
+- Portal del cliente diferido ([[TD-022]], decide el mantenedor).
+- El QR se verificó estructuralmente (SVG en base64, determinista, crece con el
+  contenido), no decodificado: no hay decodificador QR entre las dependencias.
+  Escanear el QR impreso queda para la corrida de homologación (filas 11 y 12
+  del runbook); por eso el criterio «QR escaneable con el contenido de `dCarQR`»
+  queda sin tildar.
+- La prueba en el navegador cubre una factura; la nota de crédito usa la misma
+  ruta y el mismo botón (pruebas unitarias e integración de T2), no se abrió su
+  KuDE en el navegador. «Sin KuDE no se ofrece» se prueba en
+  `fiscal-detail-panel.test.tsx`, no en el navegador.

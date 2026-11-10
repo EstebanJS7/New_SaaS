@@ -24,12 +24,12 @@ Playwright lane. Forecast: ~900 authored lines.
 
 ## Tasks
 
-| ID  | Specs    | Route                        | Status  | Commit / evidence |
-| --- | -------- | ---------------------------- | ------- | ----------------- |
-| T1  | S1,S3,S5 | delegated (context backstop) | done    | see L4            |
-| T2  | S2,S5    | delegated (context backstop) | done    | see L5            |
-| T3  | S4,S5    | delegated (context backstop) | done    | see L6            |
-| T4  | S1-S5    | tbd                          | pending | browser + docs    |
+| ID  | Specs    | Route                        | Status | Commit / evidence |
+| --- | -------- | ---------------------------- | ------ | ----------------- |
+| T1  | S1,S3,S5 | delegated (context backstop) | done   | see L4            |
+| T2  | S2,S5    | delegated (context backstop) | done   | see L5            |
+| T3  | S4,S5    | delegated (context backstop) | done   | see L6            |
+| T4  | S1-S5    | delegated (context backstop) | done   | see L7            |
 
 Risk: item 5 (new dependency, T1), item 2 (new route on CONFIDENTIAL data, T2;
 email channel contract, T3). Independent verifier at feature end.
@@ -78,3 +78,14 @@ email channel contract, T3). Independent verifier at feature end.
   Notifications 95, worker 319 green; parent rerun email channel 20/20. Known
   limitation: a notice sent without the KuDE leaves no record (DEC-098 wording
   corrected). Risk: items 2 and 3.
+- L7 (2026-11-10): T4 done by delegated writer. New
+  apps/e2e/specs/kude-delivery.spec.ts: APPROVED invoice → hasKude; «Ver KuDE»
+  href/target; route 200 html/no-store/inline kude-_.html with grouped CDC and
+  SVG QR data URL, no text fallback; new tab renders KuDE; approval email at
+  SMTP sink with exactly one text/html kude-_.html attachment byte-identical to
+  the route. Shared setup moved to support/fiscal-issuance.ts (ECN spec rerun
+  green); mime.ts reader; mail-worker stop waits for exit. Spec alone 2/2; full
+  lane 34/35 (branches.spec.ts:210 navigation flake, green alone). Parent rerun
+  kude-delivery + branches 2/2. QR verified structurally only (no decoder
+  available) — that box stays unticked. Docs: Fiscal.md, runbook rows 11-12
+  runnable/not executed, TD-022 progress note, story verification.
