@@ -2,7 +2,7 @@
 id: TD-006
 type: tech-debt
 title: Run tenant-isolation suites against live PostgreSQL
-status: open
+status: resolved
 severity: medium
 related_epics:
   - EPIC-01
@@ -284,10 +284,12 @@ and mandatory before any production deployment.
       `ff786138b359317b1afb1c33c2350bd605ff84ef` (`push`/`main`) — the
       migrations job ran `pnpm --filter @newsaas/api test:live-pg` green with
       the 24-test suite (24/24 passed).
-- [ ] CI runs the broader cross-tenant isolation suite against live PG16 and
-      stays green. **Verified locally only (2026-11-10):** the Batch 5 cases run
-      inside the same `pnpm --filter @newsaas/api test:live-pg` command (301/301
-      passed); awaiting a CI observation on a pushed commit.
+- [x] CI runs the broader cross-tenant isolation suite against live PG16 and
+      stays green. **Verified:** PR #167 CI run `42841999230` at `60ba4de` — the
+      migrations job ran `pnpm --filter @newsaas/api     test:live-pg` with the
+      TD-006 Batch 5 block: 2 files, 301/301 passed (the separate web unit job
+      failed once on a pre-existing timing flake in `weight-form.test.tsx`,
+      unrelated and untouched by the PR, and passed on rerun).
 - [x] A deliberately broken predicate fails that CI job (one-off proof).
       **Verified (2026-11-10, locally, the same `test:live-pg` command the CI
       migrations job runs, PostgreSQL 16 on 127.0.0.1:55432):** with
@@ -306,4 +308,6 @@ and mandatory before any production deployment.
       success + one `409 CONFLICT`, one holder left), the composed stranding
       repro and a forced post-write audit failure each leave neither the
       business write nor its audit row (live-PG suite 301/301 passed).
-- [ ] This record closed with a link to the enabling commit.
+- [x] This record closed with a link to the enabling commit. **Closed:** merge
+      commit `1ef4754c909380e9b79d69b9395a9d0439383175` (PR #167,
+      `test(TD-006): prove tenant isolation and RBAC transactions on     PostgreSQL`).
