@@ -10,7 +10,7 @@ prd_sections: ["§9.1"]
 permissions: ["branches.manage"]
 branch:
 created: 2026-11-03
-updated: 2026-11-03
+updated: 2026-11-10
 ---
 
 # MB-001 — Sucursales y asignación de personal
@@ -77,6 +77,13 @@ profesional. Primera entrega de [[DEC-094]].
   - Seed: 69 permisos.
   - Alta: asignación del propietario.
   - Seed demo: asignaciones idempotentes.
+  - Drill histórico reproducible en PostgreSQL 16
+    (`scripts/verify-branch-migration.mjs`): 60 migraciones anteriores a MB-001,
+    datos sembrados antes de MB-001 y después MB-001..MB-003. Comprueba la
+    asignación de todo el personal a todas las sucursales previas, el backfill
+    de caja, ventas y stock a la sucursal más antigua, las dos sucursales de
+    respaldo («Casa central») para clínicas sin sucursal, la preservación exacta
+    de filas e importes y cero huérfanos.
   - Drill en PostgreSQL 16: nombre duplicado sin distinguir mayúsculas, nombre
     vacío, borrado rechazado, asignación entre clínicas rechazada, relleno
     correcto.
@@ -86,7 +93,50 @@ profesional. Primera entrega de [[DEC-094]].
   - Agenda filtra por sucursal.
   - Proxies.
   - Build de Next.
-- **Pendiente:** la migración contra una base con datos reales y la prueba en
-  navegador. Si una clínica tuviera dos sucursales con el mismo nombre (solo
-  posible insertando a mano), la migración falla en el índice único: renombrar
-  una antes de migrar.
+- **Pendiente:** la prueba en navegador (T3). Si una clínica tuviera dos
+  sucursales con el mismo nombre (solo posible insertando a mano), la migración
+  falla en el índice único: renombrar una antes de migrar.
+
+## Drill de migración con datos
+
+El drill corre sobre una base desechable y no toca migraciones ni código de
+producto. `prisma migrate deploy` no puede detenerse en una migración, así que
+el script deriva un árbol temporal solo con las migraciones anteriores a
+`20261106000001_branch_management`, siembra datos históricos por SQL y aplica el
+resto sobre la misma base.
+
+Cómo se corre, contra un PostgreSQL desechable en loopback:
+
+```bash
+DATABASE_URL_TEST='postgresql://postgres@127.0.0.1:55432/postgres?schema=public' \
+  node scripts/verify-branch-migration.mjs
+```
+
+El script exige `DATABASE_URL_TEST`, rechaza hosts que no sean de loopback y no
+usa `DATABASE_URL`. Crea su propia base `newsaas_branch_drill_*`, la elimina al
+final con `DROP DATABASE ... WITH (FORCE)` y borra su árbol temporal. Si falla,
+termina con código distinto de cero y deja el error concreto.
+
+| Caso sembrado                                                              | Qué prueba                                                                                               |
+| -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Clínica A: una sucursal, dos personas                                      | Cada miembro queda en todas las sucursales previas (no solo en la más antigua).                          |
+| Clínica B: sucursal antigua y nueva, dos personas                          | Caja, ventas y stock van a la más antigua; un turno en la nueva conserva su sucursal (el FK ya existía). |
+| Clínica C: caja y ventas, sin sucursal (solo por SQL)                      | MB-002 crea «Casa central» y reubica caja y ventas; MB-003 no interviene.                                |
+| Clínica D: stock, sin sucursal (solo por SQL)                              | MB-003 crea «Casa central» y reubica movimientos y saldo.                                                |
+| Caja, sesión, movimiento, venta completada con pago, línea, stock y turnos | Los ids originales y los importes sobreviven; ninguna fila queda con `branch_id` nulo o de otra clínica. |
+
+Las clínicas C y D existen solo para el fallback de filas insertadas a mano; no
+tienen personal, así que el backfill de MB-001 no les crea asignaciones. El
+drill también comprueba que la etapa histórica no tiene columnas de
+MB-001/MB-002 y que el segundo deploy aplica todas las migraciones restantes,
+incluidas MB-001, MB-002 y MB-003.
+
+**Evidencia observada (2026-11-10):** la corrida con el comando de arriba pasó
+con 9 líneas `ok`, incluida la preservación exacta de importes (caja 170,00;
+sesiones 70,00; líneas y pagos 200,00; stock 13,000/23,000) y cero huérfanos.
+
+**Riesgo:** el drill usa datos representativos, no una copia de producción. Una
+anomalía real no sembrada —por ejemplo, dos sucursales homónimas insertadas a
+mano— sigue fallando en el índice único y debe resolverse antes de migrar. No se
+siembran compras: el backfill de `purchase.branch_id` usa la misma consulta de
+sucursal más antigua que stock, pero no está ejercitado con datos.
