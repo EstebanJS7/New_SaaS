@@ -36,6 +36,7 @@ A failing run writes a trace; `pnpm --filter @newsaas/e2e e2e:report` opens it.
 | `staff-recovery`                                          | the same, plus the **worker** (it mints the token at send time) and an **SMTP sink** |
 | `staff-team`                                              | the same as `staff-recovery`: the invitation's activation link leaves by mail        |
 | `payment-detail`, `sale-reversal`, `recoverable-attempts` | PostgreSQL, Redis, the built API and web                                             |
+| `branch-stock`                                            | PostgreSQL, Redis, the built API and web                                             |
 
 The recovery spec starts the worker itself and listens on port 2526 as a minimal
 SMTP server, because there is no other place the link exists: the channel fake
@@ -72,6 +73,12 @@ branch. The helper closes extra open sessions it finds, and
 `recoverable-attempts` loses an answer for real: `page.route` lets the command
 reach the API, which commits it, and drops the connection before the page sees
 the response.
+
+`branch-stock` (MB-003) needs a second active branch for its purchase, filter
+and transfer steps, and the sales specs need exactly one. It creates its own
+`Sucursal stock e2e <tag>` branch, assigns the demo owner there, and in a
+`finally` restores the owner's assignment and deactivates the branch; an active
+branch with that prefix left by an interrupted run is deactivated first.
 
 `staff-team` invites a new address each run, for the reason the recovery
 identity is fresh.
