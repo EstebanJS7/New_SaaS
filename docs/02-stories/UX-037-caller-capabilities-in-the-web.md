@@ -41,11 +41,11 @@ reciben, así que muestran acciones que la API después rechaza.
 
 ## Criterios de aceptación
 
-- [ ] La ruta devuelve solo los permisos y features propios; sin sesión `401`;
+- [x] La ruta devuelve solo los permisos y features propios; sin sesión `401`;
       sin membresía activa `403`.
-- [ ] El menú y las pantallas ocultan lo que la persona no puede usar.
-- [ ] Con la carga fallida, la web muestra todo y la API rechaza como hoy.
-- [ ] Prueba en navegador con un rol limitado.
+- [x] El menú y las pantallas ocultan lo que la persona no puede usar.
+- [x] Con la carga fallida, la web muestra todo y la API rechaza como hoy.
+- [x] Prueba en navegador con un rol limitado.
 - [ ] CFG-001: «sin el permiso o el feature, la sección no se ofrece» en vivo.
 
 ## Implementación
@@ -86,5 +86,66 @@ reciben, así que muestran acciones que la API después rechaza.
 
 ## Verificación
 
-T1/T2: ver el log de la feature (`odd/tasks/web-capabilities.md`). Pendiente
-T3/T4 (pantallas restantes y prueba en navegador con rol limitado).
+- **T1/T2** (log L3 de `odd/tasks/web-capabilities.md`): API
+  `me-capabilities.integration.test.ts` (cuerpo exacto, dos clínicas y dos roles
+  sin mezclarse, `401` sin sesión, `403` con la membresía suspendida); web
+  completa 2475 en verde, API completa 2147 en verde / 277 omitidos; rerun del
+  parent API 32/32 y web 43/43. La carga fallida (no-2xx, timeout, cuerpo
+  inválido) queda «desconocida» y muestra todo: `load-capabilities.test.ts` y
+  `workspace-shell.test.tsx` (sin provider se ven todos los enlaces). Esa rama
+  no se prueba en el navegador.
+- **T3** (log L4): helper `canUse`/`useCan` RED 5 → GREEN 5; comercio 711 y
+  atención/administración 932 tests focalizados en verde; seam del parent: web
+  197 archivos / 2594 tests, typecheck, lint y prettier en verde.
+- **T4 — navegador** (`apps/e2e/specs/capabilities.spec.ts`, apps construidas
+  con `pnpm build`): el dueño demo invita por el BFF a una veterinaria NUEVA en
+  cada corrida (rol `VETERINARIAN`), el enlace de activación sale por mail
+  (worker + sink SMTP) y ella elige su contraseña en la página real
+  (`support/team.ts`). Con su sesión:
+  - `GET /api/memberships/me/capabilities` es igual a lo que la API devuelve en
+    `GET /memberships/me/permissions` (leído directo de la API con solo la
+    cookie de sesión); incluye `patients.create` y `catalog.read` y no incluye
+    ninguna clave de configuración, `users.membership.manage`,
+    `branches.manage`, `catalog.create` ni `customers.create`.
+  - Menú: cada entrada sigue su permiso de lectura (o de gestión, en
+    Configuración). La veterinaria no ve «General», «Personal», «Sucursales» ni
+    «Configuración fiscal»; ve «Inicio», «Pacientes», «Catálogo», «POS»,
+    «Importaciones» y «Marca».
+  - Catálogo sin «Nuevo artículo»; Clientes sin «Nuevo cliente»; Pacientes
+    ofrece «Nuevo paciente».
+  - «Sucursales» y «Personal» muestran su estado «No tenés permiso…» (y la API
+    responde `403` al directorio); «General» muestra «No tenés permiso para
+    cambiar la configuración general» y ninguna sección.
+  - El dueño, en la misma corrida: la API y la web coinciden; ve «General»,
+    «Personal», «Sucursales», «Nuevo artículo», «Nuevo cliente», las sucursales
+    sin estado de sin-permiso y las cuatro secciones de «General».
+  - Un `finally` suspende a la veterinaria: la corrida no deja otra persona
+    activa.
+- **Corridas:** la spec sola dos veces (1/1 y 1/1 en verde); la lane completa
+  una vez: **36/36 en verde** (ninguna spec existente se vio afectada por el
+  gating). `@newsaas/e2e` typecheck y lint en verde; prettier en verde en los
+  archivos tocados.
+
+## Limitaciones
+
+- El tenant demo tiene todos los features, así que la lane solo muestra la mitad
+  de permisos; la mitad de features está probada en los componentes.
+- Ningún rol sembrado tiene solo algunas claves de configuración (solo
+  `OWNER`/`ADMIN` tienen las cuatro), así que «sin `sales.settings.manage` no se
+  ofrece Ventas pero sí otra sección» no se puede mostrar en vivo.
+- Conocidas de T3: entrar por URL directa a `/new` y `/edit` en comercio solo se
+  oculta en la entrada (la API responde `403` y el formulario lo explica); el
+  selector de período del dashboard sigue visible.
+
+### Menú por permiso (2026-11-10)
+
+Tras T4, el menú pasó a ocultar cada módulo sin su permiso de lectura (agenda,
+clientes, pacientes, catálogo, proveedores, compras, stock, ventas, caja,
+facturación, fiscal, informes, notificaciones, importaciones) y cada pantalla de
+Configuración sin su permiso de gestión (Personal `users.membership.manage`,
+Sucursales `branches.manage`, Configuración fiscal `fiscal.profile.manage` o
+`fiscal.signing_material.manage`). «Pacientes» exige además el feature
+`veterinary`. «Inicio» y «Marca» quedan para todo miembro: su lectura no pide
+permiso. Con permisos desconocidos no se oculta nada. Prueba: tabla por entrada
+en `nav-sidebar.test.tsx` (RED 18 → GREEN); se actualizaron tres pruebas que
+fijaban el menú anterior.

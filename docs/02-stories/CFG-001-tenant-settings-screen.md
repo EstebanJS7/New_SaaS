@@ -175,16 +175,19 @@ formulario se guarda por separado.
   verde; prettier en verde en los archivos tocados.
 - No hay en la lane una spec de reservas del portal ni de recordatorios; esos
   consumidores se cubren solo con la restauración exacta.
-- Criterio de permisos/feature: sigue sin marcar para la app en vivo (solo
-  probado en el componente; ver la limitación de abajo).
+- Criterio de permisos/feature: sigue sin marcar para la app en vivo. Con
+  [[UX-037]] la web ya carga los permisos y features, y
+  `apps/e2e/specs/capabilities.spec.ts` prueba en el navegador la mitad que la
+  lane puede mostrar: una veterinaria (sin ninguna de las cuatro claves) no ve
+  «General» en el menú y la pantalla muestra «No tenés permiso para cambiar la
+  configuración general» sin ninguna sección, mientras el dueño ve las cuatro.
+  Falta en vivo: un rol con solo algunas claves (ningún rol sembrado lo tiene:
+  solo `OWNER`/`ADMIN` tienen las cuatro) y una clínica sin `sales`/`portal` (el
+  tenant demo tiene todos los features). Ambos casos están probados en los
+  componentes.
 
 ## Limitación conocida: permisos y features en la web
 
-La web todavía no conoce los permisos de quien entra ni los features de la
-clínica: el proxy de memberships rechaza `me/permissions` por diseño y ninguna
-ruta del staff devuelve los features. Por eso, igual que Importaciones e
-Informes, la pantalla y el menú aceptan esas listas pero hoy no las reciben: se
-ven las cuatro secciones y la API rechaza el guardado sin permiso o sin feature,
-con su frase en español. El criterio «sin el permiso o el feature la sección no
-se ofrece» está probado en los componentes, no en la app en vivo; queda abierto
-hasta que la web cargue los permisos (decisión aparte).
+Resuelta en parte por [[UX-037]]: el layout del staff carga los permisos y
+features de quien entra y «General» y el menú los reciben. Lo que la lane
+todavía no puede mostrar en vivo está en «Verificación».

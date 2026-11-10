@@ -39,6 +39,7 @@ A failing run writes a trace; `pnpm --filter @newsaas/e2e e2e:report` opens it.
 | `branch-stock`                                            | PostgreSQL, Redis, the built API and web                                             |
 | `branch-reports`                                          | PostgreSQL, Redis, the built API and web                                             |
 | `tenant-settings`                                         | PostgreSQL, Redis, the built API and web                                             |
+| `capabilities`                                            | the same as `staff-team`, plus the API on `E2E_API_URL` (default `localhost:3001`)   |
 
 The recovery spec starts the worker itself and listens on port 2526 as a minimal
 SMTP server, because there is no other place the link exists: the channel fake
@@ -91,6 +92,19 @@ the "one branch, no filter" state; the web component test covers it.
 
 `staff-team` invites a new address each run, for the reason the recovery
 identity is fresh.
+
+`capabilities` (UX-037) proves the staff web hides what a limited role cannot
+use. The owner invites a NEW veterinarian each run (`support/team.ts`: invite
+through the BFF, activation link by mail, password on the real activation page),
+who signs in and finds no «General» in the menu, no «Nuevo artículo» or «Nuevo
+cliente», «Nuevo paciente» offered, and the Spanish no-access state on
+«Sucursales», «Personal» and «General». `GET /api/memberships/me/capabilities`
+must equal the API's own `GET /memberships/me/permissions`, read straight from
+the API with only the session cookie because the BFF refuses that route. The
+owner then sees the same entries, actions and all four settings sections. A
+`finally` suspends the veterinarian, so no extra active member is left behind.
+The demo tenant holds every feature code, so only the permission half of the
+gating shows in the lane.
 
 `tenant-settings` (CFG-001) edits the demo tenant's `sales`, `portal`,
 `notifications` and `scheduling` settings through «Configuración › General»,
