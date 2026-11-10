@@ -1342,6 +1342,7 @@ describe("ClinicalWorkspace gated by the caller's capabilities (UX-037)", () => 
     "vet.clinical.close",
     "vet.clinical.amend",
     "sales.create",
+    "sales.complete",
   ];
 
   function renderWith(
@@ -1387,6 +1388,35 @@ describe("ClinicalWorkspace gated by the caller's capabilities (UX-037)", () => 
     expect(await screen.findByText("Consulta cerrada · solo lectura")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Registrar enmienda" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Ir al punto de venta" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      "sales.create without sales.complete",
+      ["vet.clinical.read", "sales.create"],
+      ["veterinary", "sales"],
+    ],
+    [
+      "both sale permissions without the sales feature",
+      ["vet.clinical.read", "sales.create", "sales.complete"],
+      ["veterinary"],
+    ],
+  ] as const)(
+    "hides the POS continuation with %s, as the counter does",
+    async (_label, permissions, features) => {
+      mockClinical({ list: () => jsonResponse([CLOSED]) });
+      renderWith(permissions, features);
+      await selectEncounter();
+      expect(await screen.findByText("Consulta cerrada · solo lectura")).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "Ir al punto de venta" })).not.toBeInTheDocument();
+    }
+  );
+
+  it("offers the POS continuation exactly when the counter can sell", async () => {
+    mockClinical({ list: () => jsonResponse([CLOSED]) });
+    renderWith(["vet.clinical.read", "sales.create", "sales.complete"], ["veterinary", "sales"]);
+    await selectEncounter();
+    expect(await screen.findByRole("link", { name: "Ir al punto de venta" })).toBeInTheDocument();
   });
 
   it.each([

@@ -17,6 +17,7 @@ import {
 import type { ReportCode } from "@/app/api/reports/report-codes";
 import { formatEsPyDecimal, formatStaffMoney } from "@/lib/es-py-format";
 import { canUse, useCapabilities, type CapabilityRequirement } from "@/lib/capabilities";
+import { SALE_ACTIONS } from "./sales/sale-capabilities";
 import {
   fetchReport,
   isReportAccessDenied,
@@ -121,14 +122,15 @@ function useDashboardReport(
  * `apps/api/src/reporting/reporting.controller.ts` (`reports.read`); the
  * shortcuts lead to the agenda (`scheduling/appointments.controller.ts` GET),
  * the patients (`patients/patient-search.controller.ts`, `veterinary`), the POS
- * (`sales/sales.controller.ts` create, `sales` feature) and a catalogue item's
+ * (the counter's own `SALE_ACTIONS.sell`, so the shortcut appears exactly when
+ * the counter can sell) and a catalogue item's
  * threshold (`catalog/catalog.controller.ts` PUT).
  */
 export const DASHBOARD_ACTIONS = {
   readReports: { permission: "reports.read" },
   openAgenda: { permission: "scheduling.appointment.read" },
   findPatient: { permission: "patients.read", feature: "veterinary" },
-  openPointOfSale: { permission: "sales.create", feature: "sales" },
+  openPointOfSale: SALE_ACTIONS.sell,
   configureThreshold: { permission: "catalog.update" },
 } as const satisfies Record<string, CapabilityRequirement>;
 

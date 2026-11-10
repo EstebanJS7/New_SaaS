@@ -492,6 +492,7 @@ describe("Dashboard gated by the caller's capabilities (UX-037)", () => {
     "scheduling.appointment.read",
     "patients.read",
     "sales.create",
+    "sales.complete",
     "catalog.update",
   ];
 
@@ -528,6 +529,28 @@ describe("Dashboard gated by the caller's capabilities (UX-037)", () => {
     expect(screen.getByRole("link", { name: /Abrir agenda/ })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Buscar un paciente/ })).toBeNull();
     expect(screen.queryByRole("link", { name: /Abrir punto de venta/ })).toBeNull();
+  });
+
+  it.each([
+    ["sales.create without sales.complete", { permissions: ["sales.create"], features: ["sales"] }],
+    [
+      "sales.complete without sales.create",
+      { permissions: ["sales.complete"], features: ["sales"] },
+    ],
+    [
+      "both permissions without the sales feature",
+      { permissions: ["sales.create", "sales.complete"], features: [] },
+    ],
+  ])("hides the POS shortcut with %s, as the counter does", (_label, capabilities) => {
+    installReports();
+    renderWith(capabilities);
+    expect(screen.queryByRole("link", { name: /Abrir punto de venta/ })).toBeNull();
+  });
+
+  it("offers the POS shortcut exactly when the counter can sell", () => {
+    installReports();
+    renderWith({ permissions: ["sales.create", "sales.complete"], features: ["sales"] });
+    expect(screen.getByRole("link", { name: /Abrir punto de venta/ })).toBeInTheDocument();
   });
 
   it("hides the catalogue threshold link without catalog.update", async () => {

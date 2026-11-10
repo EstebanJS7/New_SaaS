@@ -1,6 +1,7 @@
 import type { JSX } from "react";
 import { EmptyState } from "@/components/feedback";
 import type { CapabilityRequirement } from "@/lib/capabilities";
+import { SALE_ACTIONS } from "../sales/sale-capabilities";
 
 /** Every patient and clinical operation re-applies this entitlement in the API. */
 const VETERINARY = "veterinary";
@@ -25,8 +26,7 @@ export const PATIENT_ACTIONS = {
  * `apps/api/src/clinical/clinical.encounters.controller.ts` and
  * `clinical.links.controller.ts` (linking needs read + update), with the
  * `veterinary` entitlement `clinical.service.base.ts` re-checks. The POS
- * continuation needs what the sale draft it opens needs
- * (`apps/api/src/sales/sales.controller.ts`, `sales` feature).
+ * continuation needs what the counter it opens needs (`SALE_ACTIONS.sell`).
  */
 export const ENCOUNTER_ACTIONS = {
   create: { permission: "vet.clinical.create", feature: VETERINARY },
@@ -34,7 +34,7 @@ export const ENCOUNTER_ACTIONS = {
   close: { permission: "vet.clinical.close", feature: VETERINARY },
   amend: { permission: "vet.clinical.amend", feature: VETERINARY },
   link: { permission: ["vet.clinical.read", "vet.clinical.update"], feature: VETERINARY },
-  continueToSale: { permission: "sales.create", feature: "sales" },
+  continueToSale: SALE_ACTIONS.sell,
 } as const satisfies Record<string, CapabilityRequirement>;
 
 /** The no-access state a patients route shows when the caller lacks its permission. */

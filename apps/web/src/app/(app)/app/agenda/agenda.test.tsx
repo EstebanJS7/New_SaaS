@@ -1523,6 +1523,41 @@ describe("Agenda gated by the caller's capabilities (UX-037)", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("does not list booking requests for a manage-only caller while the agenda itself is hidden", async () => {
+    // The API lists, approves and rejects booking requests with
+    // scheduling.appointment.manage alone, but the requests live on the calendar
+    // and approving one picks a branch and professional from
+    // GET /appointments/options (scheduling.appointment.read): without read the
+    // page shows its no-access state and asks the API for nothing.
+    const fetchMock = mockAgendaFetch({
+      appointments: () => jsonResponse([APPOINTMENT]),
+      options: optionsResponse,
+      bookingRequests: () => jsonResponse([BOOKING_REQUEST]),
+    });
+    renderWith({ permissions: ["scheduling.appointment.manage"] });
+
+    expect(
+      await screen.findByRole("heading", { name: "No tenés permiso para ver la agenda" })
+    ).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("lists booking requests with read and manage but no transition permission", async () => {
+    const fetchMock = mockAgendaFetch({
+      appointments: () => jsonResponse([APPOINTMENT]),
+      options: optionsResponse,
+      bookingRequests: () => jsonResponse([BOOKING_REQUEST]),
+    });
+    renderWith({ permissions: ["scheduling.appointment.read", "scheduling.appointment.manage"] });
+
+    expect(
+      await screen.findByRole("region", { name: "Solicitudes de turno pendientes" })
+    ).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/booking-requests"))).toBe(
+      true
+    );
+  });
+
   it("hides create, reschedule, requests and status commands for a read-only caller", async () => {
     const fetchMock = mockAgendaFetch({
       appointments: () => jsonResponse([APPOINTMENT]),

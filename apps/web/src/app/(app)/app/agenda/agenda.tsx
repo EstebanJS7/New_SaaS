@@ -940,6 +940,9 @@ export function Agenda(): JSX.Element {
   const requestsQuery = useQuery({
     queryKey: ["scheduling", "booking-requests"],
     queryFn: listBookingRequests,
+    // The API needs only `manage` for booking requests; `canRead` is here because
+    // without it the whole page is the no-access state (the requests live on the
+    // calendar, and approving one needs GET /appointments/options, a read).
     enabled: canRead && canManage,
   });
   // The `scheduling` namespace read that feeds the availability overlay. The
