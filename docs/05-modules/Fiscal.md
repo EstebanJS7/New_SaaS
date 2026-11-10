@@ -553,8 +553,15 @@ every notice.
 `kude_storage_key` through the storage port and answers them as inline HTML, so
 the browser prints it or saves it as PDF. The document lookup is the detail
 read's: tenant from the request context, unknown and foreign IDs the same `404`.
-The document representation carries `hasKude` (true iff `kude_storage_key` is
-set); the key itself is CONFIDENTIAL and never leaves the API, and the KuDE's
+The KuDE is delivered only for a DE that SIFEN approved: status `APPROVED`,
+`CANCEL_PENDING` or `CANCELLED`. A KuDE stored for a `REJECTED`, `ERROR` or
+still-pending document is withheld with the same no-KuDE `404`, because a
+printed copy could pass for a valid invoice. The response carries
+`Content-Security-Policy: default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`
+and `X-Content-Type-Options: nosniff` (the KuDE runs no script and fetches
+nothing), relayed by the BFF for this route only. The document representation
+carries `hasKude` (true iff the KuDE is stored and deliverable by that status
+rule); the key itself is CONFIDENTIAL and never leaves the API, and the KuDE's
 content and key are never logged or echoed in an error. Credit notes are
 `fiscal_document` rows too, so the same route and button serve their KuDE.
 

@@ -18,7 +18,10 @@ import {
   FISCAL_DOCUMENT_NOT_FOUND_MESSAGE,
   FISCAL_DOCUMENT_TARGET_NOT_FOUND_MESSAGE,
 } from "./fiscal.repository.js";
-import { FISCAL_KUDE_NOT_FOUND_MESSAGE } from "./fiscal-kude.service.js";
+import {
+  FISCAL_KUDE_CONTENT_SECURITY_POLICY,
+  FISCAL_KUDE_NOT_FOUND_MESSAGE,
+} from "./fiscal-kude.service.js";
 import {
   FISCAL_DOCUMENT_ALREADY_ISSUED_MESSAGE,
   FISCAL_FEATURE_NOT_ENTITLED_MESSAGE,
@@ -545,7 +548,12 @@ describe("Fiscal HTTP boundary — KuDE read (FISC-021)", () => {
 
   async function documentWithKude(
     tenantId: string,
-    options: { cdc?: string | null; stored?: boolean; withKey?: boolean } = {}
+    options: {
+      cdc?: string | null;
+      stored?: boolean;
+      withKey?: boolean;
+      status?: FiscalDocumentRow["status"];
+    } = {}
   ): Promise<FiscalDocumentRow> {
     const invoice = seedInvoice(booted, tenantId, "CONFIRMED");
     const now = new Date();
@@ -555,7 +563,7 @@ describe("Fiscal HTTP boundary — KuDE read (FISC-021)", () => {
       tenantId,
       invoiceId: invoice.id,
       provider: "FAKE",
-      status: "APPROVED",
+      status: options.status ?? "APPROVED",
       attemptCount: 1,
       externalId: null,
       cdc: options.cdc === undefined ? "01800000000000000000000000000000000000000000" : options.cdc,
@@ -588,6 +596,46 @@ describe("Fiscal HTTP boundary — KuDE read (FISC-021)", () => {
     );
     expect(response.text).toBe(KUDE_HTML);
   });
+
+  it("serves the KuDE with a no-script content policy and nosniff", async () => {
+    const row = await documentWithKude(reader.tenant.id);
+    const response = await getKude(reader.actor.cookie, row.id).expect(200);
+    expect(response.headers["x-content-type-options"]).toBe("nosniff");
+    expect(response.headers["content-security-policy"]).toBe(FISCAL_KUDE_CONTENT_SECURITY_POLICY);
+    expect(FISCAL_KUDE_CONTENT_SECURITY_POLICY).toContain("default-src 'none'");
+    expect(FISCAL_KUDE_CONTENT_SECURITY_POLICY).not.toContain("script-src");
+  });
+
+  it.each(["APPROVED", "CANCEL_PENDING", "CANCELLED"] as const)(
+    "delivers the KuDE of a %s document, which SIFEN approved",
+    async (status) => {
+      const row = await documentWithKude(reader.tenant.id, { status });
+      await getKude(reader.actor.cookie, row.id).expect(200);
+      const detail = await supertest(booted.app.getHttpServer())
+        .get(`/fiscal-documents/${row.id}`)
+        .set("Cookie", reader.actor.cookie)
+        .expect(200);
+      expect((detail.body as { hasKude: boolean }).hasKude).toBe(true);
+    }
+  );
+
+  it.each(["REJECTED", "ERROR", "SUBMITTED", "SENDING"] as const)(
+    "withholds the stored KuDE of a %s document, which SIFEN has not approved",
+    async (status) => {
+      const row = await documentWithKude(reader.tenant.id, { status });
+      const response = await getKude(reader.actor.cookie, row.id).expect(404);
+      expect((response.body as ErrorDto).error).toMatchObject({
+        code: "NOT_FOUND",
+        message: FISCAL_KUDE_NOT_FOUND_MESSAGE,
+      });
+      expect(response.text).not.toContain(KUDE_HTML);
+      const detail = await supertest(booted.app.getHttpServer())
+        .get(`/fiscal-documents/${row.id}`)
+        .set("Cookie", reader.actor.cookie)
+        .expect(200);
+      expect((detail.body as { hasKude: boolean }).hasKude).toBe(false);
+    }
+  );
 
   it("names the file after the document id when the document has no CDC", async () => {
     const row = await documentWithKude(reader.tenant.id, { cdc: null });

@@ -9,6 +9,14 @@ export const FISCAL_KUDE_UNREADABLE_MESSAGE = "The KuDE could not be read.";
 /** The KuDE is the printable HTML the worker rendered and stored (DEC-098). */
 export const FISCAL_KUDE_CONTENT_TYPE = "text/html; charset=utf-8";
 
+/**
+ * FISC-021: the KuDE is static, self-contained HTML (inline CSS, the QR as a
+ * `data:` image) served from the app's own origin, so it runs nothing: no
+ * script source at all, nothing fetched, no form, no framing.
+ */
+export const FISCAL_KUDE_CONTENT_SECURITY_POLICY =
+  "default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+
 export interface FiscalKude {
   readonly body: Buffer;
   readonly filename: string;

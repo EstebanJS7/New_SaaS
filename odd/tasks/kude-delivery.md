@@ -100,3 +100,10 @@ email channel contract, T3). Independent verifier at feature end.
   inline HTML; silent failures (known); orphan object on stolen claim
   (pre-existing pattern). Suites run by verifier: fiscal 829, notifications 95,
   worker 319, api fiscal+probe 253, web fiscal 72.
+- L9 (2026-11-10): User on advisory 1: "haz lo que se recomiende más factible y
+  mejor practica". KuDE delivered only for APPROVED, CANCEL_PENDING, CANCELLED
+  (one shared rule for hasKude and the route); others → no-KuDE 404, hasKude
+  false. Added CSP (no scripts, img data:, inline styles, no framing) and
+  nosniff, relayed by the BFF for the KuDE route only. RED 5 API + 1 BFF tests →
+  GREEN: API fiscal+probe 261/261, web fiscal+BFF 72/72; api/web typecheck and
+  lint pass; prettier clean.

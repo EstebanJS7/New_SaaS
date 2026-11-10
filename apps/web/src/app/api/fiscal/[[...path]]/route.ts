@@ -159,7 +159,12 @@ const FISCAL_ROUTES: readonly FiscalRoute[] = [
  * out of caches. Every other route keeps dropping both.
  */
 const FISCAL_RELAYED_RESPONSE_HEADERS: Partial<Record<FiscalPathShape, readonly string[]>> = {
-  fiscalKude: ["content-disposition", "cache-control"],
+  fiscalKude: [
+    "content-disposition",
+    "cache-control",
+    "content-security-policy",
+    "x-content-type-options",
+  ],
 };
 const FISCAL_QUERY_KEYS: Partial<Record<FiscalPathShape, readonly string[]>> = {
   fiscalList: ["status"],

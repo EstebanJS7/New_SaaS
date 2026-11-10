@@ -63,7 +63,29 @@ export const FISCAL_DOCUMENT_CANCEL_REFUSED_MESSAGE =
 export const FISCAL_DOCUMENT_CANCEL_PENDING_MESSAGE =
   "This fiscal document already has a cancellation in flight: its outcome is still " +
   "unknown, so it cannot be cancelled again until the cancellation lease expires.";
-/** FISC-021: the document exists for the caller but no KuDE was stored for it. */
+/**
+ * FISC-021: the statuses whose KuDE is delivered. The KuDE represents a DE that
+ * SIFEN approved — `CANCEL_PENDING` and `CANCELLED` were approved first — so a
+ * stored KuDE of a rejected, failed or still-pending document is withheld: a
+ * printed copy of it could pass for a valid invoice.
+ */
+const KUDE_DELIVERABLE_STATUSES: ReadonlySet<string> = new Set([
+  "APPROVED",
+  "CANCEL_PENDING",
+  "CANCELLED",
+]);
+
+/** FISC-021: the stored KuDE key, only when the document's KuDE may be delivered. */
+function deliverableKudeKey(row: {
+  readonly status: string;
+  readonly kudeStorageKey?: string | null;
+}): string | null {
+  if (!KUDE_DELIVERABLE_STATUSES.has(row.status)) return null;
+  if (typeof row.kudeStorageKey !== "string" || row.kudeStorageKey.length === 0) return null;
+  return row.kudeStorageKey;
+}
+
+/** FISC-021: the document exists for the caller but has no deliverable KuDE. */
 export const FISCAL_KUDE_NOT_FOUND_MESSAGE = "This fiscal document has no KuDE.";
 export const FISCAL_PROVIDER_UNRECOGNISED_MESSAGE = "The stored fiscal provider is not recognised.";
 export const FISCAL_DOCUMENT_CANCELLATION_REQUESTED_ACTION =
@@ -305,7 +327,7 @@ function toResponse(row: FiscalDocumentRow): FiscalDocumentResponse {
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     cancelledAt: row.cancelledAt?.toISOString() ?? null,
-    hasKude: typeof row.kudeStorageKey === "string" && row.kudeStorageKey.length > 0,
+    hasKude: deliverableKudeKey(row) !== null,
   };
 }
 
@@ -366,9 +388,9 @@ export class FiscalService {
     await this.requirePermission(FISCAL_PERMISSIONS.read);
     const row = await this.repository.findDocument(id, this.repository.client);
     if (!row) throw new DomainError("NOT_FOUND", FISCAL_DOCUMENT_TARGET_NOT_FOUND_MESSAGE);
-    if (typeof row.kudeStorageKey !== "string" || row.kudeStorageKey.length === 0)
-      throw new DomainError("NOT_FOUND", FISCAL_KUDE_NOT_FOUND_MESSAGE);
-    return { storageKey: row.kudeStorageKey, cdc: row.cdc };
+    const storageKey = deliverableKudeKey(row);
+    if (storageKey === null) throw new DomainError("NOT_FOUND", FISCAL_KUDE_NOT_FOUND_MESSAGE);
+    return { storageKey, cdc: row.cdc };
   }
 
   /**

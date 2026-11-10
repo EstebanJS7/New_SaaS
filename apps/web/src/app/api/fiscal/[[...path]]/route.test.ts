@@ -904,6 +904,8 @@ describe("/api/fiscal proxy — FISC-021 KuDE relay", () => {
         "content-type": "text/html; charset=utf-8",
         "content-disposition": 'inline; filename="kude-0180.html"',
         "cache-control": "no-store",
+        "content-security-policy": "default-src 'none'",
+        "x-content-type-options": "nosniff",
         "x-request-id": "upstream-id",
         "set-cookie": "leak=1",
       },
@@ -926,6 +928,8 @@ describe("/api/fiscal proxy — FISC-021 KuDE relay", () => {
     expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
     expect(response.headers.get("content-disposition")).toBe('inline; filename="kude-0180.html"');
     expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("content-security-policy")).toBe("default-src 'none'");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
     expect(response.headers.get("x-request-id")).toBe("upstream-id");
     expect(response.headers.get("set-cookie")).toBeNull();
     expect(await response.text()).toBe(KUDE_HTML);
@@ -955,6 +959,8 @@ describe("/api/fiscal proxy — FISC-021 KuDE relay", () => {
       expect(response.status).toBe(200);
       expect(response.headers.get("content-disposition")).toBeNull();
       expect(response.headers.get("cache-control")).toBeNull();
+      expect(response.headers.get("content-security-policy")).toBeNull();
+      expect(response.headers.get("x-content-type-options")).toBeNull();
     }
   });
 

@@ -181,3 +181,15 @@ al aprobarse».
   ruta y el mismo botón (pruebas unitarias e integración de T2), no se abrió su
   KuDE en el navegador. «Sin KuDE no se ofrece» se prueba en
   `fiscal-detail-panel.test.tsx`, no en el navegador.
+
+## Entrega solo de documentos aprobados (2026-11-10)
+
+Advertencia del verificador independiente: el KuDE se guardaba y se servía
+también para documentos `REJECTED` o `ERROR`. Decisión del usuario («haz lo que
+se recomiende más factible y mejor practica»): el KuDE se entrega solo si SIFEN
+aprobó el DE — `APPROVED`, `CANCEL_PENDING` o `CANCELLED`. En cualquier otro
+estado la ruta responde el `404` de «sin KuDE» y `hasKude` es `false`, aunque el
+KuDE esté guardado. Además la respuesta lleva `Content-Security-Policy` sin
+scripts y `X-Content-Type-Options: nosniff`, reenviadas por el BFF solo en esta
+ruta. Pruebas: API fiscal + probe 261/261 (3 estados entregables, 4 retenidos,
+cabeceras); BFF + web fiscal 72/72 (cabeceras solo en la ruta del KuDE).
