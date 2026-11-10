@@ -78,7 +78,7 @@ export function FiscalSecretsSection({ kind }: { kind: "csc" | "signing-material
     if (
       csc
         ? typeof idCsc !== "string" ||
-          !/^[A-Za-z0-9]{4}$/.test(idCsc) ||
+          !/^[\x21-\x7E]{4}$/.test(idCsc) ||
           typeof value !== "string" ||
           !/^[A-Za-z0-9]{32}$/.test(value)
         : !(file instanceof File) || file.size === 0 || file.size > 65_536

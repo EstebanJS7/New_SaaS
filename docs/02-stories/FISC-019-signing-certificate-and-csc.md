@@ -165,6 +165,18 @@ Observed on branch `docs/dec-095-fiscal-issuance-point`, uncommitted tree:
 - Limits: no browser/web criteria in this unit; the in-memory unit fake emulates
   the database rules, which live-pg proves for real.
 
+## Validación del identificador CSC
+
+2026-11-10: el formulario acepta exactamente los cuatro caracteres ASCII `!`–`~`
+que admite la API (`[\x21-\x7E]{4}`), sin transformar el identificador. El valor
+secreto conserva su regla de 32 caracteres alfanuméricos. Regresión: `!~A1` se
+envía sin cambios y se limpian ambos campos; identificadores cortos, largos, con
+espacios, DEL o Unicode se rechazan sin petición de escritura. RED observado: 1
+fallo / 10 pasan; GREEN: configuración fiscal web 31/31.
+
+Risk: item 2 (validación del formulario de secretos; se mantiene la autoridad de
+la API y la limpieza de los campos).
+
 ## Comportamiento conocido: orden de autorización
 
 2026-11-10: se conserva el orden actual, aceptado por el usuario. En las rutas
