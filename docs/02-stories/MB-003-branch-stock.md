@@ -8,9 +8,9 @@ priority: high
 depends_on: [MB-001, MB-002]
 prd_sections: ["§16", "§17"]
 permissions: [inventory.stock.transfer]
-branch:
+branch: test/mb003-branch-stock-browser
 created: 2026-11-04
-updated: 2026-11-04
+updated: 2026-11-09
 ---
 
 # MB-003 — Stock por sucursal, compras y transferencias
@@ -82,5 +82,30 @@ Tercera entrega de [[DEC-094]] (§10).
   faltaba; rechazos del CHECK de pares, del duplicado por transferencia, del
   saldo duplicado por sucursal, de una sucursal de otra clínica y de movimientos
   o compras sin sucursal.
-- **Pendiente:** `live-pg-isolation.e2e-spec.ts` se adaptó (`branch_id` en los
-  inserts directos) pero no se pudo correr acá; prueba en navegador.
+- Live PostgreSQL: `live-pg-isolation.e2e-spec.ts`, adaptado con `branch_id` en
+  los inserts directos, corre en el job «Database migrations» del CI
+  (`pnpm test:live-pg`); verde en `main` `3191dc0` (ejecución 42719450399).
+- Navegador: `apps/e2e/specs/branch-stock.spec.ts` (ver abajo).
+
+## Prueba en navegador
+
+`apps/e2e/specs/branch-stock.spec.ts`, con la clínica demo del lane:
+
+- Con una sola sucursal activa, la compra nueva no pide sucursal y «Comercio ›
+  Stock» no ofrece transferir.
+- Con una segunda sucursal donde trabaja el propietario (preparada por el BFF;
+  las pantallas de Sucursales son de MB-001, no de esta prueba), la compra nueva
+  pide «Sucursal», el detalle la muestra y recibirla suma 10 solo en esa
+  sucursal.
+- «Comercio › Stock» arranca en «Todas» y muestra una fila por (ítem, sucursal);
+  el filtro por sucursal muestra solo la suya, igual que
+  `GET /api/inventory/stock?branchId=`.
+- Una transferencia de 4 deja 6 en el origen y 4 en el destino («Transferencia
+  registrada.»). Una de 50 se rechaza con «No hay stock suficiente en la
+  sucursal de origen para transferir esa cantidad.» y no cambia ningún saldo.
+- Al terminar se restaura la asignación del propietario y se desactiva la
+  sucursal creada; una corrida interrumpida se limpia al empezar la siguiente.
+
+Evidencia (2026-11-09, lane local sobre `main` `3191dc0`): la spec sola 1/1 dos
+veces y el lane completo 32/32, con la base persistente de vuelta en una sola
+sucursal activa. Sin cambios de producto.

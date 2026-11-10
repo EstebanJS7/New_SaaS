@@ -27,6 +27,9 @@ type FiscalPathShape =
   | "taxList"
   | "taxSave";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Contracted JSON bodies stop here; the certificate upload keeps streaming. */
+const FISCAL_JSON_BODY_MAX_BYTES = 64 * 1024;
+const FISCAL_JSON_BODY_LIMIT_MESSAGE = `Fiscal request body exceeds ${FISCAL_JSON_BODY_MAX_BYTES} bytes.`;
 /** A path segment that must be a resource id; it travels only as a UUID. */
 const ID_SEGMENT = ":id";
 interface FiscalRoute {
@@ -224,6 +227,12 @@ function invalidPath(): NextResponse {
 function invalidBody(message: string): NextResponse {
   return NextResponse.json({ error: { code: "VALIDATION_FAILED", message } }, { status: 400 });
 }
+function payloadTooLarge(): NextResponse {
+  return NextResponse.json(
+    { error: { code: "PAYLOAD_TOO_LARGE", message: FISCAL_JSON_BODY_LIMIT_MESSAGE } },
+    { status: 413 }
+  );
+}
 function unauthenticated(): NextResponse {
   return NextResponse.json(
     { error: { code: "UNAUTHENTICATED", message: "Authentication required." } },
@@ -329,6 +338,47 @@ function parseJsonObject(text: string): Record<string, unknown> | null {
     ? (value as Record<string, unknown>)
     : null;
 }
+/** The length a client declares, or 0 when absent or not a plain byte count. */
+function declaredBodyBytes(value: string | null): number {
+  if (value === null || !/^\d+$/.test(value)) return 0;
+  const declared = Number(value);
+  return Number.isFinite(declared) ? declared : 0;
+}
+type BoundedBodyRead = { ok: true; text: string } | { ok: false; response: NextResponse };
+/**
+ * Reads a contracted JSON body as a stream so an oversized request is refused
+ * without ever buffering it. `content-length` is only an early hint: a chunked
+ * request carries none and a client can lie, so the bytes actually read decide.
+ * The body is decoded non-fatally, exactly as `request.text()` did, so a
+ * within-limit request reaches the API through the same text as before.
+ */
+async function readBoundedJsonBody(request: NextRequest): Promise<BoundedBodyRead> {
+  if (declaredBodyBytes(request.headers.get("content-length")) > FISCAL_JSON_BODY_MAX_BYTES)
+    return { ok: false, response: payloadTooLarge() };
+  const stream = request.body;
+  if (stream === null) return { ok: true, text: "" };
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const result = await reader.read();
+    if (result.done) break;
+    size += result.value.byteLength;
+    if (size > FISCAL_JSON_BODY_MAX_BYTES) {
+      // Stop the client mid-upload instead of draining bytes we will not forward.
+      await reader.cancel().catch(() => undefined);
+      return { ok: false, response: payloadTooLarge() };
+    }
+    chunks.push(result.value);
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { ok: true, text: new TextDecoder().decode(bytes) };
+}
 async function resolveFiscalBody(
   request: NextRequest,
   shape: FiscalPathShape,
@@ -336,7 +386,9 @@ async function resolveFiscalBody(
 ): Promise<{ ok: true; body: string | undefined } | { ok: false; response: NextResponse }> {
   const contract = FISCAL_BODY_CONTRACTS[shape];
   if (method === "GET" || contract === undefined) return { ok: true, body: undefined };
-  const text = await request.text();
+  const read = await readBoundedJsonBody(request);
+  if (!read.ok) return read;
+  const text = read.text;
   if (!text.trim()) return { ok: true, body: undefined };
   const parsed = parseJsonObject(text);
   if (parsed === null || Object.keys(parsed).some((key) => !contract.keys.includes(key)))

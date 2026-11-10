@@ -84,19 +84,74 @@ interface MockNextRequest {
   nextUrl: { pathname: string; searchParams: URLSearchParams };
   headers: { get: (name: string) => string | null };
   text: () => Promise<string>;
+  body: ReadableStream<Uint8Array> | null;
 }
+/**
+ * A request mock carries BOTH a stream and `text()` so the same cases can be
+ * read by a buffering and a streaming implementation; the bound is proven by
+ * the stream, and `text()` stays observable for the tests that assert it is
+ * never called.
+ */
 function mockNextRequest(props: {
   pathname: string;
   search?: string;
   headers?: Headers;
   body?: string;
+  bodyStream?: ReadableStream<Uint8Array> | null;
 }): MockNextRequest {
   const headers = props.headers ?? new Headers();
   return {
     nextUrl: { pathname: props.pathname, searchParams: new URLSearchParams(props.search ?? "") },
     headers: { get: (name) => headers.get(name) },
     text: () => Promise.resolve(props.body ?? ""),
+    body:
+      props.bodyStream !== undefined
+        ? props.bodyStream
+        : props.body === undefined
+          ? null
+          : streamOf([utf8(props.body)]),
   };
+}
+function streamOf(
+  chunks: readonly Uint8Array[],
+  onCancel?: () => void
+): ReadableStream<Uint8Array> {
+  let index = 0;
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      const chunk = chunks[index];
+      index += 1;
+      if (chunk === undefined) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(chunk);
+    },
+    cancel() {
+      onCancel?.();
+    },
+  });
+}
+function utf8(text: string): Uint8Array {
+  return new TextEncoder().encode(text);
+}
+function utf8Chunks(text: string, size: number): Uint8Array[] {
+  const bytes = utf8(text);
+  const chunks: Uint8Array[] = [];
+  for (let offset = 0; offset < bytes.length; offset += size)
+    chunks.push(bytes.slice(offset, offset + size));
+  return chunks;
+}
+/** A stream that never ends: any unbounded read hangs instead of passing. */
+function endlessStream(chunk: Uint8Array, onCancel: () => void): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      controller.enqueue(chunk.slice());
+    },
+    cancel() {
+      onCancel();
+    },
+  });
 }
 interface CookieValue {
   readonly name: string;
@@ -608,5 +663,234 @@ describe("/api/fiscal proxy — FISC-018 settings routes", () => {
       );
     }
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * S6: the proxy reads a contracted JSON body itself and refuses anything above
+ * 64 KiB with a stable 413, before any upstream request. The byte count is the
+ * UTF-8 body actually streamed, never the declared `content-length` alone.
+ */
+const MAX_JSON_BODY_BYTES = 64 * 1024;
+const BODY_LIMIT_MESSAGE = "Fiscal request body exceeds 65536 bytes.";
+function padWithSpaces(text: string, bytes: number): string {
+  return text + " ".repeat(bytes - utf8(text).byteLength);
+}
+
+describe("/api/fiscal proxy — bounded JSON bodies (S6)", () => {
+  beforeEach(() => {
+    cookiesMock.mockReset();
+    fetchMock.mockReset();
+    cookiesMock.mockResolvedValue(cookieStore({ name: STAFF_SESSION_COOKIE, value: "token-123" }));
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("accepts a whitespace-padded body exactly at the 65536-byte limit", async () => {
+    fetchMock.mockResolvedValue(upstreamOk());
+    const body = padWithSpaces(ISSUE_BODY, MAX_JSON_BODY_BYTES);
+    expect(utf8(body).byteLength).toBe(MAX_JSON_BODY_BYTES);
+    const response = await dispatch(
+      "POST",
+      mockNextRequest({
+        pathname: "/api/fiscal/fiscal-documents",
+        headers: new Headers({ "content-length": String(MAX_JSON_BODY_BYTES) }),
+        bodyStream: streamOf(utf8Chunks(body, 8192)),
+      })
+    );
+    expect(response.status).toBe(202);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchInit().body).toBe(body);
+    expect(fetchInit().headers["content-type"]).toBe("application/json");
+  });
+
+  it("assembles a chunked body in order and forwards it unchanged", async () => {
+    fetchMock.mockResolvedValue(upstreamOk());
+    const response = await dispatch(
+      "POST",
+      mockNextRequest({
+        pathname: `/api/fiscal/fiscal-documents/${ID}/cancel`,
+        bodyStream: streamOf(utf8Chunks(CANCEL_BODY, 5)),
+      })
+    );
+    expect(response.status).toBe(202);
+    expect(fetchInit().body).toBe(CANCEL_BODY);
+  });
+
+  it("rejects a chunked body one byte over the limit, cancelling the reader", async () => {
+    fetchMock.mockResolvedValue(upstreamOk());
+    let cancelled = false;
+    // Trailing bytes keep the stream open past the overflow, so the proxy must
+    // cancel it rather than drain the rest of the upload.
+    const body = padWithSpaces(ISSUE_BODY, MAX_JSON_BODY_BYTES + 1) + " ".repeat(8192);
+    const response = await dispatch(
+      "POST",
+      mockNextRequest({
+        pathname: "/api/fiscal/fiscal-documents",
+        bodyStream: streamOf(utf8Chunks(body, 8192), () => {
+          cancelled = true;
+        }),
+      })
+    );
+    await expectError(response, 413, "PAYLOAD_TOO_LARGE", BODY_LIMIT_MESSAGE);
+    expect(cancelled).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an oversized declared content-length without reading the body", async () => {
+    fetchMock.mockResolvedValue(upstreamOk());
+    const bodyStream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(utf8("{}"));
+      },
+    });
+    const response = await dispatch(
+      "POST",
+      mockNextRequest({
+        pathname: "/api/fiscal/fiscal-documents",
+        headers: new Headers({ "content-length": String(MAX_JSON_BODY_BYTES + 1) }),
+        bodyStream,
+      })
+    );
+    await expectError(response, 413, "PAYLOAD_TOO_LARGE", BODY_LIMIT_MESSAGE);
+    // The declared length alone rejects it: the body is never locked or read.
+    expect(bodyStream.locked).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("enforces the bytes actually streamed, not the declared length", async () => {
+    fetchMock.mockResolvedValue(upstreamOk());
+    // A length that under-declares the body is a hint only: the body still passes.
+    const accepted = await dispatch(
+      "POST",
+      mockNextRequest({
+        pathname: "/api/fiscal/fiscal-documents",
+        headers: new Headers({ "content-length": "10" }),
+        bodyStream: streamOf([utf8(ISSUE_BODY)]),
+      })
+    );
+    expect(accepted.status).toBe(202);
+    expect(fetchInit().body).toBe(ISSUE_BODY);
+    // A length that lies low cannot hide an endless body: the cap stops the read.
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue(upstreamOk());
+    let cancelled = false;
+    const rejected = await dispatch(
+      "POST",
+      mockNextRequest({
+        pathname: "/api/fiscal/fiscal-documents",
+        headers: new Headers({ "content-length": "10" }),
+        bodyStream: endlessStream(utf8("x".repeat(1024)), () => {
+          cancelled = true;
+        }),
+      })
+    );
+    await expectError(rejected, 413, "PAYLOAD_TOO_LARGE", BODY_LIMIT_MESSAGE);
+    expect(cancelled).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("counts UTF-8 bytes: exactly 65536 accepted, two more rejected", async () => {
+    fetchMock.mockResolvedValue(upstreamOk());
+    const atLimit = `{"reason":"x${"é".repeat(32761)}"}`;
+    const overLimit = `{"reason":"x${"é".repeat(32762)}"}`;
+    expect(utf8(atLimit).byteLength).toBe(MAX_JSON_BODY_BYTES);
+    expect(overLimit.length).toBeLessThan(MAX_JSON_BODY_BYTES);
+    expect(utf8(overLimit).byteLength).toBe(MAX_JSON_BODY_BYTES + 2);
+    const accepted = await dispatch(
+      "POST",
+      mockNextRequest({
+        pathname: `/api/fiscal/fiscal-documents/${ID}/cancel`,
+        bodyStream: streamOf(utf8Chunks(atLimit, 4096)),
+      })
+    );
+    expect(accepted.status).toBe(202);
+    expect(fetchInit().body).toBe(atLimit);
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue(upstreamOk());
+    const rejected = await dispatch(
+      "POST",
+      mockNextRequest({
+        pathname: `/api/fiscal/fiscal-documents/${ID}/cancel`,
+        bodyStream: streamOf(utf8Chunks(overLimit, 4096)),
+      })
+    );
+    await expectError(rejected, 413, "PAYLOAD_TOO_LARGE", BODY_LIMIT_MESSAGE);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("never echoes the rejected body or the secret it carried", async () => {
+    fetchMock.mockResolvedValue(upstreamOk());
+    const secret = "Aa12".repeat(17000);
+    const body = JSON.stringify({ environment: "TEST", idCsc: "0001", value: secret });
+    expect(utf8(body).byteLength).toBeGreaterThan(MAX_JSON_BODY_BYTES);
+    const response = await dispatch("POST", mockNextRequest({ pathname: "/api/fiscal/csc", body }));
+    expect(response.status).toBe(413);
+    const text = await response.text();
+    expect(JSON.parse(text)).toEqual({
+      error: { code: "PAYLOAD_TOO_LARGE", message: BODY_LIMIT_MESSAGE },
+    });
+    expect(text).not.toContain("Aa12");
+    expect(text).not.toContain(secret.slice(0, 32));
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("still answers 413 when the client's stream refuses to cancel", async () => {
+    fetchMock.mockResolvedValue(upstreamOk());
+    let reads = 0;
+    const bodyStream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        reads += 1;
+        controller.enqueue(utf8("x".repeat(8192)));
+      },
+      cancel() {
+        throw new Error("socket already gone");
+      },
+    });
+    const response = await dispatch(
+      "POST",
+      mockNextRequest({ pathname: "/api/fiscal/fiscal-documents", bodyStream })
+    );
+    await expectError(response, 413, "PAYLOAD_TOO_LARGE", BODY_LIMIT_MESSAGE);
+    expect(reads).toBeGreaterThan(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("leaves GET and the streamed certificate upload outside the JSON limit", async () => {
+    fetchMock.mockResolvedValue(upstreamOk());
+    const reads = vi.fn();
+    const listRequest = {
+      ...mockNextRequest({
+        pathname: "/api/fiscal/fiscal-documents",
+        headers: new Headers({ "content-length": "1048576" }),
+        bodyStream: streamOf([utf8("ignored")]),
+      }),
+      text: () => {
+        reads();
+        return Promise.resolve("ignored");
+      },
+    };
+    const list = await dispatch("GET", listRequest);
+    expect(list.status).toBe(202);
+    expect(reads).not.toHaveBeenCalled();
+    expect(fetchInit().body).toBeUndefined();
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue(upstreamOk());
+    const upload = new ReadableStream<Uint8Array>();
+    const response = await dispatch(
+      "POST",
+      mockNextRequest({
+        pathname: "/api/fiscal/signing-material",
+        headers: new Headers({
+          "content-type": "multipart/form-data; boundary=opaque",
+          "content-length": "2097152",
+        }),
+        bodyStream: upload,
+      })
+    );
+    expect(response.status).toBe(202);
+    const init = fetchInit() as unknown as { body: ReadableStream<Uint8Array>; duplex: string };
+    expect(init.body).toBe(upload);
+    expect(init.duplex).toBe("half");
   });
 });

@@ -277,6 +277,37 @@ describe("CSC lifecycle", () => {
     await s.service.load(INPUT);
     expect(s.secrets.size).toBe(1);
   });
+  it("maps retirement P2034 to a stable conflict and rolls back row, secret and audit", async () => {
+    const s = subject();
+    const loaded = await s.service.load(INPUT);
+    const before = await s.service.list();
+    const reader = createFiscalCscReader({ client: s.prisma, secretStore: s.store as never });
+    const secretBefore = await reader.read({ tenantId: TENANT, environment: "TEST" });
+    const auditsBefore = structuredClone(s.audits);
+    const transactionsBefore = s.prisma.$transaction.mock.calls.length;
+    // Fail after the row update and secret deletion, so rollback is exercised too.
+    s.audit.append.mockRejectedValueOnce({ code: "P2034", message: VALUE });
+    const error: unknown = await s.service
+      .retire({ id: loaded.id, reason: "rotation" })
+      .catch((failure: unknown) => failure);
+    expect(error).toMatchObject({
+      code: "CONFLICT",
+      message: FISCAL_CSC_CONCURRENT_CHANGE_MESSAGE,
+    });
+    expect(JSON.stringify(error)).not.toContain(VALUE);
+    expect(s.prisma.$transaction).toHaveBeenCalledTimes(transactionsBefore + 1);
+    expect(await s.service.list()).toEqual(before);
+    expect(await reader.read({ tenantId: TENANT, environment: "TEST" })).toEqual(secretBefore);
+    expect(s.audits).toEqual(auditsBefore);
+
+    // Errors outside this precise Prisma code keep their previous behavior.
+    const unrelated = new Error("audit unavailable");
+    s.audit.append.mockRejectedValueOnce(unrelated);
+    await expect(s.service.retire({ id: loaded.id, reason: "rotation" })).rejects.toBe(unrelated);
+    expect(await s.service.list()).toEqual(before);
+    expect(await reader.read({ tenantId: TENANT, environment: "TEST" })).toEqual(secretBefore);
+    expect(s.audits).toEqual(auditsBefore);
+  });
   it("hides foreign and absent IDs and isolates reads without mutating anything", async () => {
     const s = subject();
     const loaded = await s.service.load(INPUT);

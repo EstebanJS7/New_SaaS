@@ -10,7 +10,7 @@ prd_sections: []
 permissions: [fiscal.signing_material.manage]
 branch: docs/dec-095-fiscal-issuance-point
 created: 2026-11-09
-updated: 2026-11-09
+updated: 2026-11-10
 ---
 
 # FISC-019 — Certificado de firma y CSC desde «Configuración fiscal»
@@ -164,6 +164,118 @@ Observed on branch `docs/dec-095-fiscal-issuance-point`, uncommitted tree:
   clean.
 - Limits: no browser/web criteria in this unit; the in-memory unit fake emulates
   the database rules, which live-pg proves for real.
+
+## Conflicto al retirar un CSC
+
+2026-11-10: un error Prisma `P2034` al retirar un CSC se convierte en
+`409 CONFLICT`, con el mismo mensaje estable de concurrencia que al cargarlo:
+`Another operation changed the CSCs at the same time; refresh and try again.` No
+se reintenta la operación ni se incluye el error original en la respuesta. La
+regresión inyecta el fallo después de actualizar la fila y eliminar el secreto:
+la transacción revierte fila, secreto y auditoría. Otros errores conservan su
+comportamiento. RED: 1 falla / 10 pasan; GREEN: CSC, signing-material y RBAC
+111/111.
+
+Risk: item 2 (manejo de errores en el ciclo de vida del secreto, sin cambiar la
+transacción ni las reglas de autorización).
+
+## Validación del identificador CSC
+
+2026-11-10: el formulario acepta exactamente los cuatro caracteres ASCII `!`–`~`
+que admite la API (`[\x21-\x7E]{4}`), sin transformar el identificador. El valor
+secreto conserva su regla de 32 caracteres alfanuméricos. Regresión: `!~A1` se
+envía sin cambios y se limpian ambos campos; identificadores cortos, largos, con
+espacios, DEL o Unicode se rechazan sin petición de escritura. RED observado: 1
+fallo / 10 pasan; GREEN: configuración fiscal web 31/31.
+
+Risk: item 2 (validación del formulario de secretos; se mantiene la autoridad de
+la API y la limpieza de los campos).
+
+## Comportamiento conocido: orden de autorización
+
+2026-11-10: se conserva el orden actual, aceptado por el usuario. En las rutas
+CSC y signing-material, el guard de permisos del controlador se ejecuta antes
+del chequeo de la función `fiscal` del servicio. Si faltan ambos, responde
+`403 FORBIDDEN`, no `FEATURE_NOT_ENTITLED`. Con el permiso presente pero sin la
+función se conserva `FEATURE_NOT_ENTITLED`. No se cambia ningún guard ni se
+relaja el acceso a los secretos.
+
+Risk: none (documentación del comportamiento existente; sin cambio de
+ejecución).
+
+## Límite del cuerpo JSON en el proxy web
+
+2026-11-10: el proxy de `/api/fiscal` acepta cuerpos JSON de hasta **65536
+bytes** (64 KiB) y, por encima, responde `413` estable antes de llamar a la API:
+
+```json
+{
+  "error": {
+    "code": "PAYLOAD_TOO_LARGE",
+    "message": "Fiscal request body exceeds 65536 bytes."
+  }
+}
+```
+
+La respuesta no reenvía el cuerpo ni credenciales y el cuerpo rechazado no se
+registra.
+
+| Regla                     | Comportamiento                                                        |
+| ------------------------- | --------------------------------------------------------------------- |
+| Lectura                   | incremental desde `request.body`; se acumulan como máximo 65536 bytes |
+| Tamaño medido             | bytes UTF-8 realmente leídos, no el `content-length` declarado        |
+| `content-length`          | solo pista temprana: declarado > 65536 → 413 sin leer el cuerpo       |
+| Exceso                    | se cancela el lector y se responde 413 sin ninguna petición upstream  |
+| Límite exacto             | aceptado si el JSON es válido, incluso con relleno de espacios        |
+| Multipart del certificado | sin cambios: sigue en streaming y sin tope JSON                       |
+| GET                       | sin cambios: no lee ni reenvía cuerpo                                 |
+
+El cuerpo dentro del límite se decodifica UTF-8 no fatal, igual que antes con
+`request.text()`, así que el texto que llega a la API es el mismo. Si el stream
+del cliente no puede cancelarse, la respuesta sigue siendo el mismo 413.
+
+### Evidencia RED/GREEN (2026-11-10)
+
+- RED: los tests finales contra el módulo de `HEAD` en scratch aislado dieron
+  `8 failed | 27 passed (35)`. Fallan solo los ocho casos nuevos del bloque
+  «bounded JSON bodies (S6)»: límite exacto con relleno, cuerpo troceado
+  ensamblado, exceso de un byte con cancelación, `content-length` declarado
+  excesivo sin lectura, longitud declarada que miente, conteo UTF-8, no eco del
+  cuerpo/secreto y stream que no se deja cancelar. Los 27 casos previos pasan
+  sin cambios.
+- GREEN: `pnpm exec vitest run 'src/app/api/fiscal/[[...path]]/route.test.ts'`
+  35/35.
+- Diferencial (módulo base de `HEAD` contra una copia idéntica del árbol de
+  trabajo, en scratch fuera del repositorio): 33/33. Los 32 casos ordinarios
+  —documentos, ajustes, secretos, CSC, clasificaciones, GET, multipart del
+  certificado, rutas inválidas, sesión ausente/portal, cuerpo rechazado y error
+  upstream— coinciden en estado, cuerpo, cabeceras y reenvío. La única
+  diferencia es la solicitada: un cuerpo JSON de 65537 bytes pasa de `200` con
+  reenvío a `413` sin reenvío.
+- `pnpm --filter @newsaas/web typecheck`, Prettier, ESLint enfocado y
+  `git diff --check`: limpios.
+
+Archivos: `apps/web/src/app/api/fiscal/[[...path]]/route.ts` y
+`apps/web/src/app/api/fiscal/[[...path]]/route.test.ts`.
+
+Risk: item 2 (tope de tamaño de la petición); verificación independiente al
+cierre de la entrega.
+
+## Verificación de las observaciones (2026-11-10)
+
+- Proxy y formularios fiscales: 66 pruebas pasan; CSC/signing-material/RBAC: 111
+  pruebas pasan. Verificación independiente: CSC 11/11 y proxy/formulario 46/46,
+  sin bloqueantes de producto.
+- Después de reparar las dependencias locales con autorización del usuario:
+  `pnpm build` 17/17; `pnpm lint`, `pnpm format-check` y `pnpm typecheck` pasan.
+- Navegador afectado: sucursales, anulación de venta y nota de crédito
+  electrónica, 3/3. El flujo fiscal usa los XSD oficiales, certificado y CSC
+  desde la pantalla y descifrado compartido con el worker.
+- Suites completas unitarias de API/web y CI remoto: no ejecutadas en este
+  cierre; corresponden al CI según instrucción del usuario.
+- Evaluación nativa adicional indisponible: rechaza la configuración local no
+  rastreada aun después de `inspect` con exclusión y en rango comprometido. No
+  se inició una revisión ni se modificó esa configuración.
 
 ## Decisiones / ADRs
 
