@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { isReportCode, type ReportCode } from "@/app/api/reports/report-codes";
+import { CapabilitiesProvider, type Capabilities } from "@/lib/capabilities";
 import { Dashboard } from "./dashboard";
 import { ReportWorkspace } from "./reports/report-workspace";
 import {
@@ -478,5 +479,100 @@ describe("Dashboard · every state", () => {
     expect(screen.getByTestId("dashboard-card-cash-difference-value")).toBeInTheDocument();
     expect(screen.getByTestId("dashboard-card-low-stock-value")).toBeInTheDocument();
     expect(screen.queryByTestId("dashboard-card-gross-loading")).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * UX-037: the dashboard reads reports only for a caller who may, and offers only
+ * the shortcuts the caller can use. Unknown capabilities keep everything.
+ */
+describe("Dashboard gated by the caller's capabilities (UX-037)", () => {
+  const ALL = [
+    "reports.read",
+    "scheduling.appointment.read",
+    "patients.read",
+    "sales.create",
+    "sales.complete",
+    "catalog.update",
+  ];
+
+  function renderWith(capabilities?: Capabilities): void {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const tree = (
+      <QueryClientProvider client={client}>
+        <Dashboard />
+      </QueryClientProvider>
+    );
+    render(
+      capabilities === undefined ? (
+        tree
+      ) : (
+        <CapabilitiesProvider value={capabilities}>{tree}</CapabilitiesProvider>
+      )
+    );
+  }
+
+  it("reads no report and shows the no-access line without reports.read", () => {
+    const fetchMock = installReports();
+    renderWith({ permissions: ["scheduling.appointment.read"] });
+    expect(screen.getByTestId("dashboard-reports-denied")).toHaveTextContent(
+      "No tenés permiso para ver los informes del panel."
+    );
+    expect(screen.queryByTestId("dashboard-card-gross")).toBeNull();
+    expect(screen.queryByRole("link", { name: /Ver informes/ })).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("offers only the shortcuts the caller can use", () => {
+    installReports();
+    renderWith({ permissions: ["scheduling.appointment.read"], features: ["veterinary"] });
+    expect(screen.getByRole("link", { name: /Abrir agenda/ })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Buscar un paciente/ })).toBeNull();
+    expect(screen.queryByRole("link", { name: /Abrir punto de venta/ })).toBeNull();
+  });
+
+  it.each([
+    ["sales.create without sales.complete", { permissions: ["sales.create"], features: ["sales"] }],
+    [
+      "sales.complete without sales.create",
+      { permissions: ["sales.complete"], features: ["sales"] },
+    ],
+    [
+      "both permissions without the sales feature",
+      { permissions: ["sales.create", "sales.complete"], features: [] },
+    ],
+  ])("hides the POS shortcut with %s, as the counter does", (_label, capabilities) => {
+    installReports();
+    renderWith(capabilities);
+    expect(screen.queryByRole("link", { name: /Abrir punto de venta/ })).toBeNull();
+  });
+
+  it("offers the POS shortcut exactly when the counter can sell", () => {
+    installReports();
+    renderWith({ permissions: ["sales.create", "sales.complete"], features: ["sales"] });
+    expect(screen.getByRole("link", { name: /Abrir punto de venta/ })).toBeInTheDocument();
+  });
+
+  it("hides the catalogue threshold link without catalog.update", async () => {
+    installReports({ "low-stock": () => jsonResponse(LOW_STOCK_NOT_CONFIGURED) });
+    renderWith({ permissions: ["reports.read"] });
+    expect(
+      await screen.findByTestId("dashboard-card-low-stock-not-configured")
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("dashboard-card-low-stock-configure")).toBeNull();
+  });
+
+  it.each([
+    ["granted", { permissions: ALL, features: ["veterinary", "sales"] }],
+    ["unknown", undefined],
+  ])("offers every card and shortcut when capabilities are %s", async (_label, capabilities) => {
+    installReports({ "low-stock": () => jsonResponse(LOW_STOCK_NOT_CONFIGURED) });
+    renderWith(capabilities);
+    expect(screen.getByTestId("dashboard-card-gross")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Ver informes/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Abrir agenda/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Buscar un paciente/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Abrir punto de venta/ })).toBeInTheDocument();
+    expect(await screen.findByTestId("dashboard-card-low-stock-configure")).toBeInTheDocument();
   });
 });

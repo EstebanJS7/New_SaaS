@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { NotificationDelivery, NotificationDeliveryDetail } from "./notifications-api";
+import { CapabilitiesProvider, type Capabilities } from "@/lib/capabilities";
 import { NotificationsSurface } from "./notifications-surface";
 import { deliveryFailureReason, formatTimestamp } from "./notifications-display";
 
@@ -236,5 +237,45 @@ describe("notifications display helpers", () => {
     expect(
       deliveryFailureReason({ lastErrorCode: "PROVIDER_REJECTED", lastErrorMessage: null })
     ).toBe("PROVIDER_REJECTED");
+  });
+});
+
+/** UX-037: the deliveries read is offered only when the caller may read it. */
+describe("NotificationsSurface gated by the caller's capabilities (UX-037)", () => {
+  function renderWith(capabilities?: Capabilities): void {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const tree = (
+      <QueryClientProvider client={client}>
+        <NotificationsSurface />
+      </QueryClientProvider>
+    );
+    render(
+      capabilities === undefined ? (
+        tree
+      ) : (
+        <CapabilitiesProvider value={capabilities}>{tree}</CapabilitiesProvider>
+      )
+    );
+  }
+
+  it("shows the no-access state and reads nothing without notifications.delivery.read", async () => {
+    installFetch(() => jsonResponse([DELIVERY]));
+    renderWith({ permissions: [] });
+    expect(
+      await screen.findByText("No tenés permiso para ver las entregas de notificaciones.")
+    ).toBeInTheDocument();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["granted", { permissions: ["notifications.delivery.read"] }],
+    ["unknown", undefined],
+  ])("reads the deliveries when capabilities are %s", async (_label, capabilities) => {
+    installFetch(() => jsonResponse([DELIVERY]));
+    renderWith(capabilities);
+    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+    expect(
+      screen.queryByText("No tenés permiso para ver las entregas de notificaciones.")
+    ).not.toBeInTheDocument();
   });
 });

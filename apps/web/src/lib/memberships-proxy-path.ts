@@ -29,6 +29,11 @@ export function resolveMembershipsPath(
     if (segments.length === 2 && segments[0] === "me" && segments[1] === "branches") {
       return "/memberships/me/branches";
     }
+    // UX-037: the caller's own permissions and its clinic's features. `me/permissions`
+    // stays refused: the capabilities read is the one the browser needs.
+    if (segments.length === 2 && segments[0] === "me" && segments[1] === "capabilities") {
+      return "/memberships/me/capabilities";
+    }
     return null;
   }
   if (method === "PUT") {

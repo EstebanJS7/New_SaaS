@@ -19,6 +19,8 @@ import {
   type CreateCashMovementInput,
   type OpenCashSessionInput,
 } from "./cash-api";
+import { useCan } from "@/lib/capabilities";
+import { CASH_ACTIONS } from "./cash-capabilities";
 import { ClosePanel } from "./close-panel";
 import { MovementPanel } from "./movement-panel";
 import { RegisterPanel } from "./register-panel";
@@ -74,6 +76,11 @@ function sessionReceipt(value: CashSession | null | undefined): value is CashSes
  * capability problem and the backend remains the authority either way.
  */
 export function CashSurface(): JSX.Element {
+  const cashEnabled = useCan(CASH_ACTIONS.enabled);
+  const canCreateRegister = useCan(CASH_ACTIONS.createRegister);
+  const canOpenSession = useCan(CASH_ACTIONS.openSession);
+  const canCreateMovement = useCan(CASH_ACTIONS.createMovement);
+  const canCloseSession = useCan(CASH_ACTIONS.closeSession);
   // MB-002: where the person works, for the new-drawer form.
   const workingBranches = useWorkingBranches();
   const gate = useRef(false);
@@ -304,7 +311,7 @@ export function CashSurface(): JSX.Element {
     }
   }
 
-  if (readError !== null && isCashNotEntitled(readError)) {
+  if (!cashEnabled || (readError !== null && isCashNotEntitled(readError))) {
     // UX gate only: the backend answers the same `403 FEATURE_NOT_ENTITLED` for
     // every cash call, so the workspace hides itself instead of offering actions
     // that can only fail.
@@ -417,6 +424,7 @@ export function CashSurface(): JSX.Element {
         createError={createRegisterMutation.error}
         created={createRegisterMutation.data ?? null}
         branches={workingBranches.branches}
+        canCreate={canCreateRegister}
       />
 
       <SessionPanel
@@ -446,6 +454,7 @@ export function CashSurface(): JSX.Element {
             throw error;
           }
         }}
+        canOpenSession={canOpenSession}
         isOpening={openSessionMutation.isPending}
         openError={openSessionMutation.error}
         opened={openSessionMutation.data ?? null}
@@ -486,6 +495,7 @@ export function CashSurface(): JSX.Element {
           forgetAttempt(idempotencyKey);
           movementAttempt.current = null;
         }}
+        canCreate={canCreateMovement}
         isCreating={createMovementMutation.isPending}
         createError={createMovementMutation.error}
         created={createMovementMutation.data ?? null}
@@ -505,6 +515,7 @@ export function CashSurface(): JSX.Element {
             return closeSessionMutation.mutateAsync({ id, body });
           });
         }}
+        canClose={canCloseSession}
         isClosing={closeSessionMutation.isPending}
         closeError={closeSessionMutation.error}
       />

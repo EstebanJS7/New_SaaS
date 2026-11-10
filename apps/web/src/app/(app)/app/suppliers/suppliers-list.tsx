@@ -3,6 +3,8 @@
 import type { JSX } from "react";
 import { useState } from "react";
 import Link from "next/link";
+import { useCan } from "@/lib/capabilities";
+import { SUPPLIER_ACTIONS } from "./supplier-capabilities";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@newsaas/ui/components/ui/button";
 import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
@@ -26,7 +28,15 @@ function taxIdentifierLabel(supplier: Supplier): string {
   return supplier.taxId === null ? "Sin RUC" : `RUC ${supplier.taxId}`;
 }
 
-function SupplierCard({ supplier }: { readonly supplier: Supplier }): JSX.Element {
+function SupplierCard({
+  supplier,
+  canEdit,
+  canDeactivate,
+}: {
+  readonly supplier: Supplier;
+  readonly canEdit: boolean;
+  readonly canDeactivate: boolean;
+}): JSX.Element {
   const queryClient = useQueryClient();
   const [confirmDeactivateOpen, setConfirmDeactivateOpen] = useState(false);
   const mutation = useMutation({
@@ -63,18 +73,22 @@ function SupplierCard({ supplier }: { readonly supplier: Supplier }): JSX.Elemen
         )}
       </div>
       <div className="flex shrink-0 gap-2">
-        <Button type="button" variant="outline" size="sm" asChild>
-          <Link href={`/app/suppliers/${supplier.id}/edit`}>Editar</Link>
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => setConfirmDeactivateOpen(true)}
-          disabled={mutation.isPending || !supplier.isActive}
-        >
-          {mutation.isPending ? "Desactivando…" : "Desactivar"}
-        </Button>
+        {canEdit && (
+          <Button type="button" variant="outline" size="sm" asChild>
+            <Link href={`/app/suppliers/${supplier.id}/edit`}>Editar</Link>
+          </Button>
+        )}
+        {canDeactivate && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setConfirmDeactivateOpen(true)}
+            disabled={mutation.isPending || !supplier.isActive}
+          >
+            {mutation.isPending ? "Desactivando…" : "Desactivar"}
+          </Button>
+        )}
       </div>
       <ConfirmActionDialog
         open={confirmDeactivateOpen}
@@ -114,6 +128,9 @@ function SupplierCard({ supplier }: { readonly supplier: Supplier }): JSX.Elemen
  * answers 403 when the staff role does not hold `suppliers.read`.
  */
 export function SupplierList(): JSX.Element {
+  const canCreate = useCan(SUPPLIER_ACTIONS.create);
+  const canEdit = useCan(SUPPLIER_ACTIONS.update);
+  const canDeactivate = useCan(SUPPLIER_ACTIONS.deactivate);
   const [includeInactive, setIncludeInactive] = useState(false);
 
   const query = useQuery({
@@ -139,9 +156,11 @@ export function SupplierList(): JSX.Element {
             Gestioná los proveedores a los que compra la organización.
           </p>
         </div>
-        <Button type="button" asChild>
-          <Link href="/app/suppliers/new">Nuevo proveedor</Link>
-        </Button>
+        {canCreate && (
+          <Button type="button" asChild>
+            <Link href="/app/suppliers/new">Nuevo proveedor</Link>
+          </Button>
+        )}
       </div>
 
       <label className="flex items-center gap-2 text-sm">
@@ -174,16 +193,23 @@ export function SupplierList(): JSX.Element {
             <CardTitle>{emptyTitle}</CardTitle>
             <CardDescription>{emptyDescription}</CardDescription>
           </CardHeader>
-          <CardContent>
-            <Button type="button" asChild>
-              <Link href="/app/suppliers/new">Registrar proveedor</Link>
-            </Button>
-          </CardContent>
+          {canCreate && (
+            <CardContent>
+              <Button type="button" asChild>
+                <Link href="/app/suppliers/new">Registrar proveedor</Link>
+              </Button>
+            </CardContent>
+          )}
         </Card>
       ) : (
         <div className="space-y-3">
           {query.data?.map((supplier) => (
-            <SupplierCard key={supplier.id} supplier={supplier} />
+            <SupplierCard
+              key={supplier.id}
+              supplier={supplier}
+              canEdit={canEdit}
+              canDeactivate={canDeactivate}
+            />
           ))}
         </div>
       )}

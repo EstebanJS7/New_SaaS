@@ -3,6 +3,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 vi.mock("next/navigation", () => ({ usePathname: () => "/app" }));
 vi.mock("./route-feedback", () => ({ RouteFeedback: () => null }));
 import { WorkspaceShell } from "./workspace-shell";
+import { CapabilitiesProvider } from "@/lib/capabilities";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -59,5 +60,35 @@ describe("responsive workspace shell", () => {
     const dialog = screen.getByRole("dialog");
     fireEvent(dialog, new Event("cancel", { bubbles: false, cancelable: true }));
     expect(dialog).not.toHaveAttribute("open");
+  });
+});
+
+describe("workspace shell capabilities (UX-037)", () => {
+  it("passes the shared capabilities to the navigation", () => {
+    render(
+      <CapabilitiesProvider value={{ permissions: [], features: [] }}>
+        <WorkspaceShell productName="Example product">
+          <h1>Content</h1>
+        </WorkspaceShell>
+      </CapabilitiesProvider>
+    );
+    const sidebar = screen.getByTestId("nav-sidebar");
+    expect(within(sidebar).queryByRole("link", { name: "POS" })).not.toBeInTheDocument();
+    expect(within(sidebar).queryByRole("link", { name: "General" })).not.toBeInTheDocument();
+    // A known empty permission set hides every module that needs one (UX-037).
+    expect(within(sidebar).queryByRole("link", { name: "Clientes" })).not.toBeInTheDocument();
+    expect(within(sidebar).getByRole("link", { name: "Inicio" })).toBeInTheDocument();
+    expect(within(sidebar).getByRole("link", { name: "Marca" })).toBeInTheDocument();
+  });
+
+  it("shows every link without a provider (capabilities unknown)", () => {
+    render(
+      <WorkspaceShell productName="Example product">
+        <h1>Content</h1>
+      </WorkspaceShell>
+    );
+    const sidebar = screen.getByTestId("nav-sidebar");
+    expect(within(sidebar).getByRole("link", { name: "POS" })).toBeInTheDocument();
+    expect(within(sidebar).getByRole("link", { name: "General" })).toBeInTheDocument();
   });
 });

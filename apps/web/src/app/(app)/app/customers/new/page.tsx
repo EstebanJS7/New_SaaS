@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { CustomerForm } from "../customer-form";
 import { createCustomer } from "../customers-api";
+import { useCan } from "@/lib/capabilities";
+import { CUSTOMER_ACTIONS, CustomersNoAccess } from "../customer-capabilities";
 
 /**
  * Staff create-customer page.
@@ -12,6 +14,7 @@ import { createCustomer } from "../customers-api";
 export default function NewCustomerPage(): JSX.Element {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const canCreate = useCan(CUSTOMER_ACTIONS.create);
 
   const mutation = useMutation({
     retry: false,
@@ -24,6 +27,14 @@ export default function NewCustomerPage(): JSX.Element {
       router.push(`/app/customers/${customer.id}`);
     },
   });
+
+  if (!canCreate) {
+    return (
+      <div className="mx-auto max-w-2xl">
+        <CustomersNoAccess title="No tenés permiso para crear clientes" />
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-2xl">

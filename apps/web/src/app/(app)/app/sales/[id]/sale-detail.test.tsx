@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { CapabilitiesProvider, type Capabilities } from "@/lib/capabilities";
 import { SaleDetail } from "./sale-detail";
 
 const SALE_ID = "22222222-2222-4222-8222-222222222222";
@@ -210,6 +211,60 @@ describe("SaleDetail", () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /edit|editar/i })).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/discount|invoice|fiscal|change/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("SaleDetail actions follow the caller's capabilities (UX-037)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function renderDetailAs(capabilities: Capabilities): void {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <CapabilitiesProvider value={capabilities}>
+        <QueryClientProvider client={client}>
+          <SaleDetail />
+        </QueryClientProvider>
+      </CapabilitiesProvider>
+    );
+  }
+
+  const READER: Capabilities = { permissions: ["sales.read"], features: ["sales"] };
+
+  it("hides the draft completion without sales.complete", async () => {
+    installFetch(() => jsonResponse(DRAFT_SALE));
+    renderDetailAs(READER);
+    expect(await screen.findByText("Antibiotic")).toBeInTheDocument();
+    expect(screen.queryByText("Completar este borrador")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Revisar venta" })).not.toBeInTheDocument();
+  });
+
+  it("offers the draft completion with sales.complete and the sales feature", async () => {
+    installFetch(() => jsonResponse(DRAFT_SALE));
+    renderDetailAs({ permissions: ["sales.read", "sales.complete"], features: ["sales"] });
+    expect(await screen.findByRole("button", { name: "Revisar venta" })).toBeInTheDocument();
+  });
+
+  it("hides the reversal of a completed sale without sales.reverse", async () => {
+    installFetch(() => jsonResponse(COMPLETED_SALE));
+    renderDetailAs(READER);
+    expect(await screen.findByText("Antibiotic")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Anular venta" })).not.toBeInTheDocument();
+  });
+
+  it("offers the reversal with sales.reverse", async () => {
+    installFetch(() => jsonResponse(COMPLETED_SALE));
+    renderDetailAs({ permissions: ["sales.read", "sales.reverse"], features: ["sales"] });
+    expect(await screen.findByRole("button", { name: "Anular venta" })).toBeInTheDocument();
+  });
+
+  it("offers the reversal while capabilities are unknown", async () => {
+    installFetch(() => jsonResponse(COMPLETED_SALE));
+    renderDetail();
+    expect(await screen.findByRole("button", { name: "Anular venta" })).toBeInTheDocument();
   });
 });
 

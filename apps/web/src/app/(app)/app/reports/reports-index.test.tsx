@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { CapabilitiesProvider, type Capabilities } from "@/lib/capabilities";
 import { ReportsIndex } from "./reports-index";
 
 /**
@@ -179,5 +180,45 @@ describe("ReportsIndex", () => {
       "No se pudo conectar con el servidor. Revisá tu conexión y volvé a intentar."
     );
     expect(error).not.toHaveTextContent("Failed to fetch");
+  });
+});
+
+/** UX-037: a caller known to lack `reports.read` sees the refusal without a probe. */
+describe("ReportsIndex gated by the caller's capabilities (UX-037)", () => {
+  function renderWith(capabilities?: Capabilities): void {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const tree = (
+      <QueryClientProvider client={client}>
+        <ReportsIndex />
+      </QueryClientProvider>
+    );
+    render(
+      capabilities === undefined ? (
+        tree
+      ) : (
+        <CapabilitiesProvider value={capabilities}>{tree}</CapabilitiesProvider>
+      )
+    );
+  }
+
+  it("shows the refusal and probes nothing without reports.read", () => {
+    const fetchMock = installFetch(() => jsonResponse(LOW_STOCK_EMPTY));
+    renderWith({ permissions: [] });
+    expect(screen.getByTestId("reports-permission-denied")).toHaveTextContent(
+      "No tenés permiso para ver los informes."
+    );
+    expect(screen.queryAllByTestId("report-index-entry")).toHaveLength(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["granted", { permissions: ["reports.read"] }],
+    ["unknown", undefined],
+  ])("probes and lists every report when capabilities are %s", (_l, capabilities) => {
+    const fetchMock = installFetch(() => jsonResponse(LOW_STOCK_EMPTY));
+    renderWith(capabilities);
+    expect(screen.getAllByTestId("report-index-entry")).toHaveLength(12);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("reports-permission-denied")).not.toBeInTheDocument();
   });
 });

@@ -16,6 +16,15 @@ import {
   type NotificationChannelFilter,
   type NotificationStatusFilter,
 } from "./notification-delivery-panel";
+import { useCan, type CapabilityRequirement } from "@/lib/capabilities";
+
+/**
+ * The only operation this read-only surface has ([[UX-037]]), mirroring
+ * `apps/api/src/notifications/notifications.controller.ts` (both GETs).
+ */
+export const NOTIFICATION_ACTIONS = {
+  read: { permission: "notifications.delivery.read" },
+} as const satisfies Record<string, CapabilityRequirement>;
 
 /**
  * Staff workspace for notification deliveries: the reads are owned here and the
@@ -27,6 +36,8 @@ export function NotificationsSurface(): JSX.Element {
   const [statusFilter, setStatusFilter] = useState<NotificationStatusFilter>("ALL");
   const [channelFilter, setChannelFilter] = useState<NotificationChannelFilter>("ALL");
   const [selectedDeliveryId, setSelectedDeliveryId] = useState<string | null>(null);
+  // UX-037: a caller known to lack the read sees the no-access state, unread.
+  const canRead = useCan(NOTIFICATION_ACTIONS.read);
 
   const deliveriesQuery = useQuery({
     queryKey: ["notifications", "deliveries", statusFilter, channelFilter],
@@ -36,6 +47,7 @@ export function NotificationsSurface(): JSX.Element {
         ...(channelFilter === "ALL" ? {} : { channel: channelFilter }),
       }),
     retry: false,
+    enabled: canRead,
   });
   const detailQuery = useQuery({
     queryKey: ["notifications", "delivery", selectedDeliveryId ?? "none"],
@@ -44,14 +56,14 @@ export function NotificationsSurface(): JSX.Element {
         ? Promise.resolve<NotificationDeliveryDetail | null>(null)
         : getNotificationDelivery(selectedDeliveryId),
     retry: false,
-    enabled: selectedDeliveryId !== null,
+    enabled: canRead && selectedDeliveryId !== null,
   });
 
   function selectDelivery(delivery: NotificationDelivery): void {
     setSelectedDeliveryId((current) => (current === delivery.id ? null : delivery.id));
   }
 
-  const listPermissionDenied = isNotificationPermissionDenied(deliveriesQuery.error);
+  const listPermissionDenied = !canRead || isNotificationPermissionDenied(deliveriesQuery.error);
   const forbiddenDetail = isNotificationPermissionDenied(detailQuery.error);
 
   return (

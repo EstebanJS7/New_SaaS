@@ -32,6 +32,12 @@ interface ClosePanelProps {
   readonly onClose: (input: CloseCashSessionInput) => Promise<void>;
   readonly isClosing: boolean;
   readonly closeError: Error | null;
+  /**
+   * [[UX-037]]: false when the caller is known to lack `cash.session.close`. The
+   * card stays (it also shows a closed session's outcome) and says why the open
+   * session offers no close instead of silently showing nothing.
+   */
+  readonly canClose?: boolean;
 }
 
 interface CloseOutcomeProps {
@@ -110,6 +116,7 @@ export function ClosePanel({
   onClose,
   isClosing,
   closeError,
+  canClose = true,
 }: ClosePanelProps): JSX.Element {
   const [countedAmount, setCountedAmount] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
@@ -145,6 +152,10 @@ export function ClosePanel({
           </p>
         ) : session.status === "CLOSED" ? (
           <CloseOutcome session={session} />
+        ) : !canClose ? (
+          <p data-testid="close-not-permitted" className="text-sm text-muted-foreground">
+            No tenés permiso para cerrar sesiones de caja.
+          </p>
         ) : (
           <>
             {closeError !== null && <CashErrorAlert error={closeError} testId="close-error" />}

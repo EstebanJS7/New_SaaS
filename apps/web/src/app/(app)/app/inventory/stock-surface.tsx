@@ -3,6 +3,8 @@
 import type { JSX } from "react";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCan } from "@/lib/capabilities";
+import { INVENTORY_ACTIONS } from "./inventory-capabilities";
 import { Button } from "@newsaas/ui/components/ui/button";
 import {
   Card,
@@ -35,6 +37,7 @@ const ALL_BRANCHES = "";
  * an origin that would go below zero, and requires `inventory.stock.transfer`.
  */
 export function StockSurface(): JSX.Element {
+  const canTransfer = useCan(INVENTORY_ACTIONS.transfer);
   const [branchFilter, setBranchFilter] = useState(ALL_BRANCHES);
   const branchesQuery = useQuery({
     queryKey: ["inventory", "branches"],
@@ -105,7 +108,7 @@ export function StockSurface(): JSX.Element {
         </CardContent>
       </Card>
 
-      <TransferForm balances={balancesQuery.data ?? []} branches={branches} />
+      {canTransfer && <TransferForm balances={balancesQuery.data ?? []} branches={branches} />}
     </div>
   );
 }

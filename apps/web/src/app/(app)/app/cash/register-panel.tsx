@@ -36,6 +36,8 @@ interface RegisterPanelProps {
    * uses the only one (or explains what is missing).
    */
   readonly branches?: readonly { readonly id: string; readonly name: string }[];
+  /** [[UX-037]]: false when the caller is known to lack the command's permission. */
+  readonly canCreate?: boolean;
 }
 
 /**
@@ -58,6 +60,7 @@ export function RegisterPanel({
   createError,
   created,
   branches = [],
+  canCreate = true,
 }: RegisterPanelProps): JSX.Element {
   const [name, setName] = useState("");
   const mustChooseBranch = branches.length > 1;
@@ -154,56 +157,62 @@ export function RegisterPanel({
           <CashErrorAlert error={createError} testId="register-create-error" />
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-3 border-t border-border pt-4">
-          <div className="space-y-2">
-            <label htmlFor="cash-register-name" className="text-sm font-medium">
-              Nombre de la caja
-            </label>
-            <input
-              id="cash-register-name"
-              type="text"
-              autoComplete="off"
-              value={name}
-              maxLength={CASH_REGISTER_NAME_MAX_LENGTH}
-              onChange={(event) => setName(event.target.value)}
-              disabled={isCreating || commandsBlocked}
-              placeholder="Recepción"
-              className={cashInputClassName}
-            />
-          </div>
-
-          {mustChooseBranch && (
+        {canCreate && (
+          <form onSubmit={handleSubmit} className="space-y-3 border-t border-border pt-4">
             <div className="space-y-2">
-              <label htmlFor="cash-register-branch" className="text-sm font-medium">
-                Sucursal
+              <label htmlFor="cash-register-name" className="text-sm font-medium">
+                Nombre de la caja
               </label>
-              <select
-                id="cash-register-branch"
-                value={branchId}
-                onChange={(event) => setBranchId(event.target.value)}
+              <input
+                id="cash-register-name"
+                type="text"
+                autoComplete="off"
+                value={name}
+                maxLength={CASH_REGISTER_NAME_MAX_LENGTH}
+                onChange={(event) => setName(event.target.value)}
                 disabled={isCreating || commandsBlocked}
+                placeholder="Recepción"
                 className={cashInputClassName}
-              >
-                <option value="">Elegí la sucursal</option>
-                {branches.map((branch) => (
-                  <option key={branch.id} value={branch.id}>
-                    {branch.name}
-                  </option>
-                ))}
-              </select>
+              />
             </div>
-          )}
 
-          {localError !== null && (
-            <p role="alert" data-testid="register-name-error" className="text-sm text-destructive">
-              {localError}
-            </p>
-          )}
+            {mustChooseBranch && (
+              <div className="space-y-2">
+                <label htmlFor="cash-register-branch" className="text-sm font-medium">
+                  Sucursal
+                </label>
+                <select
+                  id="cash-register-branch"
+                  value={branchId}
+                  onChange={(event) => setBranchId(event.target.value)}
+                  disabled={isCreating || commandsBlocked}
+                  className={cashInputClassName}
+                >
+                  <option value="">Elegí la sucursal</option>
+                  {branches.map((branch) => (
+                    <option key={branch.id} value={branch.id}>
+                      {branch.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
-          <Button type="submit" disabled={isCreating || commandsBlocked}>
-            {isCreating ? "Creando caja…" : "Crear caja"}
-          </Button>
-        </form>
+            {localError !== null && (
+              <p
+                role="alert"
+                data-testid="register-name-error"
+                className="text-sm text-destructive"
+              >
+                {localError}
+              </p>
+            )}
+
+            <Button type="submit" disabled={isCreating || commandsBlocked}>
+              {isCreating ? "Creando caja…" : "Crear caja"}
+            </Button>
+          </form>
+        )}
       </CardContent>
     </Card>
   );

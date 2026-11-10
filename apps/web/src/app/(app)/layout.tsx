@@ -9,6 +9,8 @@ import { BrandStyle } from "@/providers/document-nonce";
 import { appearanceBootstrapScriptWithTenantDefault } from "@/lib/appearance";
 import { readCspNonce } from "@/lib/csp-nonce";
 import { brandStyleCss } from "@/lib/brand-style";
+import { CapabilitiesProvider, type Capabilities } from "@/lib/capabilities";
+import { loadCapabilities } from "@/lib/load-capabilities";
 
 const DEFAULT_API_URL = "http://localhost:3001";
 
@@ -32,6 +34,23 @@ interface BrandResolution {
   readonly unauthenticated: boolean;
   /** `403` on a read that needs no permission: the session has no ACTIVE membership. */
   readonly noActiveMembership: boolean;
+}
+
+/**
+ * The caller's own permissions and features ([[UX-037]]), once per request. Any
+ * failure is UNKNOWN (`{}`), so the shell shows everything as before and the API
+ * keeps refusing — a failed read is never treated as "no permissions".
+ */
+async function fetchCapabilities(): Promise<Capabilities> {
+  try {
+    const cookieStore = await cookies();
+    return await loadCapabilities({
+      apiUrl: process.env.NEXT_PUBLIC_API_URL ?? DEFAULT_API_URL,
+      cookie: cookieStore?.toString() ?? "",
+    });
+  } catch {
+    return {};
+  }
 }
 
 async function fetchResolvedBrand(): Promise<BrandResolution> {
@@ -79,13 +98,21 @@ async function fetchResolvedBrand(): Promise<BrandResolution> {
  * shown an EMPTY SHELL: every surface inside renders from session-scoped data, so the shell
  * was chrome around nothing, and the visitor had no way to learn that signing in was the
  * missing step. The redirect is server-side, so the shell never renders first.
+ *
+ * It also loads the caller's capabilities once ([[UX-037]]) and shares them through
+ * `CapabilitiesProvider`: the nav and the screens that already gate on permissions or
+ * features read them from there.
  */
 export default async function AppShellLayout({
   children,
 }: {
   children: ReactNode;
 }): Promise<JSX.Element> {
-  const { brand, unauthenticated, noActiveMembership } = await fetchResolvedBrand();
+  // Both private reads start together; capabilities never gate the shell.
+  const [{ brand, unauthenticated, noActiveMembership }, capabilities] = await Promise.all([
+    fetchResolvedBrand(),
+    fetchCapabilities(),
+  ]);
   // Per-request CSP nonce ([[DEC-075]]); see lib/csp.ts for why inline nodes here
   // cannot be replaced by external stylesheets or scripts.
   const nonce = await readCspNonce();
@@ -107,13 +134,15 @@ export default async function AppShellLayout({
         }}
       />
       <BrandStyle nonce={nonce} css={brandStyleCss(brand)} />
-      <WorkspaceShell
-        productName={activeProductPreset.productName}
-        productLogoUrl={brand.assets?.logoLightUrl}
-        defaultAppearance={brand.defaultAppearance}
-      >
-        {children}
-      </WorkspaceShell>
+      <CapabilitiesProvider value={capabilities}>
+        <WorkspaceShell
+          productName={activeProductPreset.productName}
+          productLogoUrl={brand.assets?.logoLightUrl}
+          defaultAppearance={brand.defaultAppearance}
+        >
+          {children}
+        </WorkspaceShell>
+      </CapabilitiesProvider>
     </div>
   );
 }

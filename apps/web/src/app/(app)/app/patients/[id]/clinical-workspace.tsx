@@ -4,6 +4,8 @@ import { useStaffResumeTarget } from "@/providers/staff-resume-target";
 import type { JSX, ReactNode } from "react";
 import Link from "next/link";
 import { ClinicalAssociations } from "@/components/veterinary/clinical-associations";
+import { canUse } from "@/lib/capabilities";
+import { ENCOUNTER_ACTIONS } from "../patient-capabilities";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@newsaas/ui/components/ui/button";
@@ -240,7 +242,10 @@ function EncounterEditor({
   autosaveDelayMs,
   onNotice,
   onPendingChange,
+  canClose = true,
 }: {
+  /** UX-037: hides the close command when the caller cannot close encounters. */
+  readonly canClose?: boolean;
   readonly onPendingChange: (pending: boolean) => void;
   readonly patientId: string;
   readonly encounter: ClinicalEncounter;
@@ -702,25 +707,27 @@ function EncounterEditor({
         >
           Guardar borrador
         </Button>
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => {
-            setCloseDialogError(null);
-            setCloseDialogOpen(true);
-          }}
-          disabled={
-            busy ||
-            recoveryReview ||
-            invalidContent ||
-            conflict ||
-            reloading ||
-            closeDenied ||
-            saveDenied
-          }
-        >
-          {closeMutation.isPending ? "Cerrando…" : "Cerrar ficha clínica"}
-        </Button>
+        {canClose && (
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              setCloseDialogError(null);
+              setCloseDialogOpen(true);
+            }}
+            disabled={
+              busy ||
+              recoveryReview ||
+              invalidContent ||
+              conflict ||
+              reloading ||
+              closeDenied ||
+              saveDenied
+            }
+          >
+            {closeMutation.isPending ? "Cerrando…" : "Cerrar ficha clínica"}
+          </Button>
+        )}
       </div>
       <ConfirmActionDialog
         open={exitHref !== null}
@@ -884,8 +891,11 @@ export function ClinicalWorkspace({
   initialEncounterId,
   autosaveDelayMs = CLINICAL_AUTOSAVE_DELAY_MS,
   permissions,
+  features,
   appointmentId,
 }: {
+  /** Clinic features when the shell knows them; `undefined` means unknown. */
+  readonly features?: readonly string[];
   readonly initialEncounterId?: string;
   readonly appointmentId?: string;
   readonly patientId: string;
@@ -894,6 +904,15 @@ export function ClinicalWorkspace({
   readonly permissions?: readonly string[];
 }): JSX.Element {
   const queryClient = useQueryClient();
+  // UX-037: the same rule as every staff screen, fed by the props the detail
+  // passes from the shell; unknown capabilities offer every command.
+  const capabilities = { permissions, features };
+  const canCreate = canUse(capabilities, ENCOUNTER_ACTIONS.create);
+  const canUpdate = canUse(capabilities, ENCOUNTER_ACTIONS.update);
+  const canClose = canUse(capabilities, ENCOUNTER_ACTIONS.close);
+  const canAmend = canUse(capabilities, ENCOUNTER_ACTIONS.amend);
+  const canLink = canUse(capabilities, ENCOUNTER_ACTIONS.link);
+  const canContinueToSale = canUse(capabilities, ENCOUNTER_ACTIONS.continueToSale);
   const listQueryKey = ["clinical", patientId, "encounters"] as const;
   const [recoveryId] = useState(() => readClinicalRecovery(queryClient, patientId)?.encounterId);
   const [selectedId, setSelectedId] = useState<string | null>(
@@ -990,13 +1009,15 @@ export function ClinicalWorkspace({
           )
         ) : (
           <>
-            <Button
-              type="button"
-              onClick={() => createMutation.mutate()}
-              disabled={createMutation.isPending || createDenied || editorPending}
-            >
-              {createMutation.isPending ? "Creando…" : "Nueva consulta"}
-            </Button>
+            {canCreate && (
+              <Button
+                type="button"
+                onClick={() => createMutation.mutate()}
+                disabled={createMutation.isPending || createDenied || editorPending}
+              >
+                {createMutation.isPending ? "Creando…" : "Nueva consulta"}
+              </Button>
+            )}
 
             {appointmentId && (
               <section
@@ -1089,10 +1110,20 @@ export function ClinicalWorkspace({
                 patientId={patientId}
                 encounterId={selected.id}
                 appointmentId={appointmentId}
+                canLink={canLink}
               />
             )}
-            {selected && selectedIsDraft && !recoveryReadPending && (
+            {selected && selectedIsDraft && !recoveryReadPending && !canUpdate && (
+              <section aria-label="Consulta en borrador" className="space-y-2">
+                <p className="text-sm text-muted-foreground">
+                  No tenés permiso para editar esta consulta. Se muestra en solo lectura.
+                </p>
+                <EncounterSummary content={selected} />
+              </section>
+            )}
+            {selected && selectedIsDraft && !recoveryReadPending && canUpdate && (
               <EncounterEditor
+                canClose={canClose}
                 key={selected.id}
                 patientId={patientId}
                 encounter={selected}
@@ -1115,26 +1146,30 @@ export function ClinicalWorkspace({
                   . Las correcciones se registran mediante una enmienda.
                 </p>
                 <EncounterSummary content={selected} />
-                <div className="rounded-lg border border-border bg-secondary/40 p-4 space-y-2">
-                  <h3 className="font-medium">Siguiente paso: venta</h3>
-                  <p className="text-sm text-muted-foreground">
-                    La consulta quedó cerrada. Podés ir al punto de venta para seleccionar los
-                    servicios o productos y revisar el cobro. Esto no completa el turno ni crea una
-                    venta automáticamente.
-                  </p>
-                  <Link
-                    className="inline-flex min-h-10 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    href={`/app/sales?patient=${patientId}&encounter=${selected.id}${originAppointmentId && /^[0-9a-f-]{36}$/i.test(originAppointmentId) ? `&appointment=${encodeURIComponent(originAppointmentId)}` : ""}`}
-                  >
-                    Ir al punto de venta
-                  </Link>
-                </div>
-                <AmendmentForm
-                  key={selected.id}
-                  patientId={patientId}
-                  encounter={selected}
-                  onNotice={setNotice}
-                />
+                {canContinueToSale && (
+                  <div className="rounded-lg border border-border bg-secondary/40 p-4 space-y-2">
+                    <h3 className="font-medium">Siguiente paso: venta</h3>
+                    <p className="text-sm text-muted-foreground">
+                      La consulta quedó cerrada. Podés ir al punto de venta para seleccionar los
+                      servicios o productos y revisar el cobro. Esto no completa el turno ni crea
+                      una venta automáticamente.
+                    </p>
+                    <Link
+                      className="inline-flex min-h-10 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      href={`/app/sales?patient=${patientId}&encounter=${selected.id}${originAppointmentId && /^[0-9a-f-]{36}$/i.test(originAppointmentId) ? `&appointment=${encodeURIComponent(originAppointmentId)}` : ""}`}
+                    >
+                      Ir al punto de venta
+                    </Link>
+                  </div>
+                )}
+                {canAmend && (
+                  <AmendmentForm
+                    key={selected.id}
+                    patientId={patientId}
+                    encounter={selected}
+                    onNotice={setNotice}
+                  />
+                )}
               </section>
             )}
           </>

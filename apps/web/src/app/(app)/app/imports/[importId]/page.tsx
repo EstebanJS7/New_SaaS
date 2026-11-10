@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { ImportsDetail } from "./imports-detail";
+import { ImportsDetailScreen } from "./imports-detail";
 
 /**
  * One staff import route ([[IMP-005]]).
@@ -14,8 +14,7 @@ import { ImportsDetail } from "./imports-detail";
  * the id remounts the screen and starts both at the truth of the import being
  * opened.
  *
- * No permission list is passed, for the reason `../page.tsx` records: the shell does
- * not hand the caller's claims to a surface yet, so `permissions` stays optional and
+ * The container reads the caller's permissions from the staff shell ([[UX-037]]);
  * the API remains authoritative.
  */
 export default async function ImportDetailPage({
@@ -24,5 +23,5 @@ export default async function ImportDetailPage({
   params: Promise<{ importId: string }>;
 }): Promise<JSX.Element> {
   const { importId } = await params;
-  return <ImportsDetail key={importId} importId={importId} />;
+  return <ImportsDetailScreen key={importId} importId={importId} />;
 }

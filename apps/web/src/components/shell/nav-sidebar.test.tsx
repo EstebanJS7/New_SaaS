@@ -60,14 +60,9 @@ describe("NavSidebar", () => {
     render(<NavSidebar entitlements={[]} />);
     for (const label of ["POS", "Caja", "Facturación", "Fiscal", "Configuración fiscal"])
       expect(screen.queryByRole("link", { name: label })).not.toBeInTheDocument();
-    for (const label of [
-      "Clientes",
-      "Pacientes",
-      "Catálogo",
-      "Compras",
-      "Informes",
-      "Importaciones",
-    ])
+    // «Pacientes» needs the veterinary feature (UX-037); permissions are unknown here.
+    expect(screen.queryByRole("link", { name: "Pacientes" })).not.toBeInTheDocument();
+    for (const label of ["Clientes", "Catálogo", "Compras", "Informes", "Importaciones"])
       expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
   });
 
@@ -125,13 +120,58 @@ describe("NavSidebar", () => {
     it("hides «General» when the caller holds none of the four settings permissions", () => {
       render(<NavSidebar permissions={["sales.read", "users.membership.manage"]} />);
       expect(screen.queryByRole("link", { name: "General" })).not.toBeInTheDocument();
-      // Ungated destinations stay: permissions only gate links that declare them.
-      expect(screen.getByRole("link", { name: "Sucursales" })).toBeInTheDocument();
+      // Other destinations follow their own keys (UX-037): «Personal» stays.
+      expect(screen.getByRole("link", { name: "Personal" })).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "Sucursales" })).not.toBeInTheDocument();
     });
 
     it.each(SETTINGS_PERMISSIONS)("shows «General» with only %s", (permission) => {
       render(<NavSidebar permissions={[permission]} />);
       expect(screen.getByRole("link", { name: "General" })).toBeInTheDocument();
+    });
+  });
+
+  describe("module entries follow the caller's read permission (UX-037)", () => {
+    const ALL_FEATURES = ["sales", "cash", "billing", "fiscal", "veterinary"];
+    it.each([
+      ["/app/agenda", ["scheduling.appointment.read"]],
+      ["/app/customers", ["customers.read"]],
+      ["/app/patients", ["patients.read"]],
+      ["/app/catalog", ["catalog.read"]],
+      ["/app/suppliers", ["suppliers.read"]],
+      ["/app/purchases", ["purchases.read"]],
+      ["/app/inventory", ["inventory.stock.read"]],
+      ["/app/sales", ["sales.read", "sales.create"]],
+      ["/app/cash", ["cash.read"]],
+      ["/app/billing", ["billing.read"]],
+      ["/app/fiscal", ["fiscal.read"]],
+      ["/app/reports", ["reports.read"]],
+      ["/app/notifications", ["notifications.delivery.read"]],
+      ["/app/imports", ["imports.read"]],
+      ["/app/settings/team", ["users.membership.manage"]],
+      ["/app/settings/branches", ["branches.manage"]],
+      ["/app/settings/fiscal", ["fiscal.profile.manage", "fiscal.signing_material.manage"]],
+    ])("%s is shown with any of %j and hidden without them", (href, keys) => {
+      for (const key of keys) {
+        const shown = visibleNavLinks(NAV_LINKS, ALL_FEATURES, [key]).map((link) => link.href);
+        expect(shown).toContain(href);
+      }
+      const hidden = visibleNavLinks(NAV_LINKS, ALL_FEATURES, ["unrelated.permission"]).map(
+        (link) => link.href
+      );
+      expect(hidden).not.toContain(href);
+    });
+
+    it("hides «Pacientes» without the veterinary feature", () => {
+      const shown = visibleNavLinks(NAV_LINKS, ["sales"], ["patients.read"]).map(
+        (link) => link.href
+      );
+      expect(shown).not.toContain("/app/patients");
+    });
+
+    it("keeps «Inicio» and «Marca» for any member: their reads need no permission", () => {
+      const shown = visibleNavLinks(NAV_LINKS, [], []).map((link) => link.href);
+      expect(shown).toEqual(expect.arrayContaining(["/app", "/app/settings/branding"]));
     });
   });
 

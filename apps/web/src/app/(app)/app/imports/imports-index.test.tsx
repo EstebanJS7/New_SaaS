@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ImportsIndex } from "./imports-index";
+import { CapabilitiesProvider, type Capabilities } from "@/lib/capabilities";
+import { ImportsIndex, ImportsIndexScreen } from "./imports-index";
 import type { ImportJob } from "./imports-api";
 
 /**
@@ -428,5 +429,41 @@ describe("ImportsIndex · the permission gate", () => {
     expect(screen.getByTestId("imports-upload")).toBeInTheDocument();
     // No request is issued that the API would refuse anyway.
     expect(requestedUrls(fetchMock)).not.toContain("/api/imports");
+  });
+});
+
+/** UX-037: the route container reads the shell's capabilities, unknown ⇒ shown. */
+describe("ImportsIndexScreen fed by the shell's capabilities (UX-037)", () => {
+  function renderScreen(capabilities?: Capabilities): void {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const tree = (
+      <QueryClientProvider client={client}>
+        <ImportsIndexScreen />
+      </QueryClientProvider>
+    );
+    render(
+      capabilities === undefined ? (
+        tree
+      ) : (
+        <CapabilitiesProvider value={capabilities}>{tree}</CapabilitiesProvider>
+      )
+    );
+  }
+
+  it("hides the upload and the history when the caller holds neither permission", () => {
+    const fetchMock = installFetch(() => jsonResponse([]));
+    renderScreen({ permissions: [] });
+    expect(screen.queryByTestId("imports-upload")).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["granted", { permissions: ["imports.read", "imports.run"] }],
+    ["unknown", undefined],
+  ])("offers the upload and reads the history when capabilities are %s", async (_l, caps) => {
+    const fetchMock = installFetch(() => jsonResponse([]));
+    renderScreen(caps);
+    expect(screen.getByTestId("imports-upload")).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
   });
 });

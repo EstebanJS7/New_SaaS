@@ -2,6 +2,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 import { beforeAll, afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { CapabilitiesProvider, type Capabilities } from "@/lib/capabilities";
 import type { CashMovement, CashRegister, CashSession } from "./cash-api";
 import { CashSurface } from "./cash-surface";
 
@@ -188,6 +189,82 @@ describe("CashSurface reads", () => {
     // The UX gate hides the surface; the backend remains the authority.
     expect(screen.queryByLabelText("Nombre de la caja")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Filtrar por estado")).not.toBeInTheDocument();
+  });
+});
+
+describe("CashSurface commands follow the caller's capabilities (UX-037)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function renderSurfaceAs(capabilities: Capabilities): void {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <CapabilitiesProvider value={capabilities}>
+        <QueryClientProvider client={client}>
+          <CashSurface />
+        </QueryClientProvider>
+      </CapabilitiesProvider>
+    );
+  }
+
+  const ALL = [
+    "cash.read",
+    "cash.register.create",
+    "cash.session.open",
+    "cash.session.close",
+    "cash.movement.create",
+  ];
+
+  it("keeps the ledger readable but offers no command to a read-only caller", async () => {
+    installFetch({
+      registers: () => jsonResponse([REGISTER]),
+      sessions: () => jsonResponse([OPEN_SESSION]),
+      movements: () => jsonResponse([MOVEMENT]),
+    });
+    renderSurfaceAs({ permissions: ["cash.read"], features: ["cash"] });
+    fireEvent.click(await screen.findByRole("button", { name: "Seleccionar sesión" }));
+    expect(await screen.findByTestId("close-not-permitted")).toHaveTextContent(
+      "No tenés permiso para cerrar sesiones de caja."
+    );
+    expect(screen.queryByLabelText("Nombre de la caja")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Abrir sesión" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Registrar movimiento" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Importe contado")).not.toBeInTheDocument();
+  });
+
+  it("shows the not-enabled state up front when the clinic lacks the cash feature", async () => {
+    installFetch({ registers: () => jsonResponse([REGISTER]) });
+    renderSurfaceAs({ permissions: ALL, features: [] });
+    expect(await screen.findByTestId("cash-entitlement-denied")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Nombre de la caja")).not.toBeInTheDocument();
+  });
+
+  it("offers every command when granted", async () => {
+    installFetch({
+      registers: () => jsonResponse([REGISTER]),
+      sessions: () => jsonResponse([OPEN_SESSION]),
+    });
+    renderSurfaceAs({ permissions: ALL, features: ["cash"] });
+    expect(await screen.findByLabelText("Nombre de la caja")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Abrir sesión" })).toBeInTheDocument();
+    await selectFirstSession();
+    expect(screen.getByRole("button", { name: "Registrar movimiento" })).toBeInTheDocument();
+    expect(screen.queryByTestId("close-not-permitted")).not.toBeInTheDocument();
+  });
+
+  it("offers every command while capabilities are unknown", async () => {
+    installFetch({
+      registers: () => jsonResponse([REGISTER]),
+      sessions: () => jsonResponse([OPEN_SESSION]),
+    });
+    renderSurface();
+    expect(await screen.findByLabelText("Nombre de la caja")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Abrir sesión" })).toBeInTheDocument();
+    await selectFirstSession();
+    expect(screen.getByRole("button", { name: "Registrar movimiento" })).toBeInTheDocument();
   });
 });
 

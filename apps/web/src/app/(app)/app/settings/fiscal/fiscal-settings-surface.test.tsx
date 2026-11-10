@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { EmitterProfile, Establishment, TimbradoRange } from "./fiscal-settings-api";
+import { CapabilitiesProvider, type Capabilities } from "@/lib/capabilities";
 import { FiscalSettingsSurface } from "./fiscal-settings-surface";
 
 const EST_ID = "11111111-1111-4111-8111-111111111111";
@@ -598,5 +599,75 @@ describe("FiscalSettingsSurface (FISC-018)", () => {
       ).toBeInTheDocument();
       expect(within(point).queryByLabelText("Timbrado activo")).toBeNull();
     });
+  });
+});
+
+/**
+ * UX-037: the emitter configuration needs `fiscal.profile.manage`, the secrets
+ * need `fiscal.signing_material.manage`, and everything needs the `fiscal`
+ * feature. Unknown capabilities show every section, as before.
+ */
+describe("FiscalSettingsSurface gated by the caller's capabilities (UX-037)", () => {
+  function renderWith(capabilities?: Capabilities): void {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const tree = (
+      <QueryClientProvider client={client}>
+        <FiscalSettingsSurface />
+      </QueryClientProvider>
+    );
+    render(
+      capabilities === undefined ? (
+        tree
+      ) : (
+        <CapabilitiesProvider value={capabilities}>{tree}</CapabilitiesProvider>
+      )
+    );
+  }
+  const BOTH = ["fiscal.profile.manage", "fiscal.signing_material.manage"];
+
+  it("shows the feature state and reads nothing when the clinic lacks fiscal", () => {
+    const calls = installFetch({});
+    renderWith({ permissions: BOTH, features: [] });
+    expect(
+      screen.getByRole("heading", { name: "La facturación electrónica no está habilitada" })
+    ).toBeInTheDocument();
+    expect(calls).toHaveLength(0);
+  });
+
+  it("shows the permission state and reads nothing without either permission", () => {
+    const calls = installFetch({});
+    renderWith({ permissions: [], features: ["fiscal"] });
+    expect(
+      screen.getByRole("heading", { name: "No tenés permiso para ver la configuración fiscal" })
+    ).toBeInTheDocument();
+    expect(calls).toHaveLength(0);
+  });
+
+  it("offers only the secrets to a caller who manages signing material alone", async () => {
+    const calls = installFetch({});
+    renderWith({ permissions: ["fiscal.signing_material.manage"], features: ["fiscal"] });
+    expect(await screen.findByRole("button", { name: "Cargar CSC" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Perfil del emisor" })).toBeNull();
+    expect(calls.some((call) => call.url === "/api/fiscal/emitter-profile")).toBe(false);
+  });
+
+  it("offers the emitter configuration but not the secrets with fiscal.profile.manage alone", async () => {
+    const calls = installFetch({});
+    renderWith({ permissions: ["fiscal.profile.manage"], features: ["fiscal"] });
+    expect(await screen.findByRole("region", { name: "Perfil del emisor" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cargar CSC" })).toBeNull();
+    expect(
+      calls.some((call) => ["/api/fiscal/csc", "/api/fiscal/signing-material"].includes(call.url))
+    ).toBe(false);
+  });
+
+  it.each([
+    ["granted", { permissions: BOTH, features: ["fiscal"] }],
+    ["unknown", undefined],
+  ])("shows every section when capabilities are %s", async (_label, capabilities) => {
+    installFetch({});
+    renderWith(capabilities);
+    expect(await screen.findByRole("region", { name: "Perfil del emisor" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Cargar CSC" })).toBeInTheDocument();
   });
 });

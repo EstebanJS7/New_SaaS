@@ -2,6 +2,8 @@
 
 import type { JSX } from "react";
 import Link from "next/link";
+import { useCan } from "@/lib/capabilities";
+import { CATALOG_ACTIONS } from "../catalog-capabilities";
 import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { ErrorState } from "@/components/feedback";
@@ -86,6 +88,7 @@ function unitOfMeasureLabel(
  * `403` when the staff role does not hold `catalog.read`.
  */
 export function CatalogItemDetail(): JSX.Element {
+  const canEdit = useCan(CATALOG_ACTIONS.update);
   const params = useParams<{ id: string }>();
   const itemId = params.id;
 
@@ -136,11 +139,13 @@ export function CatalogItemDetail(): JSX.Element {
                 {KIND_LABELS[item.kind]} · {item.taxRate.name}
               </p>
             </div>
-            <div className="flex shrink-0 gap-2">
-              <Button type="button" variant="outline" asChild>
-                <Link href={`/app/catalog/${item.id}/edit`}>Editar artículo</Link>
-              </Button>
-            </div>
+            {canEdit && (
+              <div className="flex shrink-0 gap-2">
+                <Button type="button" variant="outline" asChild>
+                  <Link href={`/app/catalog/${item.id}/edit`}>Editar artículo</Link>
+                </Button>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

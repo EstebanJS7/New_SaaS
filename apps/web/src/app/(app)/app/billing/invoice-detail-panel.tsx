@@ -50,6 +50,10 @@ interface InvoiceDetailPanelProps {
   readonly cancelError: Error | null;
   /** The last command's returned representation, present only after a success. */
   readonly outcome: InvoiceCommandOutcome | null;
+  /** [[UX-037]]: false when the caller is known to lack `billing.confirm`. */
+  readonly canConfirm?: boolean;
+  /** [[UX-037]]: false when the caller is known to lack `billing.cancel`. */
+  readonly canCancel?: boolean;
 }
 
 /** Renders one command outcome from the representation the API returned. */
@@ -113,6 +117,8 @@ export function InvoiceDetailPanel({
   isCancelling,
   cancelError,
   outcome,
+  canConfirm = true,
+  canCancel = true,
 }: InvoiceDetailPanelProps): JSX.Element {
   const [reason, setReason] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
@@ -276,7 +282,7 @@ export function InvoiceDetailPanel({
               calculados por el servidor y se muestran tal como llegaron.
             </p>
 
-            {invoice.status === "DRAFT" && (
+            {invoice.status === "DRAFT" && canConfirm && (
               <div className="space-y-3 border-t border-border pt-4">
                 <p className="text-sm text-muted-foreground">
                   Al confirmar se asigna el número de la factura. No tiene vuelta atrás: una factura
@@ -299,7 +305,7 @@ export function InvoiceDetailPanel({
                 Esta factura está anulada. La anulación es definitiva: no se puede reabrir ni
                 editar; para reemplazarla hay que crear un borrador nuevo desde otra venta.
               </p>
-            ) : (
+            ) : !canCancel ? null : (
               <form onSubmit={handleCancel} className="space-y-3 border-t border-border pt-4">
                 <div className="space-y-2">
                   <label htmlFor="billing-cancel-reason" className="text-sm font-medium">

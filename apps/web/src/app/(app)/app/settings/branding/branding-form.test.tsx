@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { activeProductPreset, resolveBrand } from "@newsaas/ui/branding";
+import { CapabilitiesProvider, type Capabilities } from "@/lib/capabilities";
 import { BrandingForm } from "./branding-form";
 
 /**
@@ -161,5 +162,58 @@ describe("BrandingForm · failures in Spanish", () => {
       )
     );
     expect(screen.getByRole("alert")).not.toHaveTextContent("Boom.");
+  });
+});
+
+/**
+ * UX-037: every branding write needs `branding.settings.manage` and the
+ * `custom_branding` feature; the brand stays readable without them.
+ */
+describe("BrandingForm gated by the caller's capabilities (UX-037)", () => {
+  function renderWith(capabilities?: Capabilities): void {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const tree = (
+      <QueryClientProvider client={client}>
+        <BrandingForm />
+      </QueryClientProvider>
+    );
+    render(
+      capabilities === undefined ? (
+        tree
+      ) : (
+        <CapabilitiesProvider value={capabilities}>{tree}</CapabilitiesProvider>
+      )
+    );
+  }
+
+  it.each([
+    ["the permission is missing", { permissions: [], features: ["custom_branding"] }],
+    ["the feature is missing", { permissions: ["branding.settings.manage"], features: [] }],
+  ] as const)("shows the brand read-only when %s", async (_label, capabilities) => {
+    global.fetch = vi.fn(() => Promise.resolve(jsonResponse({ source: "preset", brand: BRAND })));
+    renderWith(capabilities);
+    expect(
+      await screen.findByText("No tenés permiso para cambiar la marca. Se muestra en solo lectura.")
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Guardar" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Restablecer valores predeterminados" })
+    ).toBeNull();
+    expect(screen.queryByText("Recursos de identidad")).toBeNull();
+    expect(screen.getByLabelText("Color primario")).toBeDisabled();
+  });
+
+  it.each([
+    ["granted", { permissions: ["branding.settings.manage"], features: ["custom_branding"] }],
+    ["unknown", undefined],
+  ])("offers every write when capabilities are %s", async (_label, capabilities) => {
+    global.fetch = vi.fn(() => Promise.resolve(jsonResponse({ source: "preset", brand: BRAND })));
+    renderWith(capabilities);
+    expect(await screen.findByRole("button", { name: "Guardar" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Restablecer valores predeterminados" })
+    ).toBeInTheDocument();
+    expect(screen.getByText("Recursos de identidad")).toBeInTheDocument();
+    expect(screen.getByLabelText("Color primario")).toBeEnabled();
   });
 });

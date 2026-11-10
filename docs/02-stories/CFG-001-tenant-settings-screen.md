@@ -3,7 +3,7 @@ id: CFG-001
 type: story
 title: Tenant settings screen (sales, portal, notifications, scheduling)
 epic: EPIC-20
-status: in-progress
+status: done
 priority: high
 depends_on: []
 prd_sections: []
@@ -58,7 +58,7 @@ por profesional y sucursal.
 
 - [x] Cada sección muestra los valores actuales (o los defaults) y guarda solo
       lo que cambió.
-- [ ] Sin el permiso de una sección, la sección no se ofrece; sin el feature, la
+- [x] Sin el permiso de una sección, la sección no se ofrece; sin el feature, la
       sección no se ofrece.
 - [x] Horarios y bloqueos: alta, edición y baja; fin posterior al inicio; solo
       profesionales y sucursales de la clínica.
@@ -175,16 +175,36 @@ formulario se guarda por separado.
   verde; prettier en verde en los archivos tocados.
 - No hay en la lane una spec de reservas del portal ni de recordatorios; esos
   consumidores se cubren solo con la restauración exacta.
-- Criterio de permisos/feature: sigue sin marcar para la app en vivo (solo
-  probado en el componente; ver la limitación de abajo).
+- Criterio de permisos/feature, en vivo ([[UX-037]] carga los permisos y
+  features en la web):
+  - Sin ninguna clave: `apps/e2e/specs/capabilities.spec.ts` — una veterinaria
+    no ve «General» en el menú y la pantalla muestra «No tenés permiso para
+    cambiar la configuración general» sin ninguna sección; el dueño ve las
+    cuatro.
+  - Con una sola clave: `apps/e2e/specs/capabilities-settings.spec.ts` — el
+    dueño demo da al rol `RECEPTIONIST` su conjunto original más
+    `scheduling.settings.manage` (`PUT /rbac/roles/:code/permissions`, directo a
+    la API con la cookie de sesión). Una recepcionista invitada en la corrida
+    tiene esa clave y ninguna otra de configuración; ve «General» en el menú y
+    la pantalla ofrece solo «Agenda» (ni Ventas, ni Portal, ni Notificaciones);
+    guarda la política de superposición y la API la devuelve cambiada. En
+    `finally`: el rol vuelve a su conjunto original y `GET /rbac/roles` completo
+    es igual a la foto previa (en la base no queda ninguna fila
+    `tenant_role_permission_override`); `scheduling` se reescribe entero y se
+    compara; la recepcionista queda suspendida.
+  - Sin feature: la misma spec crea en cada corrida una segunda clínica con el
+    comando de alta (`pnpm --filter @newsaas/database db:provision-tenant`, slug
+    y email por corrida) con todos los features salvo `sales` y `portal`; la
+    dueña activa su cuenta con el enlace que imprime el comando, en la página
+    real. Sus capacidades tienen las cuatro claves y `sales.read`/`sales.create`
+    pero no esos features; «General» ofrece solo Notificaciones y Agenda y el
+    menú no tiene «POS».
+  - Corridas: la spec sola dos veces (2/2 y 2/2 en verde); la lane completa una
+    vez: **38/38 en verde**.
 
 ## Limitación conocida: permisos y features en la web
 
-La web todavía no conoce los permisos de quien entra ni los features de la
-clínica: el proxy de memberships rechaza `me/permissions` por diseño y ninguna
-ruta del staff devuelve los features. Por eso, igual que Importaciones e
-Informes, la pantalla y el menú aceptan esas listas pero hoy no las reciben: se
-ven las cuatro secciones y la API rechaza el guardado sin permiso o sin feature,
-con su frase en español. El criterio «sin el permiso o el feature la sección no
-se ofrece» está probado en los componentes, no en la app en vivo; queda abierto
-hasta que la web cargue los permisos (decisión aparte).
+Resuelta por [[UX-037]]: el layout del staff carga los permisos y features de
+quien entra, «General» y el menú los reciben, y los tres casos (sin clave, con
+una sola clave, sin feature) están probados en el navegador (ver
+«Verificación»).

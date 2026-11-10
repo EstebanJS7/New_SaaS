@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { CapabilitiesProvider, type Capabilities } from "@/lib/capabilities";
 import {
   INVOICE_CUSTOMER_REQUIRED_MESSAGE,
   INVOICE_NOT_CANCELLABLE_MESSAGE,
@@ -241,6 +242,54 @@ describe("BillingSurface reads", () => {
     );
     expect(screen.queryByTestId("invoice-line")).not.toBeInTheDocument();
     expect(screen.queryByTestId("invoice-total")).not.toBeInTheDocument();
+  });
+});
+
+describe("BillingSurface commands follow the caller's capabilities (UX-037)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function renderSurfaceAs(capabilities: Capabilities): void {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <CapabilitiesProvider value={capabilities}>
+        <QueryClientProvider client={client}>
+          <BillingSurface />
+        </QueryClientProvider>
+      </CapabilitiesProvider>
+    );
+  }
+
+  const ALL = ["billing.read", "billing.create", "billing.confirm", "billing.cancel"];
+
+  it("keeps invoices readable but offers no command to a read-only caller", async () => {
+    installFetch({ list: () => jsonResponse([DRAFT_INVOICE]) });
+    renderSurfaceAs({ permissions: ["billing.read"], features: ["billing"] });
+    await selectFirstInvoice();
+    expect(screen.queryByRole("button", { name: "Confirmar factura" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Anular factura" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Identificador de la venta completada")).not.toBeInTheDocument();
+  });
+
+  it("shows the not-enabled state up front when the clinic lacks the billing feature", async () => {
+    installFetch({ list: () => jsonResponse([DRAFT_INVOICE]) });
+    renderSurfaceAs({ permissions: ALL, features: [] });
+    expect(await screen.findByTestId("billing-entitlement-denied")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["granted", { permissions: ALL, features: ["billing"] }],
+    ["unknown", {}],
+  ])("offers every command when capabilities are %s", async (_label, capabilities) => {
+    installFetch({ list: () => jsonResponse([DRAFT_INVOICE]) });
+    renderSurfaceAs(capabilities);
+    await selectFirstInvoice();
+    expect(screen.getByRole("button", { name: "Confirmar factura" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Anular factura" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Identificador de la venta completada")).toBeInTheDocument();
   });
 });
 

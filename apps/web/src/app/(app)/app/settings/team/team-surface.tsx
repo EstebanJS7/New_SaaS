@@ -35,6 +35,7 @@ import {
   listBranches,
   type Branch,
 } from "../branches/branches-api";
+import { canUse, useCapabilities, type CapabilityRequirement } from "@/lib/capabilities";
 
 /**
  * The clinic's staff ([[ONB-001]]): who works here, in what role, and whether they have
@@ -51,19 +52,40 @@ type PendingAction =
   | { readonly kind: "reactivate"; readonly member: StaffMember }
   | { readonly kind: "role"; readonly member: StaffMember; readonly roleCode: string };
 
+/**
+ * What the team screen needs ([[UX-037]]): every route in
+ * `apps/api/src/tenancy/membership.controller.ts` requires
+ * `users.membership.manage`; the branch list and a person's branch assignment
+ * (`apps/api/src/branches/branches.controller.ts`) require `branches.manage`.
+ */
+export const TEAM_ACTIONS = {
+  manage: { permission: "users.membership.manage" },
+  manageBranches: { permission: "branches.manage" },
+} as const satisfies Record<string, CapabilityRequirement>;
+
 export function TeamSurface(): JSX.Element {
   const queryClient = useQueryClient();
+  // UX-037: a caller known to lack the permission sees the no-access state unread.
+  const capabilities = useCapabilities();
+  const canManage = canUse(capabilities, TEAM_ACTIONS.manage);
+  const canManageBranches = canUse(capabilities, TEAM_ACTIONS.manageBranches);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [action, setAction] = useState<PendingAction | null>(null);
 
-  const directory = useQuery({ queryKey: TEAM_QUERY_KEY, queryFn: listStaff, retry: false });
+  const directory = useQuery({
+    queryKey: TEAM_QUERY_KEY,
+    queryFn: listStaff,
+    retry: false,
+    enabled: canManage,
+  });
   // MB-001: the branch picker. Without `branches.manage` (or with one branch)
   // the screen simply shows no branch controls; the API decides either way.
   const branchList = useQuery({
     queryKey: TEAM_BRANCHES_QUERY_KEY,
     queryFn: listBranches,
     retry: false,
+    enabled: canManage && canManageBranches,
   });
   const branches = branchList.data ?? [];
   const showBranches = branches.length > 1;
@@ -105,7 +127,7 @@ export function TeamSurface(): JSX.Element {
     setAction(next);
   }
 
-  const permissionDenied = isTeamPermissionDenied(directory.error);
+  const permissionDenied = !canManage || isTeamPermissionDenied(directory.error);
 
   return (
     <div className="space-y-6" data-testid="team-surface">

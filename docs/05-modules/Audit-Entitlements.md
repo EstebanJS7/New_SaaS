@@ -2,7 +2,7 @@
 type: module
 module: audit-entitlements
 status: implemented
-updated: 2026-08-24
+updated: 2026-11-10
 ---
 
 # Module — Audit & Entitlements
@@ -16,7 +16,8 @@ by future gating decisions.
 
 - Policy evaluation (EPIC-02 consumes `has()` for permission gating).
 - Plan/subscription billing semantics.
-- Any HTTP surface (no controller ships in this epic).
+- Any HTTP surface of its own (the caller's granted features are exposed only
+  through `GET /memberships/me/capabilities`, see [[RBAC]] / [[UX-037]]).
 
 ## Public Capabilities
 
@@ -25,6 +26,7 @@ Application-level contracts only:
 ```text
 AuditWriter.append(entry)              // the ONLY sanctioned audit_log writer
 EntitlementsService.has(tenantId, featureCode): Promise<boolean>
+EntitlementsService.listGranted(tenantId): Promise<string[]>   // UX-037, sorted
 ```
 
 ## Main Entities
@@ -58,7 +60,10 @@ TenantEntitlement (UNIQUE(tenant_id, feature_code_id) — the only grant)
 - Override precedence per schema: explicit grants decide. The starter plan maps
   every feature code via `plan_capability` yet grants NOTHING — a tenant without
   `tenant_entitlement` rows has zero capabilities.
-- No UI, no caching this epic.
+- `listGranted()` lists the same explicit grants (sorted feature codes) with the
+  same rule; malformed tenant id throws VALIDATION_FAILED. Callers pass the
+  tenant from the server-side request context only.
+- No caching.
 
 ## Seeds
 

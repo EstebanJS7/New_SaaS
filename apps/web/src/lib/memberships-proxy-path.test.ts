@@ -7,6 +7,8 @@ describe("resolveMembershipsPath (ONB-001) — an allowlist, not a catch-all", (
   it.each([
     ["GET", "/api/memberships/directory", "/memberships/directory"],
     ["GET", "/api/memberships/me/branches", "/memberships/me/branches"],
+    // UX-037: the caller's own permissions and its clinic's features.
+    ["GET", "/api/memberships/me/capabilities", "/memberships/me/capabilities"],
     ["POST", "/api/memberships/invitations", "/memberships/invitations"],
     ["POST", `/api/memberships/${ID}/activation`, `/memberships/${ID}/activation`],
     ["POST", `/api/memberships/${ID}/suspend`, `/memberships/${ID}/suspend`],
@@ -21,6 +23,10 @@ describe("resolveMembershipsPath (ONB-001) — an allowlist, not a catch-all", (
     ["GET", "/api/memberships"],
     ["GET", `/api/memberships/${ID}`],
     ["GET", "/api/memberships/me/permissions"],
+    ["GET", "/api/memberships/me/capabilities/extra"],
+    ["GET", "/api/memberships/me"],
+    ["POST", "/api/memberships/me/capabilities"],
+    ["PUT", "/api/memberships/me/capabilities"],
     ["POST", "/api/memberships/directory"],
     ["POST", `/api/memberships/not-a-uuid/suspend`],
     ["POST", `/api/memberships/${ID}/delete`],

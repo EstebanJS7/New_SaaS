@@ -2,6 +2,8 @@
 
 import type { JSX } from "react";
 import Link from "next/link";
+import { useCan } from "@/lib/capabilities";
+import { SUPPLIER_ACTIONS } from "../supplier-capabilities";
 import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@newsaas/ui/components/ui/button";
@@ -56,6 +58,7 @@ function DetailRow({
  * `403` when the staff role does not hold `suppliers.read`.
  */
 export function SupplierDetail(): JSX.Element {
+  const canEdit = useCan(SUPPLIER_ACTIONS.update);
   const params = useParams<{ id: string }>();
   const supplierId = params.id;
 
@@ -96,11 +99,13 @@ export function SupplierDetail(): JSX.Element {
                 {supplier.isActive ? "Proveedor activo" : "Proveedor inactivo"}
               </p>
             </div>
-            <div className="flex shrink-0 gap-2">
-              <Button type="button" variant="outline" asChild>
-                <Link href={`/app/suppliers/${supplier.id}/edit`}>Editar</Link>
-              </Button>
-            </div>
+            {canEdit && (
+              <div className="flex shrink-0 gap-2">
+                <Button type="button" variant="outline" asChild>
+                  <Link href={`/app/suppliers/${supplier.id}/edit`}>Editar</Link>
+                </Button>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

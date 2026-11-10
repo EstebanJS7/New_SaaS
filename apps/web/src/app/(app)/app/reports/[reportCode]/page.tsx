@@ -1,7 +1,7 @@
 import type { JSX } from "react";
 import { notFound } from "next/navigation";
 import { isReportCode } from "@/app/api/reports/report-codes";
-import { ReportWorkspace } from "../report-workspace";
+import { ReportWorkspaceScreen } from "../report-workspace";
 
 /**
  * One report, by code ([[REP-008]]).
@@ -10,7 +10,8 @@ import { ReportWorkspace } from "../report-workspace";
  * enforces, so `/app/reports/profit-and-loss` is the app's 404 rather than a view
  * that loads nothing and cannot say why. The view itself is a client surface
  * because the period controls, the states and the export link all follow from a
- * live read.
+ * live read. Its container reads the caller's permissions from the staff shell
+ * ([[UX-037]]).
  */
 export default async function ReportViewPage({
   params,
@@ -21,5 +22,5 @@ export default async function ReportViewPage({
   if (!isReportCode(reportCode)) {
     notFound();
   }
-  return <ReportWorkspace reportCode={reportCode} />;
+  return <ReportWorkspaceScreen reportCode={reportCode} />;
 }

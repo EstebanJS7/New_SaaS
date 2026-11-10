@@ -3,6 +3,7 @@
 import type { JSX } from "react";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useCapabilities, type CapabilityRequirement } from "@/lib/capabilities";
 import { Button } from "@newsaas/ui/components/ui/button";
 import { reportAcceptsBranch, type ReportCode } from "@/app/api/reports/report-codes";
 import { reportDefinition } from "./report-catalog";
@@ -28,6 +29,16 @@ import {
 
 /** The permission that reveals the export action. UX only: the API re-checks it. */
 export const REPORTS_EXPORT_PERMISSION = "reports.export";
+
+/**
+ * What each reports action needs ([[UX-037]]), mirroring
+ * `apps/api/src/reporting/reporting.controller.ts` (every GET: `reports.read`)
+ * and `apps/api/src/reporting/export/report-export.controller.ts`.
+ */
+export const REPORT_ACTIONS = {
+  read: { permission: "reports.read" },
+  export: { permission: REPORTS_EXPORT_PERMISSION },
+} as const satisfies Record<string, CapabilityRequirement>;
 
 /** The value the period select uses for "neither preset": a custom range. */
 const CUSTOM_RANGE_OPTION = "custom";
@@ -93,11 +104,13 @@ export function ReportWorkspace({ reportCode, permissions }: ReportWorkspaceProp
   // take one and only when the clinic has more than one branch. «All branches»
   // is the default, so nobody's numbers change unless they ask.
   const acceptsBranch = reportAcceptsBranch(reportCode);
+  // UX-037: a caller known to lack `reports.read` gets the refusal, unread.
+  const canRead = permissionGranted(permissions, REPORT_ACTIONS.read.permission);
   const branchesQuery = useQuery({
     queryKey: ["reports", "branches"],
     queryFn: fetchReportBranches,
     retry: false,
-    enabled: acceptsBranch,
+    enabled: canRead && acceptsBranch,
     staleTime: 60_000,
   });
   const branchOptions = branchesQuery.data ?? [];
@@ -110,6 +123,7 @@ export function ReportWorkspace({ reportCode, permissions }: ReportWorkspaceProp
     queryKey: ["reports", reportCode, reportQueryString(reportCode, selection, branchId)],
     queryFn: () => fetchReport(reportCode, selection, branchId),
     retry: false,
+    enabled: canRead,
   });
 
   function applyPreset(next: ReportPeriodPreset): void {
@@ -310,14 +324,18 @@ export function ReportWorkspace({ reportCode, permissions }: ReportWorkspaceProp
         </p>
       )}
 
-      {readError !== null && accessDenied && (
+      {((readError !== null && accessDenied) || !canRead) && (
         <div
           role="alert"
           data-testid="report-permission-denied"
           className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
         >
           <p className="font-medium">Los informes no están disponibles para esta cuenta</p>
-          <p>{userFacingReportError(readError)}</p>
+          <p>
+            {readError !== null
+              ? userFacingReportError(readError)
+              : "No tenés permiso para ver los informes."}
+          </p>
         </div>
       )}
 
@@ -344,4 +362,13 @@ export function ReportWorkspace({ reportCode, permissions }: ReportWorkspaceProp
         ))}
     </div>
   );
+}
+
+/**
+ * Route container ([[UX-037]]): feeds the workspace the caller's permissions the
+ * staff shell loaded. Unknown stays `undefined` (export shown, API refuses).
+ */
+export function ReportWorkspaceScreen({ reportCode }: { reportCode: ReportCode }): JSX.Element {
+  const { permissions } = useCapabilities();
+  return <ReportWorkspace reportCode={reportCode} permissions={permissions} />;
 }

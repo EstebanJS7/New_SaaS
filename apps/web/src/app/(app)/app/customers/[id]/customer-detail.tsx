@@ -32,6 +32,8 @@ import {
   type CustomerAddress,
   type CustomerContact,
 } from "../customers-api";
+import { canUse, useCapabilities } from "@/lib/capabilities";
+import { CUSTOMER_ACTIONS, CustomersNoAccess } from "../customer-capabilities";
 
 function Section({
   title,
@@ -327,9 +329,11 @@ function Deactivate({
 function AddressSection({
   customerId,
   onDirty,
+  canManage = true,
 }: {
   customerId: string;
   onDirty: (value: boolean) => void;
+  canManage?: boolean;
 }) {
   const query = useQuery({
     queryKey: ["customers", customerId, "addresses"],
@@ -341,7 +345,7 @@ function AddressSection({
       title="Direcciones"
       description="Direcciones de facturación, envío y otras referencias del cliente."
     >
-      {!query.error && <AddAddressForm customerId={customerId} onDirty={onDirty} />}
+      {!query.error && canManage && <AddAddressForm customerId={customerId} onDirty={onDirty} />}
       {query.isLoading ? (
         <ListSkeleton label="Cargando direcciones…" rows={1} />
       ) : query.error ? (
@@ -372,12 +376,14 @@ function AddressSection({
               </p>
               {!address.isActive && <p>Inactiva</p>}
             </div>
-            <Deactivate
-              kind="dirección"
-              id={address.id}
-              customerId={customerId}
-              inactive={!address.isActive}
-            />
+            {canManage && (
+              <Deactivate
+                kind="dirección"
+                id={address.id}
+                customerId={customerId}
+                inactive={!address.isActive}
+              />
+            )}
           </div>
         ))
       )}
@@ -387,9 +393,11 @@ function AddressSection({
 function ContactSection({
   customerId,
   onDirty,
+  canManage = true,
 }: {
   customerId: string;
   onDirty: (value: boolean) => void;
+  canManage?: boolean;
 }) {
   const query = useQuery({
     queryKey: ["customers", customerId, "contacts"],
@@ -398,7 +406,7 @@ function ContactSection({
   });
   return (
     <Section title="Contactos" description="Correos y teléfonos registrados para este cliente.">
-      {!query.error && <AddContactForm customerId={customerId} onDirty={onDirty} />}
+      {!query.error && canManage && <AddContactForm customerId={customerId} onDirty={onDirty} />}
       {query.isLoading ? (
         <ListSkeleton label="Cargando contactos…" rows={1} />
       ) : query.error ? (
@@ -425,12 +433,14 @@ function ContactSection({
               <p>{contact.value}</p>
               {!contact.isActive && <p>Inactivo</p>}
             </div>
-            <Deactivate
-              kind="contacto"
-              id={contact.id}
-              customerId={customerId}
-              inactive={!contact.isActive}
-            />
+            {canManage && (
+              <Deactivate
+                kind="contacto"
+                id={contact.id}
+                customerId={customerId}
+                inactive={!contact.isActive}
+              />
+            )}
           </div>
         ))
       )}
@@ -443,11 +453,16 @@ export function CustomerDetail() {
   const [addressDirty, setAddressDirty] = useState(false),
     [contactDirty, setContactDirty] = useState(false);
   const exit = useCustomerExit(addressDirty || contactDirty);
+  // UX-037: the shell's capabilities decide which actions are offered.
+  const capabilities = useCapabilities();
+  const canRead = canUse(capabilities, CUSTOMER_ACTIONS.read);
   const query = useQuery({
     queryKey: ["customers", id],
     queryFn: () => getCustomer(id),
     retry: false,
+    enabled: canRead,
   });
+  if (!canRead) return <CustomersNoAccess />;
   if (query.isLoading) return <ListSkeleton label="Cargando cliente…" />;
   if (query.error)
     return <ErrorState message={customerError(query.error)} onRetry={() => void query.refetch()} />;
@@ -480,20 +495,32 @@ export function CustomerDetail() {
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => exit.leave(() => router.push(`/app/customers/${id}/edit`))}
-              >
-                Editar cliente
-              </Button>
-              <Deactivate kind="cliente" id={id} customerId={id} inactive={!customer.isActive} />
+              {canUse(capabilities, CUSTOMER_ACTIONS.update) && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => exit.leave(() => router.push(`/app/customers/${id}/edit`))}
+                >
+                  Editar cliente
+                </Button>
+              )}
+              {canUse(capabilities, CUSTOMER_ACTIONS.deactivate) && (
+                <Deactivate kind="cliente" id={id} customerId={id} inactive={!customer.isActive} />
+              )}
             </div>
           </div>
         </CardContent>
       </Card>
-      <AddressSection customerId={id} onDirty={setAddressDirty} />
-      <ContactSection customerId={id} onDirty={setContactDirty} />
+      <AddressSection
+        customerId={id}
+        onDirty={setAddressDirty}
+        canManage={canUse(capabilities, CUSTOMER_ACTIONS.manageAddresses)}
+      />
+      <ContactSection
+        customerId={id}
+        onDirty={setContactDirty}
+        canManage={canUse(capabilities, CUSTOMER_ACTIONS.manageContacts)}
+      />
       <p className="text-xs text-muted-foreground">
         Los formularios sin guardar se perderán al recargar, salir o volver a ingresar. No se
         guardan automáticamente.

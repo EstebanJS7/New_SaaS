@@ -21,6 +21,7 @@ import {
   type BranchInput,
   type FiscalEstablishmentOption,
 } from "./branches-api";
+import { useCan, type CapabilityRequirement } from "@/lib/capabilities";
 
 /**
  * MB-001 (DEC-094): the clinic's branches — add, edit, deactivate and
@@ -30,6 +31,15 @@ import {
  */
 
 export const BRANCHES_QUERY_KEY = ["branches", "list"] as const;
+
+/**
+ * What the branches screen needs ([[UX-037]]): every route it uses in
+ * `apps/api/src/branches/branches.controller.ts` (list, create, edit,
+ * deactivate, reactivate) requires `branches.manage`.
+ */
+export const BRANCH_ACTIONS = {
+  manage: { permission: "branches.manage" },
+} as const satisfies Record<string, CapabilityRequirement>;
 
 type Editing = { readonly kind: "new" } | { readonly kind: "edit"; readonly branch: Branch };
 interface Toggle {
@@ -42,11 +52,14 @@ export function BranchesSurface(): JSX.Element {
   const [editing, setEditing] = useState<Editing | null>(null);
   const [toggle, setToggle] = useState<Toggle | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // UX-037: a caller known to lack the permission sees the no-access state unread.
+  const canManage = useCan(BRANCH_ACTIONS.manage);
 
   const settings = useQuery({
     queryKey: [...BRANCHES_QUERY_KEY, "settings"],
     queryFn: loadBranchSettings,
     retry: false,
+    enabled: canManage,
   });
   const branches = {
     ...settings,
@@ -71,7 +84,7 @@ export function BranchesSurface(): JSX.Element {
     },
   });
 
-  const permissionDenied = isBranchesPermissionDenied(branches.error);
+  const permissionDenied = !canManage || isBranchesPermissionDenied(branches.error);
   const activeCount = branches.data?.filter((branch) => branch.isActive).length ?? 0;
 
   return (
