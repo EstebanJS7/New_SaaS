@@ -239,7 +239,12 @@ describe("AppShellLayout", () => {
         Promise.resolve({
           ok: true,
           status: 200,
-          json: () => Promise.resolve({ permissions: ["sales.read"], features: ["cash"] }),
+          json: () =>
+            Promise.resolve({
+              // UX-037: each module entry needs its own read permission.
+              permissions: ["sales.read", "cash.read", "customers.read"],
+              features: ["cash"],
+            }),
         })
       );
 

@@ -23,12 +23,12 @@ Runners: Vitest (api, web), Playwright lane.
 
 ## Tasks
 
-| ID  | Specs | Route                                              | Status  | Commit / evidence |
-| --- | ----- | -------------------------------------------------- | ------- | ----------------- |
-| T1  | S1    | delegated (context backstop, with T2)              | done    | see L3            |
-| T2  | S2,S4 | delegated (context backstop, with T1)              | done    | see L3            |
-| T3  | S3    | delegated (parallel: T3a commerce, T3b care/admin) | done    | see L4            |
-| T4  | S1-S5 | tbd                                                | pending | browser + docs    |
+| ID  | Specs | Route                                              | Status | Commit / evidence |
+| --- | ----- | -------------------------------------------------- | ------ | ----------------- |
+| T1  | S1    | delegated (context backstop, with T2)              | done   | see L3            |
+| T2  | S2,S4 | delegated (context backstop, with T1)              | done   | see L3            |
+| T3  | S3    | delegated (parallel: T3a commerce, T3b care/admin) | done   | see L4            |
+| T4  | S1-S5 | delegated (context backstop)                       | done   | see L5-L6         |
 
 Risk: item 2 (exposes the caller's own permissions; guards), item 3 (shared
 memberships proxy allowlist, nav). Independent verifier at feature end.
@@ -67,3 +67,17 @@ memberships proxy allowlist, nav). Independent verifier at feature end.
   197 files / 2594 tests, typecheck, lint, prettier pass. Known gaps: direct URL
   to /new and /edit pages in commerce only hidden at entry (API 403 handled by
   forms); dashboard period selector stays visible.
+- L5 (2026-11-10): T4 (ef6d391): capabilities.spec.ts with an invited
+  VETERINARIAN (support/team.ts) vs the owner; member suspended at the end.
+  Parent then gated every nav entry by its read/manage permission (cc6ddf5;
+  Pacientes also needs veterinary; Inicio/Marca always), RED 18 → GREEN, three
+  tests pinning the old nav updated; spec 1/1, full lane 36/36.
+- L6 (2026-11-10): Independent verifier: S1–S4 PASS (40+ mappings matched
+  controllers/services; no cross-tenant/member leak; fail-open holds), S5
+  partial (CFG-001 live box only half provable without partial-settings seed
+  data or a tenant lacking features). Blocker B1: layout.test.tsx fixture still
+  expected «Caja» with only sales.read after cc6ddf5 (parent ran shell tests,
+  not the layout test). Fixed by adding cash.read/customers.read to the fixture;
+  layout 16/16; full web 197 files / 2613 tests green. Advisories: counter needs
+  create+complete; booking requests need read+manage (API needs manage only);
+  dashboard POS shortcut on sales.create alone.
