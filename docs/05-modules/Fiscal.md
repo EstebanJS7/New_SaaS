@@ -516,7 +516,9 @@ and another instant. So the worker's assembly renders it **in the same step**,
 from the same request, with `gCamFuFD.dCarQR` holding the QR's final content,
 and the submission stage stores it in private object storage under the
 `fiscal-kude_` prefix, next to the signed XML. `kude_storage_key` is written in
-the same `SIGNING`-guarded update as `xml_storage_key` and `cdc`.
+the same `SIGNING`-guarded update as `xml_storage_key` and `cdc`, always — null
+included. A document re-claimed from `ERROR` is rebuilt with a new CDC, so a
+KuDE stored for the previous CDC must never stay on the row.
 
 The KuDE never blocks a submission:
 

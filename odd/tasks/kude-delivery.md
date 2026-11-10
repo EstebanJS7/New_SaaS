@@ -89,3 +89,14 @@ email channel contract, T3). Independent verifier at feature end.
   kude-delivery + branches 2/2. QR verified structurally only (no decoder
   available) — that box stays unticked. Docs: Fiscal.md, runbook rows 11-12
   runnable/not executed, TD-022 progress note, story verification.
+- L8 (2026-11-10): Independent verifier: S2-S5 PASS, S1 FAIL on blocker B1 —
+  handler spread `kudeStorageKey` only when stored, so a document re-claimed
+  from ERROR (new CDC) whose rebuilt KuDE was not stored kept the OLD KuDE
+  (wrong CDC) for staff and email. Fix: always write kudeStorageKey (null
+  included). RED: 3 handler tests failed (two pinned assertions inverted + new
+  ERROR re-claim regression); GREEN handler 49/49, worker 320/320,
+  typecheck/lint/prettier pass. Advisories (not fixed, user decision): KuDE
+  stored/served for ERROR/REJECTED documents too; no CSP/nosniff header on the
+  inline HTML; silent failures (known); orphan object on stolen claim
+  (pre-existing pattern). Suites run by verifier: fiscal 829, notifications 95,
+  worker 319, api fiscal+probe 253, web fiscal 72.

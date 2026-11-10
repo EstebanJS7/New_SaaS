@@ -387,7 +387,10 @@ export class FiscalSubmissionHandler {
       where: { id: document.id, tenantId: document.tenantId, status: "SIGNING" },
       data: {
         xmlStorageKey: storageKey,
-        ...(kudeStorageKey === null ? {} : { kudeStorageKey }),
+        // Always written, null included: a document re-claimed from ERROR is
+        // rebuilt with a new CDC, so a KuDE stored for the previous one must
+        // not stay attached to the row.
+        kudeStorageKey,
         cdc: built.document.cdc,
       },
     });

@@ -681,7 +681,8 @@ describe("FiscalSubmissionHandler", () => {
     await handler.handle(job);
 
     expect(storagePut).toHaveBeenCalledTimes(1);
-    expect(updates[1]?.data).not.toHaveProperty("kudeStorageKey");
+    // Written explicitly: a rebuild must clear a KuDE stored for an earlier CDC.
+    expect(updates[1]?.data).toHaveProperty("kudeStorageKey", null);
     expect(issue).toHaveBeenCalledTimes(1);
   });
 
@@ -697,7 +698,7 @@ describe("FiscalSubmissionHandler", () => {
     await handler.handle(job);
 
     expect(storagePut).toHaveBeenCalledTimes(2);
-    expect(updates[1]?.data).not.toHaveProperty("kudeStorageKey");
+    expect(updates[1]?.data).toHaveProperty("kudeStorageKey", null);
     expect(updates[1]?.data).toMatchObject({ cdc: BUILT_DOCUMENT.cdc });
     expect(issue).toHaveBeenCalledTimes(1);
     expect(issue.mock.calls[0]?.[0]?.document).toEqual(BUILT_DOCUMENT);
@@ -705,6 +706,22 @@ describe("FiscalSubmissionHandler", () => {
     const written = JSON.stringify(updates.map((update) => update.data));
     expect(written).not.toContain("driver refused");
     expect(written).not.toContain(KUDE_HTML);
+  });
+
+  it("clears an earlier KuDE when a document re-claimed from ERROR is rebuilt without one (FISC-021)", async () => {
+    // ERROR is claimable again and the rebuild signs a NEW CDC: the KuDE stored
+    // for the previous CDC must not stay attached to the row.
+    const { handler, updates, issue } = setup("ERROR", "APPROVED", null, undefined, undefined, {
+      requiresSignedDocument: true,
+      build: { ...BUILT_WITH_KUDE },
+      kudePutFails: true,
+    });
+    await handler.handle(job);
+
+    const signingUpdate = updates.find((update) => "xmlStorageKey" in update.data);
+    expect(signingUpdate?.where).toMatchObject({ status: "SIGNING" });
+    expect(signingUpdate?.data).toMatchObject({ cdc: BUILT_DOCUMENT.cdc, kudeStorageKey: null });
+    expect(issue).toHaveBeenCalledTimes(1);
   });
 
   it("fails closed when the document seam is unavailable", async () => {
