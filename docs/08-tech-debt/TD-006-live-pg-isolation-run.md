@@ -14,7 +14,7 @@ related_stories:
   - PAT-002
   - VET-004
 created: 2026-08-24
-updated: 2026-09-13
+updated: 2026-11-10
 ---
 
 # TD-006 — Run tenant-isolation suites against live PostgreSQL
@@ -207,6 +207,37 @@ evidence; CI has not yet observed the branch because H1 does not push.
 - The EPIC-06 portion of this record is addressed; the broader Batch 5 RBAC
   concurrency and audit-rollback evidence gates below remain open.
 
+**2026-11-10 TD-006 closure extension (Batch 5 + RBAC transactional gates):**
+
+- `apps/api/test/live-pg-isolation.e2e-spec.ts` gained a "TD-006 Batch 5
+  cross-tenant isolation against real PostgreSQL" block (14 tests) porting every
+  case of `apps/api/test/cross-tenant-isolation.e2e-spec.ts` onto two dedicated
+  tenants (A: one ACTIVE + one SUSPENDED member on a non-seeded role granting
+  only `users.membership.manage`; B: one ACTIVE OWNER; plus a profile with no
+  membership), with live-only physical fences added (foreign row and audit
+  untouched, no tenant/role created, branch count and membership status
+  unchanged). Only the in-memory structured-log fence is not ported: it inspects
+  captured logs, not a query path. The in-memory suite is unchanged.
+- A "TD-006 RBAC effective-holder concurrency and audit rollback against real
+  PostgreSQL" block (4 tests) proves the two fake-unprovable properties on
+  tenants with exactly two effective holders (OWNER + ADMIN):
+  - **concurrency, both orders** — a barrier transaction takes the same
+    tenant-wide `FOR UPDATE`; the first racer is proven parked on the lowest-id
+    membership row, then the second; on release, override-first yields `200` +
+    `409 CONFLICT` (demotion refused) and assignment-first yields `201` +
+    `409 CONFLICT` (override refused); exactly one audit row and exactly one
+    effective holder remain, and the survivor still administers over HTTP;
+  - **stranding rollback** — after ADMIN is stripped, demoting the OWNER and
+    stripping OWNER both return `409`, and memberships, override rows and
+    `rbac.*` audit rows are deep-equal before/after;
+  - **post-write rollback** — a test-only `BEFORE INSERT` trigger on `audit_log`
+    raises only when the transaction's own business write is already visible;
+    both flows return `500` and leave neither the write nor an audit row, while
+    the same commands commit write + audit once the trigger is dropped.
+- **Local evidence** (disposable PG16 cluster): focused blocks 18/18; full
+  `pnpm --filter @newsaas/api test:live-pg` 301/301 passed. CI has not yet
+  observed the branch.
+
 ## Proposed Resolution
 
 For the remaining Batch 5 cross-tenant isolation suites, extend the
@@ -254,7 +285,25 @@ and mandatory before any production deployment.
       migrations job ran `pnpm --filter @newsaas/api test:live-pg` green with
       the 24-test suite (24/24 passed).
 - [ ] CI runs the broader cross-tenant isolation suite against live PG16 and
-      stays green.
-- [ ] A deliberately broken predicate fails that CI job (one-off proof).
-- [ ] RBAC concurrency and audit-rollback evidence gates proven live.
+      stays green. **Verified locally only (2026-11-10):** the Batch 5 cases run
+      inside the same `pnpm --filter @newsaas/api test:live-pg` command (301/301
+      passed); awaiting a CI observation on a pushed commit.
+- [x] A deliberately broken predicate fails that CI job (one-off proof).
+      **Verified (2026-11-10, locally, the same `test:live-pg` command the CI
+      migrations job runs, PostgreSQL 16 on 127.0.0.1:55432):** with
+      `apps/api/src/tenancy/tenant-membership.repository.ts:146`
+      (`listForActiveTenant`) changed from
+      `where: { tenantId: this.requestContext.requireTenantId() }` to
+      `where: {}` (never committed), the TD-006 Batch 5 block failed 2/14:
+      «scopes listing IMPLICITLY…»
+      (`expected … to have a length of 2 but got     5`) and «leaks ZERO
+      tenant-B identifiers…» (tenant B's membership id in tenant A's
+      `GET /memberships` body). With the predicate restored the block passed
+      18/18 again. No throwaway branch was pushed to observe the failure in
+      GitHub Actions itself.
+- [x] RBAC concurrency and audit-rollback evidence gates proven live. **Verified
+      locally (2026-11-10):** deterministic-barrier races in both orders (one
+      success + one `409 CONFLICT`, one holder left), the composed stranding
+      repro and a forced post-write audit failure each leave neither the
+      business write nor its audit row (live-PG suite 301/301 passed).
 - [ ] This record closed with a link to the enabling commit.
