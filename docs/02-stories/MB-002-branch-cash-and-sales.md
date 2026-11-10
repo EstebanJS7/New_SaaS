@@ -8,9 +8,9 @@ priority: high
 depends_on: [MB-001]
 prd_sections: ["§19", "§20"]
 permissions: []
-branch:
+branch: docs/mb002-verification-reconcile
 created: 2026-11-03
-updated: 2026-11-03
+updated: 2026-11-09
 ---
 
 # MB-002 — Cajas, ventas y punto de expedición por sucursal
@@ -86,11 +86,33 @@ expedición. Segunda entrega de [[DEC-094]] (§9); en este punto reemplaza a
   - El relleno usa la sucursal más antigua, y crea «Casa central» si faltaba.
   - Rechazos: punto incompleto, caja con sucursal de otra clínica y venta sin
     sucursal.
-- **Pendiente:**
-  - `live-pg-isolation.e2e-spec.ts` se adaptó (sucursal y asignación del
-    propietario, `branch_id` en los inserts directos) pero no se pudo correr
-    acá.
-  - Prueba en navegador.
+- Live PostgreSQL: `live-pg-isolation.e2e-spec.ts`, adaptado (sucursal y
+  asignación del propietario, `branch_id` en los inserts directos), corre en el
+  job «Database migrations» del CI (`pnpm test:live-pg`); verde en `main`
+  `3191dc0` (ejecución 42719450399) y en el PR #160 (ejecución 42738153889).
+- Navegador: `apps/e2e/specs/branches.spec.ts` (MB-001, PR #160), ver abajo.
+
+## Prueba en navegador
+
+`apps/e2e/specs/branches.spec.ts` cubre la parte de caja y ventas de esta story
+con una segunda sucursal donde trabaja el propietario:
+
+- Caja nueva: el formulario pide «Sucursal» porque se trabaja en dos; la caja
+  queda en la sucursal elegida y la lista muestra su sucursal.
+- Abrir sesión en esa caja.
+- Mostrador: pide «Sucursal de la venta»; la venta completada queda con esa
+  `branchId` y su efectivo entra en la sesión de la caja de esa sucursal, no en
+  la abierta en otra.
+- Venta y caja en una sucursal activa donde no se trabaja: `400` con «No
+  trabajás en esa sucursal o está desactivada: elegí otra o pedí que te
+  asignen.» y nada creado.
+
+No se prueba en el navegador el punto de expedición por sucursal (formulario de
+edición en Configuración › Sucursales, «Factura con 002-001») ni la numeración
+fiscal desde ese punto. Lo cubren las pruebas web de `branches-surface` y las de
+la API; `fiscal-settings.spec.ts` y `electronic-credit-note.spec.ts` usan el
+punto del perfil fiscal, no el de la sucursal. Queda como cobertura de navegador
+pendiente, no como criterio incumplido.
 
 ## Cambio de la prueba en memoria
 
