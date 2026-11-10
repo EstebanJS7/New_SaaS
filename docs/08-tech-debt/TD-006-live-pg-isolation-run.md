@@ -288,7 +288,19 @@ and mandatory before any production deployment.
       stays green. **Verified locally only (2026-11-10):** the Batch 5 cases run
       inside the same `pnpm --filter @newsaas/api test:live-pg` command (301/301
       passed); awaiting a CI observation on a pushed commit.
-- [ ] A deliberately broken predicate fails that CI job (one-off proof).
+- [x] A deliberately broken predicate fails that CI job (one-off proof).
+      **Verified (2026-11-10, locally, the same `test:live-pg` command the CI
+      migrations job runs, PostgreSQL 16 on 127.0.0.1:55432):** with
+      `apps/api/src/tenancy/tenant-membership.repository.ts:146`
+      (`listForActiveTenant`) changed from
+      `where: { tenantId: this.requestContext.requireTenantId() }` to
+      `where: {}` (never committed), the TD-006 Batch 5 block failed 2/14:
+      «scopes listing IMPLICITLY…»
+      (`expected … to have a length of 2 but got     5`) and «leaks ZERO
+      tenant-B identifiers…» (tenant B's membership id in tenant A's
+      `GET /memberships` body). With the predicate restored the block passed
+      18/18 again. No throwaway branch was pushed to observe the failure in
+      GitHub Actions itself.
 - [x] RBAC concurrency and audit-rollback evidence gates proven live. **Verified
       locally (2026-11-10):** deterministic-barrier races in both orders (one
       success + one `409 CONFLICT`, one holder left), the composed stranding
