@@ -10,7 +10,7 @@ prd_sections: []
 permissions: [fiscal.signing_material.manage]
 branch: docs/dec-095-fiscal-issuance-point
 created: 2026-11-09
-updated: 2026-11-09
+updated: 2026-11-10
 ---
 
 # FISC-019 — Certificado de firma y CSC desde «Configuración fiscal»
@@ -188,6 +188,64 @@ relaja el acceso a los secretos.
 
 Risk: none (documentación del comportamiento existente; sin cambio de
 ejecución).
+
+## Límite del cuerpo JSON en el proxy web
+
+2026-11-10: el proxy de `/api/fiscal` acepta cuerpos JSON de hasta **65536
+bytes** (64 KiB) y, por encima, responde `413` estable antes de llamar a la API:
+
+```json
+{
+  "error": {
+    "code": "PAYLOAD_TOO_LARGE",
+    "message": "Fiscal request body exceeds 65536 bytes."
+  }
+}
+```
+
+La respuesta no reenvía el cuerpo ni credenciales y el cuerpo rechazado no se
+registra.
+
+| Regla                     | Comportamiento                                                        |
+| ------------------------- | --------------------------------------------------------------------- |
+| Lectura                   | incremental desde `request.body`; se acumulan como máximo 65536 bytes |
+| Tamaño medido             | bytes UTF-8 realmente leídos, no el `content-length` declarado        |
+| `content-length`          | solo pista temprana: declarado > 65536 → 413 sin leer el cuerpo       |
+| Exceso                    | se cancela el lector y se responde 413 sin ninguna petición upstream  |
+| Límite exacto             | aceptado si el JSON es válido, incluso con relleno de espacios        |
+| Multipart del certificado | sin cambios: sigue en streaming y sin tope JSON                       |
+| GET                       | sin cambios: no lee ni reenvía cuerpo                                 |
+
+El cuerpo dentro del límite se decodifica UTF-8 no fatal, igual que antes con
+`request.text()`, así que el texto que llega a la API es el mismo. Si el stream
+del cliente no puede cancelarse, la respuesta sigue siendo el mismo 413.
+
+### Evidencia RED/GREEN (2026-11-10)
+
+- RED: los tests finales contra el módulo de `HEAD` en scratch aislado dieron
+  `8 failed | 27 passed (35)`. Fallan solo los ocho casos nuevos del bloque
+  «bounded JSON bodies (S6)»: límite exacto con relleno, cuerpo troceado
+  ensamblado, exceso de un byte con cancelación, `content-length` declarado
+  excesivo sin lectura, longitud declarada que miente, conteo UTF-8, no eco del
+  cuerpo/secreto y stream que no se deja cancelar. Los 27 casos previos pasan
+  sin cambios.
+- GREEN: `pnpm exec vitest run 'src/app/api/fiscal/[[...path]]/route.test.ts'`
+  35/35.
+- Diferencial (módulo base de `HEAD` contra una copia idéntica del árbol de
+  trabajo, en scratch fuera del repositorio): 33/33. Los 32 casos ordinarios
+  —documentos, ajustes, secretos, CSC, clasificaciones, GET, multipart del
+  certificado, rutas inválidas, sesión ausente/portal, cuerpo rechazado y error
+  upstream— coinciden en estado, cuerpo, cabeceras y reenvío. La única
+  diferencia es la solicitada: un cuerpo JSON de 65537 bytes pasa de `200` con
+  reenvío a `413` sin reenvío.
+- `pnpm --filter @newsaas/web typecheck`, Prettier, ESLint enfocado y
+  `git diff --check`: limpios.
+
+Archivos: `apps/web/src/app/api/fiscal/[[...path]]/route.ts` y
+`apps/web/src/app/api/fiscal/[[...path]]/route.test.ts`.
+
+Risk: item 2 (tope de tamaño de la petición); verificación independiente al
+cierre de la entrega.
 
 ## Decisiones / ADRs
 
