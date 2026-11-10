@@ -62,13 +62,7 @@ describe("NavSidebar", () => {
       expect(screen.queryByRole("link", { name: label })).not.toBeInTheDocument();
     // «Pacientes» needs the veterinary feature (UX-037); permissions are unknown here.
     expect(screen.queryByRole("link", { name: "Pacientes" })).not.toBeInTheDocument();
-    for (const label of [
-      "Clientes",
-      "Catálogo",
-      "Compras",
-      "Informes",
-      "Importaciones",
-    ])
+    for (const label of ["Clientes", "Catálogo", "Compras", "Informes", "Importaciones"])
       expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
   });
 
