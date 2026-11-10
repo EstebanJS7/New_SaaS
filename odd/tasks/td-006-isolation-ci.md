@@ -26,10 +26,10 @@ rebuild `@newsaas/*` dist first).
 
 ## Tasks
 
-| ID  | Specs | Route                        | Status      | Commit / evidence    |
-| --- | ----- | ---------------------------- | ----------- | -------------------- |
-| T1  | S1,S2 | delegated (context backstop) | done        | baff5fa              |
-| T2  | S3,S4 | inline                       | in-progress | S3 done; S4 after CI |
+| ID  | Specs | Route                        | Status | Commit / evidence       |
+| --- | ----- | ---------------------------- | ------ | ----------------------- |
+| T1  | S1,S2 | delegated (context backstop) | done   | baff5fa                 |
+| T2  | S3,S4 | inline                       | done   | 60ba4de; closed 1ef4754 |
 
 Risk: item 4 (concurrency proof) and item 2 (tenant isolation evidence);
 test-only, no product change expected. If a real defect appears, it is fixed
@@ -55,3 +55,8 @@ test-first and reported.
   2; tenant B id leaked); restored (src clean) → TD-006 block 18/18. Remaining:
   CI green on a pushed commit (S1 box) and closing TD-006 with the enabling
   commit (S4) — need push/PR/merge approval.
+- L5 (2026-11-10): User "ok hazlo": pushed, PR #167. CI run 42841999230:
+  migrations job live-pg 301/301 green; web unit job failed once on the
+  pre-existing weight-form.test.tsx timing flake (PR changes no web file; 8/8
+  locally); failed job rerun → 4/4 green. Merged as 1ef4754. TD-006 status
+  resolved with links to the CI run and merge commit.
