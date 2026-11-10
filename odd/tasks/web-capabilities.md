@@ -81,3 +81,14 @@ memberships proxy allowlist, nav). Independent verifier at feature end.
   layout 16/16; full web 197 files / 2613 tests green. Advisories: counter needs
   create+complete; booking requests need read+manage (API needs manage only);
   dashboard POS shortcut on sales.create alone.
+- L7 (2026-11-10): User: "cerremos lo que queda abierto". Delegated T5: Part A —
+  POS shortcuts (dashboard, encounter) reuse SALE_ACTIONS.sell (RED 2 → GREEN);
+  booking requests keep the agenda read gate because approving needs GET
+  /appointments/options (read), pinned by two tests. Part B —
+  capabilities-settings.spec.ts: RECEPTIONIST given exactly
+  scheduling.settings.manage via PUT /rbac/roles/:code/permissions, General
+  shows only Agenda and saves; roles snapshot restored exactly (override table
+  empty after); second clinic provisioned with db:provision-tenant without
+  sales/portal, owner activated via printed link: General shows only
+  Notificaciones and Agenda, no POS. Spec alone 2/2, full lane 38/38. Part C —
+  CFG-001 and UX-037 all boxes ticked, status done. Parent rerun 150/150.

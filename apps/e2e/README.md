@@ -40,6 +40,7 @@ A failing run writes a trace; `pnpm --filter @newsaas/e2e e2e:report` opens it.
 | `branch-reports`                                          | PostgreSQL, Redis, the built API and web                                             |
 | `tenant-settings`                                         | PostgreSQL, Redis, the built API and web                                             |
 | `capabilities`                                            | the same as `staff-team`, plus the API on `E2E_API_URL` (default `localhost:3001`)   |
+| `capabilities-settings`                                   | the same as `capabilities`, plus `pnpm` and `DATABASE_URL` for `db:provision-tenant` |
 
 The recovery spec starts the worker itself and listens on port 2526 as a minimal
 SMTP server, because there is no other place the link exists: the channel fake
@@ -103,8 +104,35 @@ must equal the API's own `GET /memberships/me/permissions`, read straight from
 the API with only the session cookie because the BFF refuses that route. The
 owner then sees the same entries, actions and all four settings sections. A
 `finally` suspends the veterinarian, so no extra active member is left behind.
-The demo tenant holds every feature code, so only the permission half of the
-gating shows in the lane.
+The demo tenant holds every feature code, so this spec shows only the permission
+half of the gating; `capabilities-settings` shows the rest.
+
+`capabilities-settings` (CFG-001 on top of UX-037) shows the two partial cases
+the seed cannot:
+
+- **One settings key.** No seeded role holds only some of the four settings
+  keys, so the demo owner gives `RECEPTIONIST` its current set plus
+  `scheduling.settings.manage` through the API's audited override command
+  (`PUT /rbac/roles/:code/permissions`, `users.membership.manage`), called
+  straight on the API with only the session cookie because the BFF does not
+  proxy `/rbac` (`support/rbac.ts`). A receptionist invited that run sees
+  «General» with only «Agenda» and saves its conflict policy. **The restore is
+  exact:** before the override the whole `GET /rbac/roles` answer is
+  snapshotted; a `finally` writes the role's original set back and asserts the
+  whole answer equals the snapshot. The command stores the set as a diff against
+  the seeded baseline, so writing the original set back recreates the original
+  override rows (none for an untouched role). Another `finally` writes the
+  `scheduling` settings back whole and suspends the receptionist.
+- **No `sales`/`portal`.** The demo tenant has every feature, so a SECOND clinic
+  is provisioned each run with the operator command
+  (`pnpm --filter @newsaas/database db:provision-tenant`, `support/tenant.ts`)
+  against the lane's `DATABASE_URL`, with a per-run slug (`e2e-sin-ventas-…`)
+  and owner email and every feature except `sales` and `portal`. The owner sets
+  a password with the one-time activation link the command prints for the
+  operator (`--web-url` is the lane's web), on the real activation page. Its
+  «General» offers Notificaciones and Agenda, never Ventas or Portal, and the
+  menu has no «POS». Those clinics stay in the lane database as history; each
+  run creates a new one and none is shared with another spec.
 
 `tenant-settings` (CFG-001) edits the demo tenant's `sales`, `portal`,
 `notifications` and `scheduling` settings through «Configuración › General»,

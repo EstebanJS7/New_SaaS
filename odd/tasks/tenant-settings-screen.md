@@ -76,3 +76,7 @@ the shared settings proxy (pin existing behavior).
   1/1. No product defect. Permission/feature box stays unticked (live app has no
   caller claims). Risk: none (requested proxy widening; existing proxy and nav
   behavior pinned by tests).
+- L7 (2026-11-10): Live permission/feature gating closed by UX-037
+  (feat/web-capabilities): capabilities loaded in the shell, browser proof for a
+  no-settings role, a single-settings-key role and a clinic without
+  sales/portal. CFG-001 status done (recorded on the UX-037 branch).

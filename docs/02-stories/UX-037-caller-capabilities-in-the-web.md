@@ -3,7 +3,7 @@ id: UX-037
 type: story
 title: The staff web knows the caller's permissions and the clinic's features
 epic: EPIC-20
-status: in-progress
+status: done
 priority: high
 depends_on: [CFG-001]
 prd_sections: []
@@ -46,7 +46,7 @@ reciben, así que muestran acciones que la API después rechaza.
 - [x] El menú y las pantallas ocultan lo que la persona no puede usar.
 - [x] Con la carga fallida, la web muestra todo y la API rechaza como hoy.
 - [x] Prueba en navegador con un rol limitado.
-- [ ] CFG-001: «sin el permiso o el feature, la sección no se ofrece» en vivo.
+- [x] CFG-001: «sin el permiso o el feature, la sección no se ofrece» en vivo.
 
 ## Implementación
 
@@ -126,13 +126,35 @@ reciben, así que muestran acciones que la API después rechaza.
   gating). `@newsaas/e2e` typecheck y lint en verde; prettier en verde en los
   archivos tocados.
 
+- **T5 — CFG-001 en vivo** (`apps/e2e/specs/capabilities-settings.spec.ts`,
+  `support/rbac.ts`, `support/tenant.ts`): un rol `RECEPTIONIST` con su conjunto
+  original más solo `scheduling.settings.manage` ve «General» con únicamente
+  «Agenda» y la guarda; el rol se restaura exacto (`GET /rbac/roles` completo
+  igual a la foto previa). Una segunda clínica creada con `db:provision-tenant`
+  sin `sales` ni `portal`: «General» ofrece Notificaciones y Agenda, no Ventas
+  ni Portal, y el menú no tiene «POS». Detalle y corridas en [[CFG-001]]
+  «Verificación»: la spec sola 2/2 dos veces; lane completa **38/38 en verde**.
+
+### Requisitos alineados con la API (advertencias del verificador, 2026-11-10)
+
+- **Atajo al POS del panel** y **«Ir al punto de venta»** de una consulta
+  cerrada: pedían solo `sales.create`; el mostrador necesita `sales.create` +
+  `sales.complete` + feature `sales`. Ahora ambos usan el mismo requisito del
+  mostrador (`SALE_ACTIONS.sell` de `sales/sale-capabilities.ts`, importado, sin
+  copia), así que aparecen exactamente cuando el mostrador puede vender. RED 2
+  (`dashboard.test.tsx`, `clinical-workspace.test.tsx`: `sales.create` sin
+  `sales.complete`) → GREEN.
+- **Solicitudes de turno:** el requisito propio ya era el de la API
+  (`scheduling.appointment.manage`); la lectura que además se pide no es parte
+  de ese requisito sino de la página: sin `scheduling.appointment.read` toda la
+  agenda es el estado «No tenés permiso para ver la agenda», las solicitudes se
+  muestran en el calendario y aprobar una elige sucursal y profesional de
+  `GET /appointments/options` (lectura). Se mantiene así, documentado en el
+  código, y dos pruebas lo fijan: con solo `manage` no se pide nada a la API;
+  con `read` + `manage` (sin `transition`) se listan.
+
 ## Limitaciones
 
-- El tenant demo tiene todos los features, así que la lane solo muestra la mitad
-  de permisos; la mitad de features está probada en los componentes.
-- Ningún rol sembrado tiene solo algunas claves de configuración (solo
-  `OWNER`/`ADMIN` tienen las cuatro), así que «sin `sales.settings.manage` no se
-  ofrece Ventas pero sí otra sección» no se puede mostrar en vivo.
 - Conocidas de T3: entrar por URL directa a `/new` y `/edit` en comercio solo se
   oculta en la entrada (la API responde `403` y el formulario lo explica); el
   selector de período del dashboard sigue visible.
