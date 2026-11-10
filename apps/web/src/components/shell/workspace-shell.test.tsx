@@ -75,7 +75,10 @@ describe("workspace shell capabilities (UX-037)", () => {
     const sidebar = screen.getByTestId("nav-sidebar");
     expect(within(sidebar).queryByRole("link", { name: "POS" })).not.toBeInTheDocument();
     expect(within(sidebar).queryByRole("link", { name: "General" })).not.toBeInTheDocument();
-    expect(within(sidebar).getByRole("link", { name: "Clientes" })).toBeInTheDocument();
+    // A known empty permission set hides every module that needs one (UX-037).
+    expect(within(sidebar).queryByRole("link", { name: "Clientes" })).not.toBeInTheDocument();
+    expect(within(sidebar).getByRole("link", { name: "Inicio" })).toBeInTheDocument();
+    expect(within(sidebar).getByRole("link", { name: "Marca" })).toBeInTheDocument();
   });
 
   it("shows every link without a provider (capabilities unknown)", () => {
