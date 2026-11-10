@@ -35,6 +35,7 @@ const DOC: FiscalDocument = {
   createdAt: "2026-10-01T00:00:00.000Z",
   updatedAt: "2026-10-01T00:00:00.000Z",
   cancelledAt: null,
+  hasKude: false,
 };
 const FISCAL_DOCUMENT_FIELDS = [
   "id",
@@ -48,6 +49,7 @@ const FISCAL_DOCUMENT_FIELDS = [
   "createdAt",
   "updatedAt",
   "cancelledAt",
+  "hasKude",
 ] as const satisfies readonly (keyof FiscalDocument)[];
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {

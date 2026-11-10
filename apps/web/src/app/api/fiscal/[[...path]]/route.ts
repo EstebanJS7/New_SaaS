@@ -11,6 +11,7 @@ type FiscalPathShape =
   | "fiscalItem"
   | "fiscalIssue"
   | "fiscalCancel"
+  | "fiscalKude"
   | "profileRead"
   | "profileSave"
   | "issuancePointDeclare"
@@ -83,6 +84,13 @@ const FISCAL_ROUTES: readonly FiscalRoute[] = [
     shape: "fiscalItem",
     upstreamPrefix: "",
   },
+  // FISC-021 / DEC-098: the stored KuDE as printable HTML, opened in a browser tab.
+  {
+    method: "GET",
+    segments: ["fiscal-documents", ID_SEGMENT, "kude"],
+    shape: "fiscalKude",
+    upstreamPrefix: "",
+  },
   {
     method: "POST",
     segments: ["fiscal-documents", ID_SEGMENT, "cancel"],
@@ -144,6 +152,15 @@ const FISCAL_ROUTES: readonly FiscalRoute[] = [
     upstreamPrefix: "/fiscal",
   },
 ];
+/**
+ * Response headers relayed beyond content-type and x-request-id, per shape. Only
+ * the KuDE (FISC-021) carries any: its inline disposition names the file the
+ * browser saves as PDF, and `no-store` keeps the receiver's data (CONFIDENTIAL)
+ * out of caches. Every other route keeps dropping both.
+ */
+const FISCAL_RELAYED_RESPONSE_HEADERS: Partial<Record<FiscalPathShape, readonly string[]>> = {
+  fiscalKude: ["content-disposition", "cache-control"],
+};
 const FISCAL_QUERY_KEYS: Partial<Record<FiscalPathShape, readonly string[]>> = {
   fiscalList: ["status"],
 };
@@ -439,6 +456,10 @@ async function proxyFiscalRequest(
   };
   const responseRequestId = response.headers.get("x-request-id");
   if (responseRequestId) responseHeaders["x-request-id"] = responseRequestId;
+  for (const name of FISCAL_RELAYED_RESPONSE_HEADERS[resolution.shape] ?? []) {
+    const value = response.headers.get(name);
+    if (value) responseHeaders[name] = value;
+  }
   return new NextResponse(response.body, { status: response.status, headers: responseHeaders });
 }
 export async function GET(request: NextRequest): Promise<NextResponse> {

@@ -88,6 +88,7 @@ identity comes from authenticated server context, not caller input.
 | `POST /fiscal-documents`                   | `fiscal.invoice.issue`           | Create and queue a document from one confirmed in-tenant invoice (`201`); body carries the invoice reference only. A second live document is `409`.                                                                                                                                                                                                                    |
 | `GET /fiscal-documents`                    | `fiscal.read`                    | List tenant documents, ordered `createdAt desc`; optional `status` filter with no implicit default. There is no pagination.                                                                                                                                                                                                                                            |
 | `GET /fiscal-documents/:id`                | `fiscal.read`                    | Read one document; foreign and unknown IDs share a byte-equivalent `404`.                                                                                                                                                                                                                                                                                              |
+| `GET /fiscal-documents/:id/kude`           | `fiscal.read`                    | The stored KuDE as inline `text/html` (`no-store`), see «The KuDE». Unknown and foreign IDs share the same `404`; a document without a stored KuDE is its own `404`; an unreadable object is a `500` without the driver's message.                                                                                                                                     |
 | `POST /fiscal-documents/:id/cancel`        | `fiscal.invoice.issue`           | Cancel (`200`) with a required reason of at most 500 characters. An already cancelled document replays as `200`; a `SENDING` document is `409`. No idempotency key.                                                                                                                                                                                                    |
 | `POST /fiscal/signing-material`            | `fiscal.signing_material.manage` | Load a signing material (`201`). `multipart/form-data` with `file` (a PKCS#12, at most 64 KiB), `password` and `environment` (`TEST`/`PRODUCTION`); part order is not assumed. A material already `ACTIVE` for that environment is retired and its stored key destroyed in the same transaction. Every rejection carries its own message.                              |
 | `GET /fiscal/signing-material`             | `fiscal.signing_material.manage` | List the tenant's materials, newest first. Metadata only: the `credentialRef`, the certificate PEM and the private key are never returned.                                                                                                                                                                                                                             |
@@ -530,9 +531,19 @@ The KuDE never blocks a submission:
 
 A failed put records nothing: the driver's message cannot be proven free of the
 stored bytes, and the KuDE carries the receptor's data (CONFIDENTIAL). A
-`SENDING` recovery resends the stored XML and does not touch the KuDE. Serving
-it to staff and attaching it to the approval email are the next parts of
-[[FISC-021]].
+`SENDING` recovery resends the stored XML and does not touch the KuDE. Attaching
+it to the approval email is the next part of [[FISC-021]].
+
+### Served to staff
+
+`GET /fiscal-documents/:id/kude` (`fiscal.read`) reads the stored bytes by
+`kude_storage_key` through the storage port and answers them as inline HTML, so
+the browser prints it or saves it as PDF. The document lookup is the detail
+read's: tenant from the request context, unknown and foreign IDs the same `404`.
+The document representation carries `hasKude` (true iff `kude_storage_key` is
+set); the key itself is CONFIDENTIAL and never leaves the API, and the KuDE's
+content and key are never logged or echoed in an error. Credit notes are
+`fiscal_document` rows too, so the same route and button serve their KuDE.
 
 ## The signing-material boundary
 
@@ -601,13 +612,19 @@ issue panel and the cancel form. It covers loading, empty, error, success,
 permission-denied and entitlement-denied states. The navigation entry declares
 `requiredFeature: "fiscal"`.
 
+The detail offers «Ver KuDE» when `hasKude` is true (invoices and credit notes
+alike): a link that opens `/api/fiscal/fiscal-documents/<id>/kude` in a new tab
+(`noopener noreferrer`); without a stored KuDE it is not offered ([[FISC-021]]).
+
 All browser API calls go through the `/api/fiscal` proxy, which allowlists
-exactly the four operations and forwards staff cookie context only. It does not
-accept portal context or synthesize tenant authority, and the backend remains
-the authority for permission and entitlement checks. The client pins its own
-runtime status mirror because the API's status union is server-side only, and it
-renders an API `409` verbatim rather than replacing it with an invented local
-rule.
+exactly the documents' operations (list, detail, issue, cancel and the KuDE
+read) and forwards staff cookie context only. Responses keep only their content
+type and request id; the KuDE read alone also relays `Content-Disposition` and
+`Cache-Control`. It does not accept portal context or synthesize tenant
+authority, and the backend remains the authority for permission and entitlement
+checks. The client pins its own runtime status mirror because the API's status
+union is server-side only, and it renders an API `409` verbatim rather than
+replacing it with an invented local rule.
 
 `/app/settings/fiscal` («Configuración › Configuración fiscal», [[FISC-018]])
 configures the emitter profile, the establishments (add, edit), the timbrado
@@ -631,10 +648,10 @@ void and the signing material stay API-only (`404` at the proxy).
   habilitación, a certificate from a real PSC and the production CSC issued at
   the emitter's `ingreso`. **Nothing in this module has been tested against the
   DNIT.**
-- **The KuDE's delivery surface — in progress.** The worker now generates and
-  stores the KuDE at signing ([[FISC-021]]); the staff route and the approval
-  email attachment are later tasks of that story ([[DEC-098]]). The ticket
-  format and a server-side PDF stay out of scope.
+- **The KuDE's delivery surface — in progress.** The worker generates and stores
+  the KuDE at signing and staff open it from the detail ([[FISC-021]]); the
+  approval email attachment is a later task of that story ([[DEC-098]]). The
+  ticket format and a server-side PDF stay out of scope.
 - **The secret-store capability itself** — a reusable platform boundary in
   `packages/secret-store` ([[ADR-005]]); Fiscal consumes the port and never
   reaches a concrete driver.
@@ -691,6 +708,12 @@ the profile and establishment audit rows keep field names and the code only. The
 profile and establishment bodies — and every object nested in them
 (`responsibleIssuer`, `activities[]`, `district`) — are `strict()`: an unknown
 key is a `400 VALIDATION_FAILED`, not a silently stripped field.
+
+The stored KuDE ([[FISC-021]], [[DEC-098]]) carries the receiver's name, RUC/CI,
+address and contact: **CONFIDENTIAL**, like `kude_storage_key`. The KuDE read
+returns it only behind `fiscal.read`, uncached (`no-store`), never logs its
+content or key, and the document representation exposes only the boolean
+`hasKude` (INTERNAL).
 
 ## Settings
 

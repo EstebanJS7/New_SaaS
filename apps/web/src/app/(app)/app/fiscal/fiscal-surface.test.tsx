@@ -15,6 +15,7 @@ const DOCUMENT: FiscalDocument = {
   createdAt: "2026-10-01T08:00:00.000Z",
   updatedAt: "2026-10-01T08:00:00.000Z",
   cancelledAt: null,
+  hasKude: false,
 };
 const BASE = "/api/fiscal/fiscal-documents";
 function jsonResponse(body: unknown, status = 200): Response {

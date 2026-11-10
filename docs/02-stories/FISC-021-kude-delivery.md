@@ -70,6 +70,27 @@ al aprobarse».
   `put` del KuDE falla, el documento se envía igual y la clave queda nula; no se
   registra el mensaje del driver ni el contenido. Sin migraciones.
 
+- **T2 — vista del staff.** API: `GET /fiscal-documents/:id/kude`
+  (`fiscal.read`, fijado en la sonda de rutas) lee los bytes por
+  `kude_storage_key` con el puerto de almacenamiento (`FiscalKudeService`) y
+  responde `200 text/html; charset=utf-8`, `Cache-Control: no-store`,
+  `Content-Disposition: inline; filename="kude-<cdc o id>.html"`. Id desconocido
+  o de otra clínica: el mismo `404` byte a byte; sin KuDE: `404` propio; objeto
+  ilegible: `500 INTERNAL` sin el mensaje del driver; id no UUID: `400`. La
+  representación del documento suma `hasKude` (nunca la clave). BFF: el proxy
+  fiscal acepta solo `GET fiscal-documents/:id/kude` y releva, solo para esa
+  ruta, `Content-Disposition` y `Cache-Control`. Web: «Ver KuDE» en el detalle
+  fiscal cuando `hasKude`, abre el KuDE en otra pestaña (`noopener noreferrer`).
+  Las notas de crédito son filas de `fiscal_document` y aparecen en la misma
+  lista y detalle, así que el mismo botón las cubre. Evidencia:
+  `fiscal.integration.test.ts` («KuDE read (FISC-021)», «reports hasKude»),
+  `route.test.ts` del proxy («FISC-021 KuDE relay»),
+  `fiscal-detail-panel.test.tsx`. Criterios que T2 cree cumplidos (sin tildar
+  hasta la verificación final): «La ruta de la API devuelve el KuDE con
+  `fiscal.read`, `403` sin el permiso y `404` entre clínicas o sin KuDE» y «Ver
+  KuDE en el detalle fiscal abre el KuDE; sin KuDE no se ofrece» (falta la
+  prueba en el navegador, T4).
+
 ## Verificación
 
 Pendiente.

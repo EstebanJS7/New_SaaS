@@ -63,6 +63,8 @@ export const FISCAL_DOCUMENT_CANCEL_REFUSED_MESSAGE =
 export const FISCAL_DOCUMENT_CANCEL_PENDING_MESSAGE =
   "This fiscal document already has a cancellation in flight: its outcome is still " +
   "unknown, so it cannot be cancelled again until the cancellation lease expires.";
+/** FISC-021: the document exists for the caller but no KuDE was stored for it. */
+export const FISCAL_KUDE_NOT_FOUND_MESSAGE = "This fiscal document has no KuDE.";
 export const FISCAL_PROVIDER_UNRECOGNISED_MESSAGE = "The stored fiscal provider is not recognised.";
 export const FISCAL_DOCUMENT_CANCELLATION_REQUESTED_ACTION =
   "fiscal.document.cancellation_requested";
@@ -303,6 +305,7 @@ function toResponse(row: FiscalDocumentRow): FiscalDocumentResponse {
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     cancelledAt: row.cancelledAt?.toISOString() ?? null,
+    hasKude: typeof row.kudeStorageKey === "string" && row.kudeStorageKey.length > 0,
   };
 }
 
@@ -350,6 +353,22 @@ export class FiscalService {
     const row = await this.repository.findDocument(id, this.repository.client);
     if (!row) throw new DomainError("NOT_FOUND", FISCAL_DOCUMENT_TARGET_NOT_FOUND_MESSAGE);
     return toResponse(row);
+  }
+
+  /**
+   * FISC-021: the storage key of the document's KuDE, for the KuDE read route.
+   * Same gates and tenant-scoped lookup as {@link get}: an unknown or foreign id
+   * is the same `404`; a document without a stored KuDE is a `404` of its own.
+   * The key is CONFIDENTIAL and never leaves the API.
+   */
+  async findKude(id: string): Promise<{ storageKey: string; cdc: string | null }> {
+    await this.assertFiscalEnabled();
+    await this.requirePermission(FISCAL_PERMISSIONS.read);
+    const row = await this.repository.findDocument(id, this.repository.client);
+    if (!row) throw new DomainError("NOT_FOUND", FISCAL_DOCUMENT_TARGET_NOT_FOUND_MESSAGE);
+    if (typeof row.kudeStorageKey !== "string" || row.kudeStorageKey.length === 0)
+      throw new DomainError("NOT_FOUND", FISCAL_KUDE_NOT_FOUND_MESSAGE);
+    return { storageKey: row.kudeStorageKey, cdc: row.cdc };
   }
 
   /**

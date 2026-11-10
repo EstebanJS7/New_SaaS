@@ -894,3 +894,98 @@ describe("/api/fiscal proxy — bounded JSON bodies (S6)", () => {
     expect(init.duplex).toBe("half");
   });
 });
+
+describe("/api/fiscal proxy — FISC-021 KuDE relay", () => {
+  const KUDE_HTML = "<!doctype html><html><body>KuDE</body></html>";
+  function upstreamKude(): Response {
+    return new Response(KUDE_HTML, {
+      status: 200,
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "content-disposition": 'inline; filename="kude-0180.html"',
+        "cache-control": "no-store",
+        "x-request-id": "upstream-id",
+        "set-cookie": "leak=1",
+      },
+    });
+  }
+  beforeEach(() => {
+    cookiesMock.mockReset();
+    fetchMock.mockReset();
+    cookiesMock.mockResolvedValue(cookieStore({ name: STAFF_SESSION_COOKIE, value: "token-123" }));
+  });
+
+  it("forwards GET fiscal-documents/:id/kude and relays the HTML with its disposition and cache headers", async () => {
+    fetchMock.mockResolvedValue(upstreamKude());
+    const response = await missing("GET", `/api/fiscal/fiscal-documents/${ID}/kude`);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, FetchInit];
+    expect(url).toBe(`http://localhost:3001/fiscal-documents/${ID}/kude`);
+    expect(init.method).toBe("GET");
+    expect(init.body).toBeUndefined();
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(response.headers.get("content-disposition")).toBe('inline; filename="kude-0180.html"');
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("x-request-id")).toBe("upstream-id");
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(await response.text()).toBe(KUDE_HTML);
+  });
+
+  it("relays an upstream refusal on the KuDE route as the API's JSON envelope", async () => {
+    fetchMock.mockResolvedValue(
+      new Response('{"error":{"code":"NOT_FOUND","message":"x"}}', {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      })
+    );
+    const response = await missing("GET", `/api/fiscal/fiscal-documents/${ID}/kude`);
+    expect(response.status).toBe(404);
+    expect(response.headers.get("content-type")).toBe("application/json");
+    expect(response.headers.get("content-disposition")).toBeNull();
+  });
+
+  it("keeps dropping content-disposition and cache-control on every other route", async () => {
+    fetchMock.mockImplementation(() => Promise.resolve(upstreamKude()));
+    for (const path of [
+      `/api/fiscal/fiscal-documents/${ID}`,
+      "/api/fiscal/fiscal-documents",
+      "/api/fiscal/csc",
+    ]) {
+      const response = await missing("GET", path);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-disposition")).toBeNull();
+      expect(response.headers.get("cache-control")).toBeNull();
+    }
+  });
+
+  it("refuses other methods, non-UUID ids, queries and bodies on the KuDE route", async () => {
+    await expectError(
+      await missing("POST", `/api/fiscal/fiscal-documents/${ID}/kude`, undefined, "{}"),
+      404,
+      "NOT_FOUND",
+      "Fiscal route was not found."
+    );
+    const put = await missing("PUT", `/api/fiscal/fiscal-documents/${ID}/kude`, undefined, "{}");
+    expect(put.status).toBe(405);
+    expect(put.headers.get("allow")).toBe("GET");
+    await expectError(
+      await missing("GET", "/api/fiscal/fiscal-documents/not-a-uuid/kude"),
+      400,
+      "VALIDATION_FAILED",
+      "Invalid fiscal request path."
+    );
+    await expectError(
+      await missing("GET", `/api/fiscal/fiscal-documents/${ID}/kude`, "?download=1"),
+      404,
+      "NOT_FOUND",
+      "Fiscal route was not found."
+    );
+    await expectError(
+      await missing("GET", `/api/fiscal/fiscal-documents/${ID}/kude/extra`),
+      404,
+      "NOT_FOUND",
+      "Fiscal route was not found."
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

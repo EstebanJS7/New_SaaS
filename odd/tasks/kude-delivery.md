@@ -27,7 +27,7 @@ Playwright lane. Forecast: ~900 authored lines.
 | ID  | Specs    | Route                        | Status  | Commit / evidence |
 | --- | -------- | ---------------------------- | ------- | ----------------- |
 | T1  | S1,S3,S5 | delegated (context backstop) | done    | see L4            |
-| T2  | S2,S5    | tbd                          | pending |                   |
+| T2  | S2,S5    | delegated (context backstop) | done    | see L5            |
 | T3  | S4,S5    | tbd                          | pending |                   |
 | T4  | S1-S5    | tbd                          | pending | browser + docs    |
 
@@ -55,3 +55,14 @@ email channel contract, T3). Independent verifier at feature end.
   writes no key; one-importer boundary test. Fiscal 829/829, worker 308/308,
   builds/lint/typecheck/prettier pass; parent rerun handler 48/48. Lockfile adds
   only qrcode-generator@2.0.4. Risk: item 5.
+- L5 (2026-11-10): T2 done by delegated writer. `GET /fiscal-documents/:id/kude`
+  (fiscal.read): 200 stored bytes as text/html, no-store, inline filename
+  kude-<cdc|id>.html; 403 without permission; unknown/cross-tenant same 404;
+  own-tenant without KuDE 404 "This fiscal document has no KuDE."; storage read
+  failure 500 INTERNAL without driver text; 400 invalid id; no audit row.
+  `hasKude` added to list/detail (key never exposed). Route probe updated. BFF
+  relays disposition/cache-control for this route only; other routes pinned
+  unchanged. «Ver KuDE» link (new tab) shown iff hasKude, invoices and credit
+  notes. API 2148 pass/277 skipped, web 2391 pass/1 unrelated timing flake
+  (clinical recovery test, 67/67 alone); typecheck/lint/prettier pass; parent
+  rerun fiscal integration + probe 57/57. Risk: items 2 and 3.
