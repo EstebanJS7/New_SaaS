@@ -2,6 +2,7 @@
 
 import type { JSX } from "react";
 import { EmptyState } from "@/components/feedback";
+import { useCapabilities } from "@/lib/capabilities";
 import { visibleSections, type SettingsNamespace } from "./general-settings-rules";
 import { NotificationsForm, PortalForm, SalesForm } from "./namespace-forms";
 import { SchedulingSection } from "./scheduling-section";
@@ -84,4 +85,14 @@ export function GeneralSettingsSurface({
       )}
     </div>
   );
+}
+
+/**
+ * Route container ([[UX-037]]): feeds the surface the caller's permissions and
+ * the clinic's features the staff shell loaded. Unknown capabilities stay
+ * `undefined`, so every section shows and the API refuses, as before.
+ */
+export function GeneralSettingsScreen(): JSX.Element {
+  const { permissions, features } = useCapabilities();
+  return <GeneralSettingsSurface permissions={permissions} entitlements={features} />;
 }

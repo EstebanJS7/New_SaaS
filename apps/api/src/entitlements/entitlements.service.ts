@@ -22,6 +22,10 @@ export interface TenantEntitlementDelegate {
       featureCode: { code: string };
     };
   }) => Promise<{ id: string } | null>;
+  findMany: (args: {
+    where: { tenantId: string };
+    select: { featureCode: { select: { code: true } } };
+  }) => Promise<{ featureCode: { code: string } }[]>;
 }
 
 /**
@@ -35,9 +39,12 @@ export interface TenantEntitlementDelegate {
  * codes answer false WITHOUT throwing; malformed arguments are programmer
  * errors and fail loud as VALIDATION_FAILED.
  *
- * Deliberately NOT shipped here: no HTTP surface, no UI, no caching — future
- * gating callers (e.g. branding Phase B) consult this service instead of
- * comparing plans.
+ * `listGranted(tenantId)` (UX-037) lists the same explicit grants so the
+ * caller's own capabilities can be shown to the staff web; the tenant id
+ * always comes from the server-side request context of the caller.
+ *
+ * No HTTP surface of its own and no caching — gating callers consult this
+ * service instead of comparing plans.
  */
 @Injectable()
 export class EntitlementsService {
@@ -61,5 +68,19 @@ export class EntitlementsService {
       where: { tenantId: scopedTenantId, featureCode: { code } },
     });
     return grant !== null;
+  }
+
+  /** Feature codes explicitly granted to the tenant, sorted. Same grant rule as `has`. */
+  async listGranted(tenantId: string): Promise<string[]> {
+    const parsed = z.string().uuid().safeParse(tenantId);
+    if (!parsed.success) {
+      throw new DomainError("VALIDATION_FAILED", "Entitlement listing requires a tenant UUID.");
+    }
+
+    const grants = await this.prisma.tenantEntitlement.findMany({
+      where: { tenantId: parsed.data },
+      select: { featureCode: { select: { code: true } } },
+    });
+    return grants.map((grant) => grant.featureCode.code).sort();
   }
 }

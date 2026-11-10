@@ -7,6 +7,7 @@ import { Icon } from "@newsaas/ui/components/ui/icon";
 import { NavSidebar } from "./nav-sidebar";
 import { Topbar } from "./topbar";
 import { RouteFeedback } from "./route-feedback";
+import { useCapabilities } from "@/lib/capabilities";
 
 export function WorkspaceShell({
   children,
@@ -19,6 +20,8 @@ export function WorkspaceShell({
   productLogoUrl?: string;
   defaultAppearance?: DefaultAppearance;
 }) {
+  // UX-037: unknown capabilities (no provider, failed load) show every link.
+  const { permissions, features } = useCapabilities();
   const [menuOpen, setMenuOpen] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -39,7 +42,7 @@ export function WorkspaceShell({
       <a href="#workspace-content" className="skip-link">
         Ir al contenido
       </a>
-      <NavSidebar productName={productName} />
+      <NavSidebar productName={productName} permissions={permissions} entitlements={features} />
       <dialog
         ref={dialog}
         id="mobile-navigation"
@@ -63,7 +66,13 @@ export function WorkspaceShell({
             <Icon name="close" />
           </Button>
           {menuOpen ? (
-            <NavSidebar mobile productName={productName} onNavigate={() => setMenuOpen(false)} />
+            <NavSidebar
+              mobile
+              productName={productName}
+              permissions={permissions}
+              entitlements={features}
+              onNavigate={() => setMenuOpen(false)}
+            />
           ) : null}
         </div>
       </dialog>

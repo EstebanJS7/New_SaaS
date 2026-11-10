@@ -21,6 +21,13 @@ function makeFakeDb(catalog: readonly string[]) {
       if (!featureIdByCode.has(code)) return Promise.resolve(null);
       return Promise.resolve(grants.has(`${where.tenantId}:${code}`) ? { id: "grant-row" } : null);
     },
+    findMany: ({ where }) => {
+      const prefix = `${where.tenantId}:`;
+      const rows = [...grants]
+        .filter((grant) => grant.startsWith(prefix))
+        .map((grant) => ({ featureCode: { code: grant.slice(prefix.length) } }));
+      return Promise.resolve(rows);
+    },
     grants,
   };
 
@@ -119,5 +126,33 @@ describe("override precedence: plan mapping ≠ grant", () => {
     db.grants.add(`${TENANT}:custom_branding`);
     await expect(service.has(TENANT, "custom_branding")).resolves.toBe(true);
     await expect(service.has(TENANT, "portal")).resolves.toBe(false);
+  });
+});
+
+/** UX-037: the read the staff web uses to know which features its clinic has. */
+describe("EntitlementsService.listGranted", () => {
+  it("lists only the given tenant's explicit grants, sorted", async () => {
+    const db = makeFakeDb(["veterinary", "portal", "advanced_reports", "multi_branch"]);
+    db.grants.add(`${TENANT}:veterinary`);
+    db.grants.add(`${TENANT}:advanced_reports`);
+    db.grants.add(`${OTHER_TENANT}:multi_branch`);
+
+    await expect(makeService(db).listGranted(TENANT)).resolves.toEqual([
+      "advanced_reports",
+      "veterinary",
+    ]);
+  });
+
+  it("returns an empty list for a tenant without grants", async () => {
+    const db = makeFakeDb(["portal"]);
+    db.grants.add(`${OTHER_TENANT}:portal`);
+
+    await expect(makeService(db).listGranted(TENANT)).resolves.toEqual([]);
+  });
+
+  it("fails loud on a malformed tenant id (programmer error)", async () => {
+    await expect(makeService(makeFakeDb([])).listGranted("not-a-uuid")).rejects.toBeInstanceOf(
+      DomainError
+    );
   });
 });

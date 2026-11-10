@@ -2639,6 +2639,10 @@ export interface IsolationDatabase {
       findFirst: (args: {
         where: { tenantId: string; featureCode: { code: string } };
       }) => TenantEntitlementRow | null;
+      findMany: (args: {
+        where: { tenantId: string };
+        select: { featureCode: { select: { code: true } } };
+      }) => { featureCode: { code: string } }[];
     };
   };
   tables: {
@@ -6374,6 +6378,14 @@ export function createIsolationDatabase(): IsolationDatabase {
           const linkedCode = featureCodes.get(candidate.featureCodeId)?.code;
           return linkedCode === where.featureCode.code;
         }) ?? null,
+      // UX-037: the tenant's grants projected to their feature code.
+      findMany: ({ where }) =>
+        [...entitlements.values()]
+          .filter((candidate) => candidate.tenantId === where.tenantId)
+          .flatMap((candidate) => {
+            const code = featureCodes.get(candidate.featureCodeId)?.code;
+            return code === undefined ? [] : [{ featureCode: { code } }];
+          }),
     },
   };
 

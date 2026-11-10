@@ -4,6 +4,7 @@ import type { JSX, ReactNode } from "react";
 import { useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCapabilities } from "@/lib/capabilities";
 import { Button } from "@newsaas/ui/components/ui/button";
 import {
   Card,
@@ -486,4 +487,13 @@ function OutcomeTable({ summary }: { readonly summary: ImportSummary }): JSX.Ele
       </table>
     </div>
   );
+}
+
+/**
+ * Route container ([[UX-037]]): feeds the detail the caller's permissions the
+ * staff shell loaded. Unknown stays `undefined` (every action shown, API refuses).
+ */
+export function ImportsDetailScreen({ importId }: { importId: string }): JSX.Element {
+  const { permissions } = useCapabilities();
+  return <ImportsDetail importId={importId} permissions={permissions} />;
 }

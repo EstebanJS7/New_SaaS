@@ -3,6 +3,7 @@
 import type { JSX } from "react";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useCapabilities } from "@/lib/capabilities";
 import { Button } from "@newsaas/ui/components/ui/button";
 import { reportAcceptsBranch, type ReportCode } from "@/app/api/reports/report-codes";
 import { reportDefinition } from "./report-catalog";
@@ -344,4 +345,13 @@ export function ReportWorkspace({ reportCode, permissions }: ReportWorkspaceProp
         ))}
     </div>
   );
+}
+
+/**
+ * Route container ([[UX-037]]): feeds the workspace the caller's permissions the
+ * staff shell loaded. Unknown stays `undefined` (export shown, API refuses).
+ */
+export function ReportWorkspaceScreen({ reportCode }: { reportCode: ReportCode }): JSX.Element {
+  const { permissions } = useCapabilities();
+  return <ReportWorkspace reportCode={reportCode} permissions={permissions} />;
 }

@@ -204,6 +204,86 @@ describe("AppShellLayout", () => {
     }
   });
 
+  /**
+   * UX-037: the layout loads the caller's capabilities once per request and the
+   * shell's nav hides what the caller cannot use. A failed load is UNKNOWN, never
+   * "no permissions": the nav shows everything and the API stays the authority.
+   */
+  describe("caller capabilities (UX-037)", () => {
+    function routeFetch(capabilities: () => Promise<unknown>): ReturnType<typeof vi.fn> {
+      const fetchMock = vi.fn((input: string) => {
+        const url = input;
+        if (url.endsWith("/memberships/me/capabilities")) return capabilities();
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({ source: "preset", brand: resolveBrand(activeProductPreset) }),
+        });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      return fetchMock;
+    }
+
+    function navLinks(): string[] {
+      const nav = within(screen.getByTestId("nav-sidebar")).getByRole("navigation", {
+        name: "Principal",
+      });
+      return within(nav)
+        .getAllByRole("link")
+        .map((link) => link.textContent ?? "");
+    }
+
+    it("loads the capabilities exactly once and hides nav links the caller cannot use", async () => {
+      const fetchMock = routeFetch(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ permissions: ["sales.read"], features: ["cash"] }),
+        })
+      );
+
+      render(await AppShellLayout({ children: <p>contenido</p> }));
+
+      const capabilityCalls = fetchMock.mock.calls.filter((call) =>
+        String(call[0]).endsWith("/memberships/me/capabilities")
+      );
+      expect(capabilityCalls).toHaveLength(1);
+      const links = navLinks();
+      expect(links).toContain("Caja");
+      expect(links).toContain("Clientes");
+      for (const hidden of ["POS", "Facturación", "Fiscal", "Configuración fiscal", "General"]) {
+        expect(links).not.toContain(hidden);
+      }
+    });
+
+    it.each([
+      [
+        "a 500 answer",
+        () => Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({}) }),
+      ],
+      ["a network failure", () => Promise.reject(new Error("timeout"))],
+      [
+        "a malformed body",
+        () =>
+          Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve({ permissions: "all" }),
+          }),
+      ],
+    ])("treats %s as unknown and still shows every nav link", async (_label, capabilities) => {
+      routeFetch(capabilities);
+
+      render(await AppShellLayout({ children: <p>contenido</p> }));
+
+      expect(navLinks()).toHaveLength(20);
+      expect(navLinks()).toEqual(
+        expect.arrayContaining(["POS", "General", "Configuración fiscal"])
+      );
+    });
+  });
+
   it("emits the brand style bridge server-side", async () => {
     const element = await AppShellLayout({ children: homePage() });
     const { container } = render(element);

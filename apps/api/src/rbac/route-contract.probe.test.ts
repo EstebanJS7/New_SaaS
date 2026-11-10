@@ -94,6 +94,8 @@ const EXPECTED_ROUTE_INVENTORY: readonly string[] = [
   "PUT /memberships/:id/branches",
   // MB-002: the caller's own working branches (authenticated-only).
   "GET /memberships/me/branches",
+  // UX-037: the caller's own permissions and its clinic's features (authenticated-only).
+  "GET /memberships/me/capabilities",
   "GET /rbac/roles",
   "GET /rbac/permissions",
   "PUT /rbac/roles/:code/permissions",
@@ -1156,6 +1158,13 @@ describe("route-contract probe (deny-by-default)", () => {
       "POST /imports/:id/preview",
       "POST /imports/:id/commit",
     ]);
+  });
+
+  it("UX-037: the caller's own capabilities are an authenticated-only read", () => {
+    const entry = inventory.find(
+      (candidate) => candidate.method === "GET" && candidate.path === "/memberships/me/capabilities"
+    );
+    expect(entry?.permissions === undefined ? null : [...entry.permissions]).toEqual([]);
   });
 
   it("MB-002: the caller's own branches are an authenticated-only read", () => {

@@ -8,6 +8,8 @@ import {
 } from "./membership-role-assignment.service.js";
 import { RequirePermissions } from "../rbac/require-permissions.decorator.js";
 import { PermissionResolver } from "../rbac/permission-resolver.service.js";
+import { EntitlementsService } from "../entitlements/entitlements.service.js";
+import { RequestContextService } from "../context/request-context.service.js";
 import {
   StaffInvitationService,
   type MembershipStatusResult,
@@ -54,7 +56,9 @@ export class MembershipsController {
     private readonly memberships: TenantMembershipRepository,
     private readonly permissionResolver: PermissionResolver,
     private readonly roleAssignment: MembershipRoleAssignmentService,
-    private readonly invitations: StaffInvitationService
+    private readonly invitations: StaffInvitationService,
+    private readonly entitlements: EntitlementsService,
+    private readonly context: RequestContextService
   ) {}
 
   /** Lists the caller's active-tenant memberships — implicit scope only. */
@@ -110,6 +114,24 @@ export class MembershipsController {
   async myPermissions(): Promise<{ permissions: string[] }> {
     const resolved = await this.permissionResolver.resolveForActiveRequest();
     return { permissions: [...resolved].sort() };
+  }
+
+  /**
+   * UX-037: the caller's own capabilities for the staff web — the effective
+   * permission keys of the ACTIVE membership (same resolver as
+   * `me/permissions`) and the feature codes granted to the ACTIVE tenant.
+   * Authenticated-only (EMPTY declaration); the tenant comes from the
+   * server-side request context, never from input. UX only: every protected
+   * route still enforces its own permission and entitlement.
+   */
+  @Get("me/capabilities")
+  @RequirePermissions()
+  async myCapabilities(): Promise<{ permissions: string[]; features: string[] }> {
+    const [resolved, features] = await Promise.all([
+      this.permissionResolver.resolveForActiveRequest(),
+      this.entitlements.listGranted(this.context.requireTenantId()),
+    ]);
+    return { permissions: [...resolved].sort(), features };
   }
 
   /**

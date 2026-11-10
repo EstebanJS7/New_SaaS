@@ -13,6 +13,7 @@ import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
 import { ErrorState } from "@/components/feedback";
 import { usePatientExit } from "../patient-form-interaction";
 import { formatEsPyDateOnly } from "@/lib/es-py-format";
+import { useCapabilities } from "@/lib/capabilities";
 import {
   Card,
   CardContent,
@@ -537,6 +538,9 @@ export function PatientDetail({
 }: { appointmentId?: string; initialEncounterId?: string } = {}): JSX.Element {
   const params = useParams<{ id: string }>();
   const patientId = params.id;
+  // UX-037: the shell's permissions feed the clinical sections that already gate
+  // on them; unknown stays `undefined` (actions shown, API refuses).
+  const { permissions } = useCapabilities();
   const patient = useQuery({
     queryKey: ["patients", patientId],
     queryFn: () => getPatient(patientId),
@@ -608,6 +612,7 @@ export function PatientDetail({
           patientId={patientId}
           appointmentId={appointmentId}
           initialEncounterId={initialEncounterId}
+          permissions={permissions}
         />
       </section>
       <section
@@ -616,7 +621,7 @@ export function PatientDetail({
         className="scroll-mt-24 rounded-lg border border-border bg-card p-5"
         tabIndex={-1}
       >
-        <TreatmentList patientId={patientId} />
+        <TreatmentList patientId={patientId} permissions={permissions} />
       </section>
       <section
         id="patient-studies"
@@ -624,7 +629,7 @@ export function PatientDetail({
         className="scroll-mt-24 rounded-lg border border-border bg-card p-5"
         tabIndex={-1}
       >
-        <StudyList patientId={patientId} />
+        <StudyList patientId={patientId} permissions={permissions} />
       </section>
       <section
         id="patient-weights"
@@ -632,7 +637,7 @@ export function PatientDetail({
         className="scroll-mt-24 rounded-lg border border-border bg-card p-5"
         tabIndex={-1}
       >
-        <WeightList patientId={patientId} />
+        <WeightList patientId={patientId} permissions={permissions} />
       </section>
       <section
         id="patient-guardians"

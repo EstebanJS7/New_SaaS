@@ -2,7 +2,7 @@
 type: module
 module: rbac
 status: implemented
-updated: 2026-08-26
+updated: 2026-11-10
 ---
 
 # Module — RBAC
@@ -26,6 +26,15 @@ tenant.
 
 - `GET /memberships/me/permissions` — sorted effective permission keys of the
   active membership (authenticated-only).
+- `GET /memberships/me/capabilities` ([[UX-037]]) — `{ permissions, features }`:
+  the same sorted keys (same resolver) plus the sorted feature codes granted to
+  the ACTIVE tenant (`EntitlementsService.listGranted`). Authenticated-only
+  (empty declaration in the route probe); `401` without session, `403` without
+  an active membership. Tenant comes only from the request context. Response
+  classification: INTERNAL. It is the read the staff web uses (the memberships
+  BFF allowlists it; `me/permissions` stays refused there). UX only and
+  fail-open in the web: an unknown result shows every action, and each route
+  keeps enforcing its own permission and entitlement.
 - `GET /memberships` and `GET /memberships/:id` — now gated by
   `users.membership.manage`.
 - `POST /memberships/:id/role` `{roleCode}` — replaces the membership's single
