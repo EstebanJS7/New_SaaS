@@ -8,7 +8,7 @@ priority: high
 depends_on: [POS-003, CASH-002]
 prd_sections: ["§16", "§18", "§19", "§20", "§40"]
 permissions: [sales.reverse, sales.read]
-branch:
+branch: test/sal-rev-concurrency-mb001
 created: 2026-11-03
 updated: 2026-11-09
 ---
@@ -112,8 +112,13 @@ No se pudo correr: suites que necesitan el motor de consultas de Prisma
     misma clave: 409; nueva anulación: 409 "La venta ya fue anulada."
   venta de otro tenant: 404 en anular y en leer la anulación, sin escrituras
   pnpm test:live-pg completo: 276/276
-Pendiente: concurrencia real (dos anulaciones simultáneas). Navegador cubierto
-  el 2026-11-09 por specs/sale-reversal.spec.ts.
+2026-11-09 (rama test/sal-rev-concurrency-mb001): dos anulaciones simultáneas
+  con claves distintas, detenidas juntas sobre el bloqueo de la fila sale:
+  exactamente 201/409 "La venta ya fue anulada."; una sale_reversal, un REFUND,
+  una SALE_REVERSAL enlazada al SALE, una payment_refund y una auditoría;
+  solo la clave ganadora se guarda y su replay 200 no agrega filas.
+  Bloque SAL-REV-001: 5/5; build API y dependencias: 13/13. Sin cambio del servicio.
+  Navegador cubierto el 2026-11-09 por specs/sale-reversal.spec.ts.
 ```
 
 ## Tests agregados
@@ -129,8 +134,8 @@ Pendiente: concurrencia real (dos anulaciones simultáneas). Navegador cubierto
 - Una venta anulada sale de los informes de ventas del período en que se cobró.
 - El detalle de una venta completada no muestra sus pagos (limitación previa de
   la lectura); la anulación sí muestra las devoluciones.
-- Aún no hay prueba de concurrencia contra PostgreSQL real (el recorrido
-  secuencial sí está cubierto por la suite live-pg).
+- Concurrencia PostgreSQL cubierta el 2026-11-09 con barrera de bloqueo de fila;
+  no se depende de que dos solicitudes coincidan por azar.
 
 ## Observaciones fuera de alcance
 

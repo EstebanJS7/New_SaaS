@@ -20271,6 +20271,110 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       expect((read.body as { id: string }).id).toBe(reversal.id);
     });
 
+    it("serializes two concurrent reversals with distinct keys into one 201 and one stable 409", async () => {
+      const { tenantId, cookie } = await provisionCommerceTenant("live-reversal-race");
+      const itemId = await createTrackedItem(cookie, "Concurrent Reversal Item");
+      await supertest(serverUrl)
+        .post("/inventory/stock/adjustments")
+        .set("Cookie", cookie)
+        .send({ catalogItemId: itemId, quantity: "10.000", reason: "Race funding" })
+        .expect(201);
+      const registerId = await createRegister(cookie, "Concurrent Reversal Drawer");
+      const opened = await openSession(cookie, registerId, "0.00").expect(201);
+      const sessionId = (opened.body as CashSessionDto).id;
+      const created = await postSale(cookie, {
+        lines: [{ catalogItemId: itemId, quantity: "2.000" }],
+      }).expect(201);
+      const saleId = (created.body as SaleDto).id;
+      await supertest(serverUrl)
+        .post(`/sales/${saleId}/complete`)
+        .set("Cookie", cookie)
+        .send({ payments: [{ method: "CASH", amount: "2000.00" }] })
+        .expect(201);
+      const original = await prisma.stockMovement.findFirstOrThrow({
+        where: { tenantId, saleId, type: "SALE" },
+      });
+
+      // Park BOTH requests on the sale header before either reads its status.
+      // This is the same database boundary used by lockById, not a timing guess.
+      let releaseBarrier!: () => void;
+      const released = new Promise<void>((resolve) => {
+        releaseBarrier = resolve;
+      });
+      let signalReady!: () => void;
+      const ready = new Promise<void>((resolve) => {
+        signalReady = resolve;
+      });
+      const barrier = prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`
+          SELECT "id" FROM "sale"
+          WHERE "tenant_id" = ${tenantId}::uuid AND "id" = ${saleId}::uuid
+          FOR UPDATE
+        `;
+          signalReady();
+          await released;
+        },
+        { timeout: 20_000, maxWait: 10_000 }
+      );
+      await ready;
+      const ctid = await readRowCtid(prisma, "sale", saleId);
+      const keys = [randomUUID(), randomUUID()];
+      const racers = keys.map((key) =>
+        reverse(cookie, saleId, REVERSAL_REASON, key).then((response) => response)
+      );
+      try {
+        await waitForRowLockWaiters(prisma, "sale", ctid.page, ctid.tuple, 2, 10_000);
+      } finally {
+        releaseBarrier();
+        await barrier;
+      }
+      const responses = await Promise.all(racers);
+      expect(responses.map((response) => response.status).sort()).toEqual([201, 409]);
+      const winnerIndex = responses.findIndex((response) => response.status === 201);
+      const rejected = responses.find((response) => response.status === 409)!;
+      expect(rejected.body).toMatchObject({
+        error: { code: "CONFLICT", message: "La venta ya fue anulada." },
+      });
+      const winner = responses[winnerIndex].body as { id: string; saleId: string };
+      expect(winner.saleId).toBe(saleId);
+      expect(await reversalResidue(tenantId)).toEqual({
+        reversals: 1,
+        refunds: 1,
+        stockMovements: 3,
+        cashMovements: 2,
+        audits: 1,
+        cancelled: 1,
+      });
+      const compensations = await prisma.stockMovement.findMany({
+        where: { tenantId, saleId, type: "SALE_REVERSAL" },
+      });
+      expect(compensations).toHaveLength(1);
+      expect(compensations[0].reversesMovementId).toBe(original.id);
+      expect(compensations[0].quantity.toFixed(3)).toBe("2.000");
+      const refunds = await prisma.cashMovement.findMany({
+        where: { tenantId, saleId, type: "REFUND" },
+      });
+      expect(refunds).toHaveLength(1);
+      expect(refunds[0].sessionId).toBe(sessionId);
+      expect(refunds[0].amount.toFixed(2)).toBe("2000.00");
+      const paymentRefunds = await prisma.paymentRefund.findMany({ where: { tenantId } });
+      expect(paymentRefunds).toHaveLength(1);
+      expect(paymentRefunds[0]).toMatchObject({
+        saleReversalId: winner.id,
+        cashMovementId: refunds[0].id,
+      });
+      const attempts = await prisma.idempotencyRecord.findMany({
+        where: { tenantId, operation: "sale.reverse" },
+      });
+      expect(attempts).toHaveLength(1);
+      expect(attempts[0].key).toBe(keys[winnerIndex]);
+      const beforeReplay = await reversalResidue(tenantId);
+      const replay = await reverse(cookie, saleId, REVERSAL_REASON, keys[winnerIndex]).expect(200);
+      expect((replay.body as { id: string }).id).toBe(winner.id);
+      expect(await reversalResidue(tenantId)).toEqual(beforeReplay);
+    }, 30_000);
+
     it("recovers a sale create whose answer was lost: one draft per key, 409 for another body, lookup by key, never across tenants", async () => {
       const key = randomUUID();
       const body = { lines: [{ catalogItemId: attemptsItemId, quantity: "1.000" }] };
