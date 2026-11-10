@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { CapabilitiesProvider, type Capabilities } from "@/lib/capabilities";
 import { Agenda } from "./agenda";
 import type { Appointment, AppointmentStatus, BookingRequest } from "./agenda-api";
 
@@ -139,6 +140,8 @@ interface CalendarStubProps {
   readonly eventResize?: (arg: unknown) => void;
   readonly eventClick?: (arg: unknown) => void;
   readonly select?: (arg: unknown) => void;
+  readonly editable?: boolean;
+  readonly selectable?: boolean;
 }
 
 let latestCalendarProps: CalendarStubProps | null = null;
@@ -1480,5 +1483,101 @@ describe("Agenda", () => {
     // America/Asuncion is UTC-3 in September, so 18:00 local is 21:00Z.
     expect(body.startAt).toBe("2026-09-14T21:00:00.000Z");
     expect(body.endAt).toBe("2026-09-14T21:30:00.000Z");
+  });
+});
+
+/**
+ * UX-037: the agenda offers only the actions the caller's capabilities allow.
+ * Unknown capabilities (no provider) keep every action, and the API re-checks.
+ */
+describe("Agenda gated by the caller's capabilities (UX-037)", () => {
+  const ALL = [
+    "scheduling.appointment.read",
+    "scheduling.appointment.manage",
+    "scheduling.appointment.transition",
+  ];
+
+  function renderWith(capabilities?: Capabilities): void {
+    const agenda = (
+      <TestWrapper>
+        <Agenda />
+      </TestWrapper>
+    );
+    render(
+      capabilities === undefined ? (
+        agenda
+      ) : (
+        <CapabilitiesProvider value={capabilities}>{agenda}</CapabilitiesProvider>
+      )
+    );
+  }
+
+  it("shows a no-access state and reads nothing without scheduling.appointment.read", async () => {
+    const fetchMock = mockAgendaFetch({ appointments: () => jsonResponse([APPOINTMENT]) });
+    renderWith({ permissions: [] });
+
+    expect(
+      await screen.findByRole("heading", { name: "No tenés permiso para ver la agenda" })
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Nuevo turno" })).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("hides create, reschedule, requests and status commands for a read-only caller", async () => {
+    const fetchMock = mockAgendaFetch({
+      appointments: () => jsonResponse([APPOINTMENT]),
+      options: optionsResponse,
+      bookingRequests: () => jsonResponse([BOOKING_REQUEST]),
+    });
+    renderWith({ permissions: ["scheduling.appointment.read"] });
+
+    await screen.findByTestId("fullcalendar");
+    expect(screen.queryByRole("button", { name: "Nuevo turno" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Solicitudes de turno pendientes" })
+    ).not.toBeInTheDocument();
+    expect(latestCalendarProps?.editable).toBe(false);
+    expect(latestCalendarProps?.selectable).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/booking-requests"))).toBe(
+      false
+    );
+
+    await openManagePanel();
+    expect(await screen.findByRole("heading", { name: "Gestionar turno" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Guardar cambios" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirmar turno" })).not.toBeInTheDocument();
+  });
+
+  it("offers status commands but not rescheduling to a caller who can only transition", async () => {
+    mockAgendaFetch({ appointments: () => jsonResponse([APPOINTMENT]), options: optionsResponse });
+    renderWith({
+      permissions: ["scheduling.appointment.read", "scheduling.appointment.transition"],
+    });
+
+    await openManagePanel();
+    expect(await screen.findByRole("button", { name: "Confirmar turno" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Guardar cambios" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["granted", { permissions: ALL }],
+    ["unknown", undefined],
+  ])("offers every action when capabilities are %s", async (_label, capabilities) => {
+    mockAgendaFetch({
+      appointments: () => jsonResponse([APPOINTMENT]),
+      options: optionsResponse,
+      bookingRequests: () => jsonResponse([BOOKING_REQUEST]),
+    });
+    renderWith(capabilities);
+
+    expect(await screen.findByRole("button", { name: "Nuevo turno" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("region", { name: "Solicitudes de turno pendientes" })
+    ).toBeInTheDocument();
+    expect(latestCalendarProps?.editable).toBe(true);
+    expect(latestCalendarProps?.selectable).toBe(true);
+    await openManagePanel();
+    expect(await screen.findByRole("button", { name: "Guardar cambios" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Confirmar turno" })).toBeInTheDocument();
   });
 });

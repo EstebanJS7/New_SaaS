@@ -6,6 +6,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ErrorState } from "@/components/feedback";
 import { PatientForm } from "../../patient-form";
 import { getPatient, updatePatient, userFacingPatientError } from "../../patients-api";
+import { useCan } from "@/lib/capabilities";
+import { PATIENT_ACTIONS, PatientsNoAccess } from "../../patient-capabilities";
 
 /**
  * Staff edit-patient page.
@@ -15,11 +17,13 @@ export default function EditPatientPage(): JSX.Element {
   const router = useRouter();
   const queryClient = useQueryClient();
   const id = params.id;
+  const canUpdate = useCan(PATIENT_ACTIONS.update);
 
   const query = useQuery({
     queryKey: ["patients", id],
     queryFn: () => getPatient(id),
     retry: false,
+    enabled: canUpdate,
   });
 
   const mutation = useMutation({
@@ -31,6 +35,14 @@ export default function EditPatientPage(): JSX.Element {
       router.push(`/app/patients/${patient.id}`);
     },
   });
+
+  if (!canUpdate) {
+    return (
+      <div className="mx-auto max-w-2xl">
+        <PatientsNoAccess title="No tenés permiso para editar pacientes" />
+      </div>
+    );
+  }
 
   if (query.isLoading) {
     return (

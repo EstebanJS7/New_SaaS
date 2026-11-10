@@ -1329,3 +1329,81 @@ describe("clinical route recovery (TD-065)", () => {
     other.clear();
   });
 });
+
+/**
+ * UX-037: the workspace offers only the encounter commands the caller's known
+ * permissions allow. Unknown permissions keep every command; the API re-checks.
+ */
+describe("ClinicalWorkspace gated by the caller's capabilities (UX-037)", () => {
+  const ALL = [
+    "vet.clinical.read",
+    "vet.clinical.create",
+    "vet.clinical.update",
+    "vet.clinical.close",
+    "vet.clinical.amend",
+    "sales.create",
+  ];
+
+  function renderWith(
+    permissions?: readonly string[],
+    features?: readonly string[]
+  ): ReturnType<typeof render> {
+    return render(
+      <TestWrapper>
+        <ClinicalWorkspace
+          patientId={PATIENT_ID}
+          autosaveDelayMs={AUTOSAVE_MS}
+          {...(permissions !== undefined && { permissions })}
+          {...(features !== undefined && { features })}
+        />
+      </TestWrapper>
+    );
+  }
+
+  it("shows a draft read-only, without create, save or close, to a read-only caller", async () => {
+    const fetchMock = mockClinical();
+    renderWith(["vet.clinical.read"]);
+    await selectEncounter();
+    expect(await screen.findByLabelText("Resumen de la consulta")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Nueva consulta" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Guardar borrador" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cerrar ficha clínica" })).not.toBeInTheDocument();
+    await flushAutosave();
+    expect(saveCalls(fetchMock)).toHaveLength(0);
+  });
+
+  it("lets an editor save a draft but not close it without vet.clinical.close", async () => {
+    mockClinical();
+    renderWith(["vet.clinical.read", "vet.clinical.update"]);
+    await selectEncounter();
+    expect(await screen.findByRole("button", { name: "Guardar borrador" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cerrar ficha clínica" })).not.toBeInTheDocument();
+  });
+
+  it("hides the amendment form and the POS continuation the caller cannot use", async () => {
+    mockClinical({ list: () => jsonResponse([CLOSED]) });
+    renderWith(["vet.clinical.read"], ["veterinary"]);
+    await selectEncounter();
+    expect(await screen.findByText("Consulta cerrada · solo lectura")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Registrar enmienda" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Ir al punto de venta" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["granted", ALL, ["veterinary", "sales"]],
+    ["unknown", undefined, undefined],
+  ] as const)(
+    "offers every command when capabilities are %s",
+    async (_label, permissions, features) => {
+      mockClinical({ list: () => jsonResponse([CLOSED, { ...DRAFT, id: AMENDMENT_ID }]) });
+      renderWith(permissions, features);
+      expect(await screen.findByRole("button", { name: "Nueva consulta" })).toBeInTheDocument();
+      fireEvent.click((await screen.findAllByRole("button", { name: /Limping/ }))[0]);
+      expect(await screen.findByRole("button", { name: "Registrar enmienda" })).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Ir al punto de venta" })).toBeInTheDocument();
+      fireEvent.click(screen.getAllByRole("button", { name: /Limping/ })[1]);
+      expect(await screen.findByRole("button", { name: "Guardar borrador" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Cerrar ficha clínica" })).toBeInTheDocument();
+    }
+  );
+});

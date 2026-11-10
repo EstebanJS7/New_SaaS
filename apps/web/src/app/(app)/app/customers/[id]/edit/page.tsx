@@ -7,6 +7,8 @@ import { ErrorState } from "@/components/feedback";
 import { customerError } from "../../customers-api";
 import { CustomerForm } from "../../customer-form";
 import { getCustomer, updateCustomer } from "../../customers-api";
+import { useCan } from "@/lib/capabilities";
+import { CUSTOMER_ACTIONS, CustomersNoAccess } from "../../customer-capabilities";
 
 /**
  * Staff edit-customer page.
@@ -16,10 +18,12 @@ export default function EditCustomerPage(): JSX.Element {
   const router = useRouter();
   const queryClient = useQueryClient();
   const id = params.id;
+  const canUpdate = useCan(CUSTOMER_ACTIONS.update);
 
   const query = useQuery({
     queryKey: ["customers", id],
     queryFn: () => getCustomer(id),
+    enabled: canUpdate,
   });
 
   const mutation = useMutation({
@@ -31,6 +35,14 @@ export default function EditCustomerPage(): JSX.Element {
       router.push(`/app/customers/${customer.id}`);
     },
   });
+
+  if (!canUpdate) {
+    return (
+      <div className="mx-auto max-w-2xl">
+        <CustomersNoAccess title="No tenés permiso para editar clientes" />
+      </div>
+    );
+  }
 
   if (query.isLoading) {
     return (

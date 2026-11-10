@@ -16,7 +16,13 @@ export function ClinicalAssociations({
   appointmentId,
   currentSaleId,
   inPOS = false,
+  canLink = true,
 }: {
+  /**
+   * UX-037: false when the caller's known permissions cannot link records
+   * (`vet.clinical.read` + `vet.clinical.update`); the links stay readable.
+   */
+  canLink?: boolean;
   patientId: string;
   encounterId: string;
   appointmentId?: string;
@@ -117,7 +123,8 @@ export function ClinicalAssociations({
           vínculo no se reemplazará.
         </p>
       )}
-      {appointmentId &&
+      {canLink &&
+        appointmentId &&
         UUID.test(appointmentId) &&
         data.canReadAppointments &&
         !data.appointmentId && (
@@ -154,7 +161,7 @@ export function ClinicalAssociations({
               ))}
             </ul>
           )}
-          {currentSaleId && !data.sales.some((sale) => sale.id === currentSaleId) && (
+          {canLink && currentSaleId && !data.sales.some((sale) => sale.id === currentSaleId) && (
             <Button
               type="button"
               disabled={links.isFetching}
@@ -166,7 +173,7 @@ export function ClinicalAssociations({
               Vincular esta venta a la consulta
             </Button>
           )}
-          {!inPOS && (
+          {canLink && !inPOS && (
             <div className="space-y-2">
               <Button
                 type="button"

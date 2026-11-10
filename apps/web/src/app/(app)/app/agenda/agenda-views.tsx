@@ -104,6 +104,11 @@ export interface AgendaViewsProps {
   readonly onOpenRequest: (request: BookingRequest) => void;
   readonly onCreateRange: (startIso: string, endIso: string) => void;
   readonly onRescheduleRange: (appointment: Appointment, startIso: string, endIso: string) => void;
+  /**
+   * UX-037: false when the caller cannot create or reschedule appointments, so
+   * the calendar offers no drag, resize or range selection. Defaults to true.
+   */
+  readonly canManage?: boolean;
 }
 
 function StatusBadge({ status }: { readonly status: AppointmentStatus }): JSX.Element {
@@ -139,6 +144,7 @@ interface AgendaCalendarProps {
   readonly onOpenRequest: (request: BookingRequest) => void;
   readonly onCreateRange: (startIso: string, endIso: string) => void;
   readonly onRescheduleRange: (appointment: Appointment, startIso: string, endIso: string) => void;
+  readonly canManage?: boolean;
 }
 
 /**
@@ -162,6 +168,7 @@ function AgendaCalendar({
   onOpenRequest,
   onCreateRange,
   onRescheduleRange,
+  canManage = true,
 }: AgendaCalendarProps): JSX.Element {
   const calendarRef = useRef<FullCalendar | null>(null);
   const byId = useMemo(
@@ -309,8 +316,8 @@ function AgendaCalendar({
         timeZone={AGENDA_TIME_ZONE}
         height="auto"
         nowIndicator
-        editable
-        selectable
+        editable={canManage}
+        selectable={canManage}
         selectMirror
         dayMaxEvents={3}
         slotMinTime="07:00:00"
@@ -454,6 +461,7 @@ export function AgendaViews(props: AgendaViewsProps): JSX.Element {
       onOpenRequest={props.onOpenRequest}
       onCreateRange={props.onCreateRange}
       onRescheduleRange={props.onRescheduleRange}
+      {...(props.canManage !== undefined && { canManage: props.canManage })}
     />
   );
 }

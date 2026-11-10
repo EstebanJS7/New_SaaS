@@ -20,13 +20,19 @@ import {
   type PatientSearchRow,
 } from "./patients-api";
 import { usePatientsListState } from "./patients-list-state";
+import { canUse, useCapabilities } from "@/lib/capabilities";
+import { PATIENT_ACTIONS, PatientsNoAccess } from "./patient-capabilities";
 
 function PatientCard({
   patient,
   canReadGuardians,
+  canUpdate = true,
+  canDeactivate = true,
 }: {
   readonly patient: PatientSearchRow;
   readonly canReadGuardians: boolean;
+  readonly canUpdate?: boolean;
+  readonly canDeactivate?: boolean;
 }): JSX.Element {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -79,24 +85,30 @@ function PatientCard({
         )}
       </div>
       <div className="flex shrink-0 gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => router.push(`/app/patients/${patient.id}/edit`)}
-        >
-          Editar
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => setConfirmDeactivateOpen(true)}
-          disabled={mutation.isPending || patientWriteBlocked(mutation.error) || !patient.isActive}
-          loading={mutation.isPending}
-        >
-          {mutation.isPending ? "Desactivando…" : "Desactivar"}
-        </Button>
+        {canUpdate && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => router.push(`/app/patients/${patient.id}/edit`)}
+          >
+            Editar
+          </Button>
+        )}
+        {canDeactivate && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setConfirmDeactivateOpen(true)}
+            disabled={
+              mutation.isPending || patientWriteBlocked(mutation.error) || !patient.isActive
+            }
+            loading={mutation.isPending}
+          >
+            {mutation.isPending ? "Desactivando…" : "Desactivar"}
+          </Button>
+        )}
       </div>
       <ConfirmActionDialog
         open={confirmDeactivateOpen}
@@ -120,10 +132,17 @@ export function PatientsList(): JSX.Element {
   const [state, setState] = usePatientsListState();
   const [search, setSearch] = useState(state.q);
   const [validation, setValidation] = useState<string>();
+  // UX-037: the shell's capabilities decide which actions are offered.
+  const capabilities = useCapabilities();
+  const canRead = canUse(capabilities, PATIENT_ACTIONS.read);
+  const canCreate = canUse(capabilities, PATIENT_ACTIONS.create);
+  const canUpdate = canUse(capabilities, PATIENT_ACTIONS.update);
+  const canDeactivate = canUse(capabilities, PATIENT_ACTIONS.deactivate);
   const query = useQuery({
     queryKey: ["patients", "search", state],
     queryFn: ({ signal }) => searchPatients(state, signal),
     staleTime: 0,
+    enabled: canRead,
   });
   const result = query.data;
   const reset = () => {
@@ -132,6 +151,7 @@ export function PatientsList(): JSX.Element {
     setState({ q: "", page: 1, status: "active", sort: "name" });
   };
   const count = (value: number) => value.toLocaleString("es-PY");
+  if (!canRead) return <PatientsNoAccess />;
   return (
     <div className="space-y-6">
       <div className="page-heading">
@@ -142,12 +162,14 @@ export function PatientsList(): JSX.Element {
             Encontrá al paciente y continuá con su atención.
           </p>
         </div>
-        <Button type="button" asChild>
-          <Link href="/app/patients/new">
-            <Icon name="plus" />
-            Nuevo paciente
-          </Link>
-        </Button>
+        {canCreate && (
+          <Button type="button" asChild>
+            <Link href="/app/patients/new">
+              <Icon name="plus" />
+              Nuevo paciente
+            </Link>
+          </Button>
+        )}
       </div>
 
       <form
@@ -263,9 +285,11 @@ export function PatientsList(): JSX.Element {
           title="No encontramos pacientes"
           description="Probá con otro nombre o estado, o limpiá los filtros."
         >
-          <Button type="button" asChild>
-            <Link href="/app/patients/new">Crear paciente</Link>
-          </Button>
+          {canCreate && (
+            <Button type="button" asChild>
+              <Link href="/app/patients/new">Crear paciente</Link>
+            </Button>
+          )}
         </EmptyState>
       ) : (
         <div className="space-y-3" aria-label="Resultados de pacientes">
@@ -274,6 +298,8 @@ export function PatientsList(): JSX.Element {
               key={patient.id}
               patient={patient}
               canReadGuardians={result.canReadGuardians}
+              canUpdate={canUpdate}
+              canDeactivate={canDeactivate}
             />
           ))}
         </div>

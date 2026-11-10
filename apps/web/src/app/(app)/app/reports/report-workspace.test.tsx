@@ -542,3 +542,15 @@ describe("ReportWorkspace · the branch filter (MB-004)", () => {
     expect(urls).not.toContain("/api/reports/branches");
   });
 });
+
+/** UX-037: a caller known to lack `reports.read` gets the refusal without a read. */
+describe("ReportWorkspace read gate (UX-037)", () => {
+  it("shows the refusal and reads nothing without reports.read", () => {
+    const fetchMock = installFetch(() => jsonResponse(SALES_BY_PERIOD));
+    renderWorkspace("sales-by-period", { permissions: [] });
+    expect(screen.getByTestId("report-permission-denied")).toHaveTextContent(
+      "No tenés permiso para ver los informes."
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

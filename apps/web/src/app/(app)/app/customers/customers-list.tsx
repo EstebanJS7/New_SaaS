@@ -19,10 +19,20 @@ import {
 } from "./customer-search-api";
 import { deactivateCustomer, customerError, customerWriteBlocked } from "./customers-api";
 import { useCustomersListState } from "./customers-list-state";
+import { canUse, useCapabilities } from "@/lib/capabilities";
+import { CUSTOMER_ACTIONS, CustomersNoAccess } from "./customer-capabilities";
 
 const userFacingErrorMessage = customerError;
 
-function CustomerCard({ customer }: { readonly customer: CustomerSearchRow }): JSX.Element {
+function CustomerCard({
+  customer,
+  canUpdate = true,
+  canDeactivate = true,
+}: {
+  readonly customer: CustomerSearchRow;
+  readonly canUpdate?: boolean;
+  readonly canDeactivate?: boolean;
+}): JSX.Element {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [confirmDeactivateOpen, setConfirmDeactivateOpen] = useState(false);
@@ -65,26 +75,30 @@ function CustomerCard({ customer }: { readonly customer: CustomerSearchRow }): J
         ) : null}
       </div>
       <div className="flex shrink-0 gap-2">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={() => router.push(`/app/customers/${customer.id}/edit`)}
-        >
-          Editar
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => setConfirmDeactivateOpen(true)}
-          disabled={
-            mutation.isPending || !customer.isActive || customerWriteBlocked(mutation.error)
-          }
-          loading={mutation.isPending}
-        >
-          {mutation.isPending ? "Desactivando…" : "Desactivar"}
-        </Button>
+        {canUpdate && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => router.push(`/app/customers/${customer.id}/edit`)}
+          >
+            Editar
+          </Button>
+        )}
+        {canDeactivate && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setConfirmDeactivateOpen(true)}
+            disabled={
+              mutation.isPending || !customer.isActive || customerWriteBlocked(mutation.error)
+            }
+            loading={mutation.isPending}
+          >
+            {mutation.isPending ? "Desactivando…" : "Desactivar"}
+          </Button>
+        )}
       </div>
       <ConfirmActionDialog
         open={confirmDeactivateOpen}
@@ -108,10 +122,17 @@ export function CustomersList(): JSX.Element {
   const [state, setState] = useCustomersListState();
   const [search, setSearch] = useState(state.q);
   const [validation, setValidation] = useState<string>();
+  // UX-037: the shell's capabilities decide which actions are offered.
+  const capabilities = useCapabilities();
+  const canRead = canUse(capabilities, CUSTOMER_ACTIONS.read);
+  const canCreate = canUse(capabilities, CUSTOMER_ACTIONS.create);
+  const canUpdate = canUse(capabilities, CUSTOMER_ACTIONS.update);
+  const canDeactivate = canUse(capabilities, CUSTOMER_ACTIONS.deactivate);
   const query = useQuery({
     queryKey: ["customers", "search", state],
     queryFn: ({ signal }) => searchCustomers(state, signal),
     staleTime: 0,
+    enabled: canRead,
   });
   const result = query.data;
   const reset = () => {
@@ -120,6 +141,7 @@ export function CustomersList(): JSX.Element {
     setState({ q: "", page: 1, status: "active", kind: "all", sort: "name" });
   };
   const count = (value: number) => value.toLocaleString("es-PY");
+  if (!canRead) return <CustomersNoAccess />;
   return (
     <div className="space-y-6">
       <div className="page-heading">
@@ -130,12 +152,14 @@ export function CustomersList(): JSX.Element {
             Encontrá clientes y consultá sus datos guardados.
           </p>
         </div>
-        <Button type="button" asChild>
-          <Link href="/app/customers/new">
-            <Icon name="plus" />
-            Nuevo cliente
-          </Link>
-        </Button>
+        {canCreate && (
+          <Button type="button" asChild>
+            <Link href="/app/customers/new">
+              <Icon name="plus" />
+              Nuevo cliente
+            </Link>
+          </Button>
+        )}
       </div>
 
       <form
@@ -262,14 +286,21 @@ export function CustomersList(): JSX.Element {
           title="No encontramos clientes"
           description="Probá con otro nombre, documento, RUC o filtros."
         >
-          <Button type="button" asChild>
-            <Link href="/app/customers/new">Crear cliente</Link>
-          </Button>
+          {canCreate && (
+            <Button type="button" asChild>
+              <Link href="/app/customers/new">Crear cliente</Link>
+            </Button>
+          )}
         </EmptyState>
       ) : (
         <div className="space-y-3" aria-label="Resultados de clientes">
           {result?.items.map((customer) => (
-            <CustomerCard key={customer.id} customer={customer} />
+            <CustomerCard
+              key={customer.id}
+              customer={customer}
+              canUpdate={canUpdate}
+              canDeactivate={canDeactivate}
+            />
           ))}
         </div>
       )}

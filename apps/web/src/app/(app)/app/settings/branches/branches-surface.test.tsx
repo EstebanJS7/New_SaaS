@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Branch } from "./branches-api";
+import { CapabilitiesProvider, type Capabilities } from "@/lib/capabilities";
 import { BranchesSurface } from "./branches-surface";
 
 const CENTRAL: Branch = {
@@ -237,5 +238,45 @@ describe("BranchesSurface (MB-001)", () => {
     renderSurface();
     expect(await screen.findByText("No tenés permiso para ver las sucursales")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Agregar sucursal" })).toBeNull();
+  });
+});
+
+/** UX-037: every branches route needs `branches.manage`; unknown ⇒ offered. */
+describe("BranchesSurface gated by the caller's capabilities (UX-037)", () => {
+  function renderWith(capabilities?: Capabilities): void {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const tree = (
+      <QueryClientProvider client={client}>
+        <BranchesSurface />
+      </QueryClientProvider>
+    );
+    render(
+      capabilities === undefined ? (
+        tree
+      ) : (
+        <CapabilitiesProvider value={capabilities}>{tree}</CapabilitiesProvider>
+      )
+    );
+  }
+
+  it("shows the no-access state and reads nothing without branches.manage", () => {
+    const calls = installFetch(() => json({ branches: [CENTRAL, NORTE] }));
+    renderWith({ permissions: [] });
+    expect(
+      screen.getByRole("heading", { name: "No tenés permiso para ver las sucursales" })
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Agregar sucursal" })).toBeNull();
+    expect(calls).toHaveLength(0);
+  });
+
+  it.each([
+    ["granted", { permissions: ["branches.manage"] }],
+    ["unknown", undefined],
+  ])("offers every command when capabilities are %s", async (_label, capabilities) => {
+    installFetch(() => json({ branches: [CENTRAL, NORTE] }));
+    renderWith(capabilities);
+    await screen.findAllByTestId("branch-row");
+    expect(screen.getByRole("button", { name: "Agregar sucursal" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Editar" })).toHaveLength(2);
   });
 });

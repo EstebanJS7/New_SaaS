@@ -18,6 +18,7 @@ import {
   CardTitle,
 } from "@newsaas/ui/components/ui/card";
 import { BrandingPreview } from "./branding-preview";
+import { useCan, type CapabilityRequirement } from "@/lib/capabilities";
 
 interface BrandingResponse {
   readonly source: "tenant" | "preset";
@@ -207,8 +208,20 @@ function userFacingErrorMessage(error: Error): string {
  * - Loading, empty/default, success, error, and entitlement/unauthorized states
  *   are rendered with existing semantic tokens and components.
  */
+/**
+ * What a branding write needs ([[UX-037]]): `apps/api/src/branding/branding.controller.ts`
+ * and `branding-asset.controller.ts` require `branding.settings.manage`, and
+ * `branding.service.ts` / `branding-asset.service.ts` re-check the
+ * `custom_branding` entitlement. Reading the current brand needs neither.
+ */
+export const BRANDING_ACTIONS = {
+  manage: { permission: "branding.settings.manage", feature: "custom_branding" },
+} as const satisfies Record<string, CapabilityRequirement>;
+
 export function BrandingForm(): JSX.Element {
   const queryClient = useQueryClient();
+  // UX-037: without the write capability the brand stays visible, read-only.
+  const canManage = useCan(BRANDING_ACTIONS.manage);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [resetSuccess, setResetSuccess] = useState(false);
 
@@ -302,7 +315,7 @@ export function BrandingForm(): JSX.Element {
     resetMutation.error ??
     uploadMutation.error ??
     removeMutation.error;
-  const disabled = isPending || query.isLoading;
+  const disabled = isPending || query.isLoading || !canManage;
 
   return (
     <div className="space-y-6">
@@ -402,148 +415,157 @@ export function BrandingForm(): JSX.Element {
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-3 pt-4">
-                <Button
-                  type="button"
-                  onClick={() => saveMutation.mutate(formStateToOverrides(formState))}
-                  disabled={disabled}
-                >
-                  {saveMutation.isPending ? "Guardando..." : "Guardar"}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => resetMutation.mutate()}
-                  disabled={disabled}
-                >
-                  {resetMutation.isPending
-                    ? "Restableciendo..."
-                    : "Restablecer valores predeterminados"}
-                </Button>
-                {saveSuccess && (
-                  <span className="text-sm text-status-success">Marca guardada.</span>
-                )}
-                {resetSuccess && (
-                  <span className="text-sm text-status-success">
-                    Marca restablecida a los valores predeterminados.
-                  </span>
-                )}
-              </div>
+              {!canManage && (
+                <p className="pt-4 text-sm text-muted-foreground">
+                  No tenés permiso para cambiar la marca. Se muestra en solo lectura.
+                </p>
+              )}
+              {canManage && (
+                <div className="flex flex-wrap items-center gap-3 pt-4">
+                  <Button
+                    type="button"
+                    onClick={() => saveMutation.mutate(formStateToOverrides(formState))}
+                    disabled={disabled}
+                  >
+                    {saveMutation.isPending ? "Guardando..." : "Guardar"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => resetMutation.mutate()}
+                    disabled={disabled}
+                  >
+                    {resetMutation.isPending
+                      ? "Restableciendo..."
+                      : "Restablecer valores predeterminados"}
+                  </Button>
+                  {saveSuccess && (
+                    <span className="text-sm text-status-success">Marca guardada.</span>
+                  )}
+                  {resetSuccess && (
+                    <span className="text-sm text-status-success">
+                      Marca restablecida a los valores predeterminados.
+                    </span>
+                  )}
+                </div>
+              )}
             </>
           )}
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Recursos de identidad</CardTitle>
-          <CardDescription>
-            Subí los logos y un favicon. Los archivos deben ser PNG, WebP o ICO. Los logos pueden
-            pesar hasta 2 MB y el favicon, hasta 512 KB.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          {query.isLoading ? (
-            <div className="text-sm text-muted-foreground">
-              Cargando los recursos de identidad...
-            </div>
-          ) : (
-            <>
-              {(["logoLight", "logoDark", "favicon"] as AssetKind[]).map((kind) => {
-                const currentUrl =
-                  kind === "logoLight"
-                    ? query.data?.brand.assets?.logoLightUrl
-                    : kind === "logoDark"
-                      ? query.data?.brand.assets?.logoDarkUrl
-                      : query.data?.brand.assets?.faviconUrl;
-                const selectedFile = selectedFiles[kind];
-                return (
-                  <div key={kind} className="space-y-2" data-testid={`asset-control-${kind}`}>
-                    <div className="flex items-center justify-between">
-                      <label className="text-sm font-medium">{ASSET_KIND_LABELS[kind]}</label>
+      {canManage && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Recursos de identidad</CardTitle>
+            <CardDescription>
+              Subí los logos y un favicon. Los archivos deben ser PNG, WebP o ICO. Los logos pueden
+              pesar hasta 2 MB y el favicon, hasta 512 KB.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {query.isLoading ? (
+              <div className="text-sm text-muted-foreground">
+                Cargando los recursos de identidad...
+              </div>
+            ) : (
+              <>
+                {(["logoLight", "logoDark", "favicon"] as AssetKind[]).map((kind) => {
+                  const currentUrl =
+                    kind === "logoLight"
+                      ? query.data?.brand.assets?.logoLightUrl
+                      : kind === "logoDark"
+                        ? query.data?.brand.assets?.logoDarkUrl
+                        : query.data?.brand.assets?.faviconUrl;
+                  const selectedFile = selectedFiles[kind];
+                  return (
+                    <div key={kind} className="space-y-2" data-testid={`asset-control-${kind}`}>
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-medium">{ASSET_KIND_LABELS[kind]}</label>
+                        {currentUrl ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => removeMutation.mutate(kind)}
+                            disabled={disabled}
+                            data-testid={`asset-remove-${kind}`}
+                          >
+                            {removeMutation.isPending && removeMutation.variables === kind
+                              ? "Quitando..."
+                              : "Quitar"}
+                          </Button>
+                        ) : null}
+                      </div>
+
                       {currentUrl ? (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => removeMutation.mutate(kind)}
-                          disabled={disabled}
-                          data-testid={`asset-remove-${kind}`}
-                        >
-                          {removeMutation.isPending && removeMutation.variables === kind
-                            ? "Quitando..."
-                            : "Quitar"}
-                        </Button>
+                        <img
+                          src={currentUrl}
+                          alt={`Vista previa: ${ASSET_KIND_LABELS[kind]}`}
+                          width={kind === "favicon" ? 32 : 120}
+                          height={kind === "favicon" ? 32 : 40}
+                          className={
+                            kind === "favicon"
+                              ? "h-8 w-8 object-contain"
+                              : "h-10 w-auto object-contain"
+                          }
+                          data-testid={`asset-preview-${kind}`}
+                        />
+                      ) : null}
+
+                      <input
+                        id={`asset-${kind}`}
+                        type="file"
+                        accept={ASSET_KIND_ACCEPT}
+                        disabled={disabled}
+                        onChange={(event) => {
+                          const file = event.target.files?.[0] ?? null;
+                          setSelectedFiles((previous) => ({ ...previous, [kind]: file }));
+                        }}
+                        className="block w-full text-sm text-foreground file:mr-4 file:rounded-md file:border-0 file:bg-secondary file:px-3 file:py-2 file:text-sm file:font-medium file:text-secondary-foreground hover:file:bg-secondary/80 disabled:cursor-not-allowed disabled:opacity-50"
+                      />
+
+                      {selectedFile ? (
+                        <div className="flex flex-wrap items-center gap-3">
+                          <span className="text-sm text-muted-foreground">{selectedFile.name}</span>
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => uploadMutation.mutate({ kind, file: selectedFile })}
+                            disabled={disabled}
+                            data-testid={`asset-upload-${kind}`}
+                          >
+                            {uploadMutation.isPending && uploadMutation.variables?.kind === kind
+                              ? "Subiendo..."
+                              : "Subir"}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setSelectedFiles((previous) => ({ ...previous, [kind]: null }));
+                              const input = document.getElementById(
+                                `asset-${kind}`
+                              ) as HTMLInputElement | null;
+                              if (input) {
+                                input.value = "";
+                              }
+                            }}
+                            disabled={disabled}
+                          >
+                            Limpiar
+                          </Button>
+                        </div>
                       ) : null}
                     </div>
-
-                    {currentUrl ? (
-                      <img
-                        src={currentUrl}
-                        alt={`Vista previa: ${ASSET_KIND_LABELS[kind]}`}
-                        width={kind === "favicon" ? 32 : 120}
-                        height={kind === "favicon" ? 32 : 40}
-                        className={
-                          kind === "favicon"
-                            ? "h-8 w-8 object-contain"
-                            : "h-10 w-auto object-contain"
-                        }
-                        data-testid={`asset-preview-${kind}`}
-                      />
-                    ) : null}
-
-                    <input
-                      id={`asset-${kind}`}
-                      type="file"
-                      accept={ASSET_KIND_ACCEPT}
-                      disabled={disabled}
-                      onChange={(event) => {
-                        const file = event.target.files?.[0] ?? null;
-                        setSelectedFiles((previous) => ({ ...previous, [kind]: file }));
-                      }}
-                      className="block w-full text-sm text-foreground file:mr-4 file:rounded-md file:border-0 file:bg-secondary file:px-3 file:py-2 file:text-sm file:font-medium file:text-secondary-foreground hover:file:bg-secondary/80 disabled:cursor-not-allowed disabled:opacity-50"
-                    />
-
-                    {selectedFile ? (
-                      <div className="flex flex-wrap items-center gap-3">
-                        <span className="text-sm text-muted-foreground">{selectedFile.name}</span>
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => uploadMutation.mutate({ kind, file: selectedFile })}
-                          disabled={disabled}
-                          data-testid={`asset-upload-${kind}`}
-                        >
-                          {uploadMutation.isPending && uploadMutation.variables?.kind === kind
-                            ? "Subiendo..."
-                            : "Subir"}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            setSelectedFiles((previous) => ({ ...previous, [kind]: null }));
-                            const input = document.getElementById(
-                              `asset-${kind}`
-                            ) as HTMLInputElement | null;
-                            if (input) {
-                              input.value = "";
-                            }
-                          }}
-                          disabled={disabled}
-                        >
-                          Limpiar
-                        </Button>
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </>
-          )}
-        </CardContent>
-      </Card>
+                  );
+                })}
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {!query.isLoading && (
         <BrandingPreview

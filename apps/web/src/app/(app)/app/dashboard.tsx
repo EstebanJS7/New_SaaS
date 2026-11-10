@@ -16,6 +16,7 @@ import {
 } from "@newsaas/ui/components/ui/card";
 import type { ReportCode } from "@/app/api/reports/report-codes";
 import { formatEsPyDecimal, formatStaffMoney } from "@/lib/es-py-format";
+import { canUse, useCapabilities, type CapabilityRequirement } from "@/lib/capabilities";
 import {
   fetchReport,
   isReportAccessDenied,
@@ -102,13 +103,34 @@ type DashboardReportQuery = UseQueryResult<ReportResponse, Error>;
  * queryString)` is the identity of an answer, so two surfaces asking the same
  * question share the entry instead of each holding a copy.
  */
-function useDashboardReport(code: ReportCode, selection: ReportSelection): DashboardReportQuery {
+function useDashboardReport(
+  code: ReportCode,
+  selection: ReportSelection,
+  enabled: boolean
+): DashboardReportQuery {
   return useQuery({
     queryKey: ["reports", code, reportQueryString(code, selection)],
     queryFn: () => fetchReport(code, selection),
     retry: false,
+    enabled,
   });
 }
+
+/**
+ * What each dashboard read and shortcut needs ([[UX-037]]): the cards read
+ * `apps/api/src/reporting/reporting.controller.ts` (`reports.read`); the
+ * shortcuts lead to the agenda (`scheduling/appointments.controller.ts` GET),
+ * the patients (`patients/patient-search.controller.ts`, `veterinary`), the POS
+ * (`sales/sales.controller.ts` create, `sales` feature) and a catalogue item's
+ * threshold (`catalog/catalog.controller.ts` PUT).
+ */
+export const DASHBOARD_ACTIONS = {
+  readReports: { permission: "reports.read" },
+  openAgenda: { permission: "scheduling.appointment.read" },
+  findPatient: { permission: "patients.read", feature: "veterinary" },
+  openPointOfSale: { permission: "sales.create", feature: "sales" },
+  configureThreshold: { permission: "catalog.update" },
+} as const satisfies Record<string, CapabilityRequirement>;
 
 interface DashboardCardProps {
   readonly testId: string;
@@ -223,12 +245,15 @@ function CardState({
 export function Dashboard(): JSX.Element {
   const [preset, setPreset] = useState<ReportPeriodPreset>(REPORT_DEFAULT_PRESET);
   const periodSelection: ReportSelection = { kind: "preset", preset };
+  // UX-037: a caller known to lack `reports.read` gets no report reads at all.
+  const capabilities = useCapabilities();
+  const canReadReports = canUse(capabilities, DASHBOARD_ACTIONS.readReports);
 
-  const sales = useDashboardReport("sales-by-period", periodSelection);
-  const cashSessions = useDashboardReport("cash-sessions", periodSelection);
+  const sales = useDashboardReport("sales-by-period", periodSelection, canReadReports);
+  const cashSessions = useDashboardReport("cash-sessions", periodSelection, canReadReports);
   // No period, ever: `low-stock` refuses a query, so this selection is not
   // derived from `preset` and the card is not refetched when the period changes.
-  const lowStock = useDashboardReport("low-stock", { kind: "none" });
+  const lowStock = useDashboardReport("low-stock", { kind: "none" }, canReadReports);
 
   return (
     <div data-testid="app-dashboard" className="space-y-8 text-foreground">
@@ -266,119 +291,130 @@ export function Dashboard(): JSX.Element {
         </div>
       </header>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <DashboardCard
-          testId="dashboard-card-gross"
-          title="Ventas brutas"
-          code="sales-by-period"
-          description="Ingresos de ventas completadas."
-          query={sales}
-          renderValue={(response) =>
-            response.report === "sales-by-period" ? (
-              <>
-                {/* Localized for reading only; the exact API decimal remains the source of truth. */}
-                <p className={valueClassName}>
-                  {formatStaffMoney(response.totalGross, response.currency)}
-                </p>
-                <p className="text-xs text-muted-foreground">Ventas completadas</p>
-              </>
-            ) : (
-              NO_VALUE
-            )
-          }
-        />
-
-        <DashboardCard
-          testId="dashboard-card-sales"
-          title="Ventas"
-          code="sales-by-period"
-          description="Cantidad de ventas completadas en el período."
-          query={sales}
-          renderValue={(response) =>
-            response.report === "sales-by-period" ? (
-              <>
-                {/* A count from the API; the frontend does not recompute it. */}
-                <p className={valueClassName}>{response.saleCount}</p>
-                <p className="text-xs text-muted-foreground">
-                  Ventas completadas en el período seleccionado.
-                </p>
-              </>
-            ) : (
-              NO_VALUE
-            )
-          }
-        />
-
-        <DashboardCard
-          testId="dashboard-card-cash-difference"
-          title="Diferencia de caja"
-          code="cash-sessions"
-          description="Diferencia entre el monto contado y el esperado en cajas cerradas."
-          query={cashSessions}
-          renderValue={(response) =>
-            response.report === "cash-sessions" ? (
-              <>
-                {/* May be negative, and the sign IS the information: a drawer
-                    that was short must not read like one that was over. */}
-                <p className={valueClassName}>{formatEsPyDecimal(response.totals.difference)}</p>
-                <p className="text-xs text-muted-foreground">
-                  En {response.rows.length} caja{response.rows.length === 1 ? "" : "s"} cerrada
-                  {response.rows.length === 1 ? "" : "s"} durante el período.
-                </p>
-              </>
-            ) : (
-              NO_VALUE
-            )
-          }
-        />
-
-        <DashboardCard
-          testId="dashboard-card-low-stock"
-          title="Stock bajo"
-          code="low-stock"
-          description="Alertas actuales de stock, sin depender del período."
-          query={lowStock}
-          renderValue={(response) =>
-            response.report === "low-stock" ? (
-              response.thresholdsConfigured ? (
+      {canReadReports ? (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <DashboardCard
+            testId="dashboard-card-gross"
+            title="Ventas brutas"
+            code="sales-by-period"
+            description="Ingresos de ventas completadas."
+            query={sales}
+            renderValue={(response) =>
+              response.report === "sales-by-period" ? (
                 <>
-                  <p className={valueClassName}>{response.rows.length}</p>
+                  {/* Localized for reading only; the exact API decimal remains the source of truth. */}
+                  <p className={valueClassName}>
+                    {formatStaffMoney(response.totalGross, response.currency)}
+                  </p>
+                  <p className="text-xs text-muted-foreground">Ventas completadas</p>
+                </>
+              ) : (
+                NO_VALUE
+              )
+            }
+          />
+
+          <DashboardCard
+            testId="dashboard-card-sales"
+            title="Ventas"
+            code="sales-by-period"
+            description="Cantidad de ventas completadas en el período."
+            query={sales}
+            renderValue={(response) =>
+              response.report === "sales-by-period" ? (
+                <>
+                  {/* A count from the API; the frontend does not recompute it. */}
+                  <p className={valueClassName}>{response.saleCount}</p>
                   <p className="text-xs text-muted-foreground">
-                    {response.rows.length === 1 ? "Artículo en" : "Artículos en"} su umbral mínimo o
-                    por debajo.
+                    Ventas completadas en el período seleccionado.
                   </p>
                 </>
               ) : (
+                NO_VALUE
+              )
+            }
+          />
+
+          <DashboardCard
+            testId="dashboard-card-cash-difference"
+            title="Diferencia de caja"
+            code="cash-sessions"
+            description="Diferencia entre el monto contado y el esperado en cajas cerradas."
+            query={cashSessions}
+            renderValue={(response) =>
+              response.report === "cash-sessions" ? (
                 <>
-                  {/* The honest first-run answer ([[DEC-065]]): no threshold means
+                  {/* May be negative, and the sign IS the information: a drawer
+                    that was short must not read like one that was over. */}
+                  <p className={valueClassName}>{formatEsPyDecimal(response.totals.difference)}</p>
+                  <p className="text-xs text-muted-foreground">
+                    En {response.rows.length} caja{response.rows.length === 1 ? "" : "s"} cerrada
+                    {response.rows.length === 1 ? "" : "s"} durante el período.
+                  </p>
+                </>
+              ) : (
+                NO_VALUE
+              )
+            }
+          />
+
+          <DashboardCard
+            testId="dashboard-card-low-stock"
+            title="Stock bajo"
+            code="low-stock"
+            description="Alertas actuales de stock, sin depender del período."
+            query={lowStock}
+            renderValue={(response) =>
+              response.report === "low-stock" ? (
+                response.thresholdsConfigured ? (
+                  <>
+                    <p className={valueClassName}>{response.rows.length}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {response.rows.length === 1 ? "Artículo en" : "Artículos en"} su umbral mínimo
+                      o por debajo.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    {/* The honest first-run answer ([[DEC-065]]): no threshold means
                       the item is not monitored, which is NOT the same as healthy,
                       so the card explains itself instead of rendering a confident
                       zero. The sentence matches the report workspace's empty
                       state verbatim. */}
-                  <p
-                    data-testid="dashboard-card-low-stock-not-configured"
-                    className="text-sm font-medium text-foreground"
-                  >
-                    Aún no hay artículos con umbral de stock bajo
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    No se supervisa el stock hasta que se configure un umbral.
-                  </p>
-                  <Link
-                    data-testid="dashboard-card-low-stock-configure"
-                    href="/app/catalog"
-                    className="inline-flex text-xs font-medium text-primary underline-offset-4 hover:underline"
-                  >
-                    Configurar un umbral en el catálogo
-                  </Link>
-                </>
+                    <p
+                      data-testid="dashboard-card-low-stock-not-configured"
+                      className="text-sm font-medium text-foreground"
+                    >
+                      Aún no hay artículos con umbral de stock bajo
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      No se supervisa el stock hasta que se configure un umbral.
+                    </p>
+                    {canUse(capabilities, DASHBOARD_ACTIONS.configureThreshold) && (
+                      <Link
+                        data-testid="dashboard-card-low-stock-configure"
+                        href="/app/catalog"
+                        className="inline-flex text-xs font-medium text-primary underline-offset-4 hover:underline"
+                      >
+                        Configurar un umbral en el catálogo
+                      </Link>
+                    )}
+                  </>
+                )
+              ) : (
+                NO_VALUE
               )
-            ) : (
-              NO_VALUE
-            )
-          }
-        />
-      </div>
+            }
+          />
+        </div>
+      ) : (
+        <p
+          data-testid="dashboard-reports-denied"
+          className="rounded-lg border bg-card p-4 text-sm text-muted-foreground"
+        >
+          No tenés permiso para ver los informes del panel.
+        </p>
+      )}
       <section aria-label="Accesos rápidos" className="grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader>
@@ -393,60 +429,67 @@ export function Dashboard(): JSX.Element {
                   title: "Abrir agenda",
                   description: "Turnos y disponibilidad",
                   icon: "calendar",
+                  requirement: DASHBOARD_ACTIONS.openAgenda,
                 },
                 {
                   href: "/app/patients",
                   title: "Buscar un paciente",
                   description: "Ficha e historial clínico",
                   icon: "activity",
+                  requirement: DASHBOARD_ACTIONS.findPatient,
                 },
                 {
                   href: "/app/sales",
                   title: "Abrir punto de venta",
                   description: "Productos, servicios y cobros",
                   icon: "receipt",
+                  requirement: DASHBOARD_ACTIONS.openPointOfSale,
                 },
               ] as const
-            ).map((action) => (
-              <Link
-                key={action.href}
-                href={action.href}
-                className="group rounded-lg border bg-background/50 p-4 transition-colors hover:border-primary/40 hover:bg-secondary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <div className="mb-5 flex items-center justify-between text-primary">
-                  <Icon name={action.icon} className="size-5" />
-                  <Icon
-                    name="arrow"
-                    className="size-4 text-muted-foreground transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5 motion-reduce:transform-none"
-                  />
-                </div>
-                <p className="text-sm font-semibold">{action.title}</p>
-                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  {action.description}
-                </p>
-              </Link>
-            ))}
+            )
+              .filter((action) => canUse(capabilities, action.requirement))
+              .map((action) => (
+                <Link
+                  key={action.href}
+                  href={action.href}
+                  className="group rounded-lg border bg-background/50 p-4 transition-colors hover:border-primary/40 hover:bg-secondary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <div className="mb-5 flex items-center justify-between text-primary">
+                    <Icon name={action.icon} className="size-5" />
+                    <Icon
+                      name="arrow"
+                      className="size-4 text-muted-foreground transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5 motion-reduce:transform-none"
+                    />
+                  </div>
+                  <p className="text-sm font-semibold">{action.title}</p>
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    {action.description}
+                  </p>
+                </Link>
+              ))}
           </CardContent>
         </Card>
-        <Card className="bg-secondary/40">
-          <CardHeader>
-            <div className="mb-3 flex size-10 items-center justify-center rounded-lg border bg-card text-primary">
-              <Icon name="chart" className="size-5" />
-            </div>
-            <CardTitle className="text-base">Revisá más en detalle</CardTitle>
-            <CardDescription>
-              Consultá con más detalle los informes de ventas, stock y operaciones.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button asChild variant="outline" className="w-full justify-between">
-              <Link href="/app/reports">
-                Ver informes
-                <Icon name="arrow" />
-              </Link>
-            </Button>
-          </CardContent>
-        </Card>
+        {canReadReports && (
+          <Card className="bg-secondary/40">
+            <CardHeader>
+              <div className="mb-3 flex size-10 items-center justify-center rounded-lg border bg-card text-primary">
+                <Icon name="chart" className="size-5" />
+              </div>
+              <CardTitle className="text-base">Revisá más en detalle</CardTitle>
+              <CardDescription>
+                Consultá con más detalle los informes de ventas, stock y operaciones.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button asChild variant="outline" className="w-full justify-between">
+                <Link href="/app/reports">
+                  Ver informes
+                  <Icon name="arrow" />
+                </Link>
+              </Button>
+            </CardContent>
+          </Card>
+        )}
       </section>
     </div>
   );

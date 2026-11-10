@@ -15,6 +15,7 @@ function setup(
     hidden?: boolean;
     standalone?: boolean;
     origin?: string;
+    canLink?: boolean;
   } = {}
 ) {
   let appointmentId: string | null = options.origin ?? null;
@@ -60,6 +61,7 @@ function setup(
         appointmentId={options.standalone ? undefined : A}
         currentSaleId={options.sales ? S : undefined}
         inPOS={options.sales}
+        {...(options.canLink !== undefined && { canLink: options.canLink })}
       />
     </QueryClientProvider>
   );
@@ -81,6 +83,23 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 describe("ClinicalAssociations", () => {
+  it("UX-037: keeps links readable but offers no link command when the caller cannot link", async () => {
+    setup({ canLink: false });
+    expect(await screen.findByText("Sin cita vinculada")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Vincular/ })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Elegir un borrador de venta existente" })
+    ).not.toBeInTheDocument();
+  });
+  it("UX-037: offers the link commands when the caller can link", async () => {
+    setup({ canLink: true });
+    expect(
+      await screen.findByRole("button", { name: "Vincular esta consulta a la cita de origen" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Elegir un borrador de venta existente" })
+    ).toBeInTheDocument();
+  });
   it("cancels appointment linking without issuing commands", async () => {
     const fetch = setup();
     fireEvent.click(

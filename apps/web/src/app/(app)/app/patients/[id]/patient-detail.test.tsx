@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { CapabilitiesProvider, type Capabilities } from "@/lib/capabilities";
 import { PatientDetail } from "./patient-detail";
 
 /**
@@ -542,5 +543,74 @@ describe("Patient identity failures", () => {
           ((init as RequestInit).body as string).includes("customer-2")
       )
     ).toHaveLength(1);
+  });
+});
+
+/**
+ * UX-037: the patient detail offers only the patient and guardian commands the
+ * caller's capabilities allow. Unknown capabilities keep every command.
+ */
+describe("PatientDetail gated by the caller's capabilities (UX-037)", () => {
+  const ALL = [
+    "patients.read",
+    "patients.update",
+    "patients.deactivate",
+    "patients.guardian.manage",
+    "customers.read",
+  ];
+
+  function renderWith(capabilities?: Capabilities): void {
+    const tree = (
+      <TestWrapper>
+        <PatientDetail />
+      </TestWrapper>
+    );
+    render(
+      capabilities === undefined ? (
+        tree
+      ) : (
+        <CapabilitiesProvider value={capabilities}>{tree}</CapabilitiesProvider>
+      )
+    );
+  }
+
+  it("shows a no-access state and reads nothing without patients.read", async () => {
+    const fetchMock = mockWorkflow();
+    renderWith({ permissions: [] });
+    expect(
+      await screen.findByRole("heading", { name: "No tenés permiso para ver los pacientes" })
+    ).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("shows a no-access state when the clinic lacks the veterinary feature", async () => {
+    mockWorkflow();
+    renderWith({ permissions: ALL, features: [] });
+    expect(
+      await screen.findByRole("heading", { name: "No tenés permiso para ver los pacientes" })
+    ).toBeInTheDocument();
+  });
+
+  it("hides edit, deactivate and guardian commands for a read-only caller", async () => {
+    mockWorkflow();
+    renderWith({ permissions: ["patients.read", "customers.read"] });
+    expect(await screen.findByRole("heading", { name: "Rex" })).toBeInTheDocument();
+    expect(await screen.findByRole("group", { name: "Responsable Ana Gomez" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Editar" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Desactivar paciente" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Vincular responsable/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Marcar principal" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["granted", { permissions: ALL, features: ["veterinary"] }],
+    ["unknown", undefined],
+  ])("offers every command when capabilities are %s", async (_label, capabilities) => {
+    mockWorkflow();
+    renderWith(capabilities);
+    expect(await screen.findByRole("button", { name: "Editar" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Desactivar paciente" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Vincular responsable/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Marcar principal" })).toBeInTheDocument();
   });
 });

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { StaffMember } from "./team-api";
+import { CapabilitiesProvider, type Capabilities } from "@/lib/capabilities";
 import { TeamSurface } from "./team-surface";
 
 const OWNER: StaffMember = {
@@ -380,5 +381,68 @@ describe("TeamSurface (MB-001) — where each person works", () => {
     await screen.findByTestId("team-notice");
     const post = calls.find((call) => call.url.endsWith("/invitations"));
     expect(JSON.parse(post?.body ?? "{}")).toMatchObject({ branchIds: [NORTE.id] });
+  });
+});
+
+/**
+ * UX-037: the team screen offers its commands only to a caller who may manage
+ * memberships; branch controls also need `branches.manage`. Unknown ⇒ offered.
+ */
+describe("TeamSurface gated by the caller's capabilities (UX-037)", () => {
+  const BRANCHES = [
+    { id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", name: "Casa central", isActive: true },
+    { id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", name: "Norte", isActive: true },
+  ];
+  function handler(call: Call): Response {
+    if (call.url === "/api/branches") return json({ branches: BRANCHES });
+    return json({ members: [OWNER, SUSPENDED] });
+  }
+  function renderWith(capabilities?: Capabilities): void {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const tree = (
+      <QueryClientProvider client={client}>
+        <TeamSurface />
+      </QueryClientProvider>
+    );
+    render(
+      capabilities === undefined ? (
+        tree
+      ) : (
+        <CapabilitiesProvider value={capabilities}>{tree}</CapabilitiesProvider>
+      )
+    );
+  }
+
+  it("shows the no-access state and reads nothing without users.membership.manage", () => {
+    const calls = installFetch(handler);
+    renderWith({ permissions: [] });
+    expect(
+      screen.getByRole("heading", { name: "No tenés permiso para ver el personal" })
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Invitar persona" })).toBeNull();
+    expect(calls).toHaveLength(0);
+  });
+
+  it("hides the branch controls without branches.manage and never reads the branches", async () => {
+    const calls = installFetch(handler);
+    renderWith({ permissions: ["users.membership.manage"] });
+    await screen.findAllByTestId("team-member");
+    expect(screen.getByRole("button", { name: "Invitar persona" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sucursales" })).toBeNull();
+    expect(calls.some((call) => call.url === "/api/branches")).toBe(false);
+  });
+
+  it.each([
+    ["granted", { permissions: ["users.membership.manage", "branches.manage"] }],
+    ["unknown", undefined],
+  ])("offers every command when capabilities are %s", async (_label, capabilities) => {
+    installFetch(handler);
+    renderWith(capabilities);
+    await screen.findAllByTestId("team-member");
+    expect(screen.getByRole("button", { name: "Invitar persona" })).toBeInTheDocument();
+    expect((await screen.findAllByRole("button", { name: "Sucursales" })).length).toBeGreaterThan(
+      0
+    );
+    expect(screen.getByRole("button", { name: "Reactivar" })).toBeInTheDocument();
   });
 });

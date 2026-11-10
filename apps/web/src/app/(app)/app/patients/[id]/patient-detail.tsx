@@ -13,7 +13,8 @@ import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
 import { ErrorState } from "@/components/feedback";
 import { usePatientExit } from "../patient-form-interaction";
 import { formatEsPyDateOnly } from "@/lib/es-py-format";
-import { useCapabilities } from "@/lib/capabilities";
+import { canUse, useCapabilities } from "@/lib/capabilities";
+import { PATIENT_ACTIONS, PatientsNoAccess } from "../patient-capabilities";
 import {
   Card,
   CardContent,
@@ -88,7 +89,15 @@ function SectionCard({
   );
 }
 
-function PatientHeader({ patientId }: { readonly patientId: string }): JSX.Element {
+function PatientHeader({
+  patientId,
+  canUpdate = true,
+  canDeactivate = true,
+}: {
+  readonly patientId: string;
+  readonly canUpdate?: boolean;
+  readonly canDeactivate?: boolean;
+}): JSX.Element {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [confirmDeactivateOpen, setConfirmDeactivateOpen] = useState(false);
@@ -200,25 +209,29 @@ function PatientHeader({ patientId }: { readonly patientId: string }): JSX.Eleme
                 Ir a ficha clínica
               </a>
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => router.push(`/app/patients/${patient.id}/edit`)}
-            >
-              Editar
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={
-                deactivateMutation.isPending ||
-                patientWriteBlocked(deactivateMutation.error) ||
-                !patient.isActive
-              }
-              onClick={() => setConfirmDeactivateOpen(true)}
-            >
-              {deactivateMutation.isPending ? "Desactivando…" : "Desactivar paciente"}
-            </Button>
+            {canUpdate && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => router.push(`/app/patients/${patient.id}/edit`)}
+              >
+                Editar
+              </Button>
+            )}
+            {canDeactivate && (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={
+                  deactivateMutation.isPending ||
+                  patientWriteBlocked(deactivateMutation.error) ||
+                  !patient.isActive
+                }
+                onClick={() => setConfirmDeactivateOpen(true)}
+              >
+                {deactivateMutation.isPending ? "Desactivando…" : "Desactivar paciente"}
+              </Button>
+            )}
           </div>
         </div>
         <ConfirmActionDialog
@@ -379,10 +392,12 @@ function GuardianItem({
   guardian,
   patientId,
   customers,
+  canManage = true,
 }: {
   readonly guardian: PatientGuardian;
   readonly patientId: string;
   readonly customers: readonly Customer[] | undefined;
+  readonly canManage?: boolean;
 }): JSX.Element {
   const queryClient = useQueryClient();
   const [confirmDeactivateOpen, setConfirmDeactivateOpen] = useState(false);
@@ -425,37 +440,39 @@ function GuardianItem({
           </p>
         )}
       </div>
-      <div className="flex shrink-0 flex-wrap gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={
-            primaryMutation.isPending ||
-            deactivateMutation.isPending ||
-            patientWriteBlocked(error) ||
-            guardian.isPrimary ||
-            !guardian.isActive
-          }
-          onClick={() => primaryMutation.mutate()}
-        >
-          {primaryMutation.isPending ? "Actualizando…" : "Marcar principal"}
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={
-            deactivateMutation.isPending ||
-            primaryMutation.isPending ||
-            patientWriteBlocked(error) ||
-            !guardian.isActive
-          }
-          onClick={() => setConfirmDeactivateOpen(true)}
-        >
-          {deactivateMutation.isPending ? "Desactivando…" : "Desactivar"}
-        </Button>
-      </div>
+      {canManage && (
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={
+              primaryMutation.isPending ||
+              deactivateMutation.isPending ||
+              patientWriteBlocked(error) ||
+              guardian.isPrimary ||
+              !guardian.isActive
+            }
+            onClick={() => primaryMutation.mutate()}
+          >
+            {primaryMutation.isPending ? "Actualizando…" : "Marcar principal"}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={
+              deactivateMutation.isPending ||
+              primaryMutation.isPending ||
+              patientWriteBlocked(error) ||
+              !guardian.isActive
+            }
+            onClick={() => setConfirmDeactivateOpen(true)}
+          >
+            {deactivateMutation.isPending ? "Desactivando…" : "Desactivar"}
+          </Button>
+        </div>
+      )}
       <ConfirmActionDialog
         open={confirmDeactivateOpen}
         onOpenChange={(open) => {
@@ -476,7 +493,13 @@ function GuardianItem({
   );
 }
 
-function GuardianSection({ patientId }: { readonly patientId: string }): JSX.Element {
+function GuardianSection({
+  patientId,
+  canManage = true,
+}: {
+  readonly patientId: string;
+  readonly canManage?: boolean;
+}): JSX.Element {
   const query = useQuery({
     queryKey: ["patients", patientId, "guardians"],
     queryFn: () => listGuardians(patientId),
@@ -490,7 +513,7 @@ function GuardianSection({ patientId }: { readonly patientId: string }): JSX.Ele
       title="Responsables"
       description="Vinculá los clientes que están a cargo de este paciente."
     >
-      {query.isSuccess && customers.isSuccess && (
+      {canManage && query.isSuccess && customers.isSuccess && (
         <AddGuardianForm patientId={patientId} linkedCustomerIds={linkedCustomerIds} />
       )}
       {customers.isPending && <p role="status">Cargando nombres de responsables…</p>}
@@ -517,6 +540,7 @@ function GuardianSection({ patientId }: { readonly patientId: string }): JSX.Ele
               guardian={guardian}
               patientId={patientId}
               customers={customers.data}
+              canManage={canManage}
             />
           ))}
         </div>
@@ -538,14 +562,24 @@ export function PatientDetail({
 }: { appointmentId?: string; initialEncounterId?: string } = {}): JSX.Element {
   const params = useParams<{ id: string }>();
   const patientId = params.id;
-  // UX-037: the shell's permissions feed the clinical sections that already gate
-  // on them; unknown stays `undefined` (actions shown, API refuses).
-  const { permissions } = useCapabilities();
+  // UX-037: the shell's capabilities decide which commands are offered and feed
+  // the clinical sections; unknown stays `undefined` (actions shown, API refuses).
+  const capabilities = useCapabilities();
+  const { permissions, features } = capabilities;
+  const canRead = canUse(capabilities, PATIENT_ACTIONS.read);
   const patient = useQuery({
     queryKey: ["patients", patientId],
     queryFn: () => getPatient(patientId),
     retry: false,
+    enabled: canRead,
   });
+  if (!canRead)
+    return (
+      <div className="mx-auto max-w-6xl space-y-6">
+        <Link href="/app/patients">Volver a pacientes</Link>
+        <PatientsNoAccess />
+      </div>
+    );
   // A failed/unfinished identity read cannot enable child commands or render a previous patient's workspace.
   if (!patient.isSuccess)
     return (
@@ -571,7 +605,11 @@ export function PatientDetail({
         <Icon name="chevron" className="rotate-180" />
         Volver a pacientes
       </Link>
-      <PatientHeader patientId={patientId} />
+      <PatientHeader
+        patientId={patientId}
+        canUpdate={canUse(capabilities, PATIENT_ACTIONS.update)}
+        canDeactivate={canUse(capabilities, PATIENT_ACTIONS.deactivate)}
+      />
       {appointmentId !== undefined && (
         <AppointmentJourney
           key={appointmentId}
@@ -613,6 +651,7 @@ export function PatientDetail({
           appointmentId={appointmentId}
           initialEncounterId={initialEncounterId}
           permissions={permissions}
+          features={features}
         />
       </section>
       <section
@@ -645,7 +684,10 @@ export function PatientDetail({
         className="scroll-mt-24"
         tabIndex={-1}
       >
-        <GuardianSection patientId={patientId} />
+        <GuardianSection
+          patientId={patientId}
+          canManage={canUse(capabilities, PATIENT_ACTIONS.manageGuardians)}
+        />
       </section>
     </div>
   );

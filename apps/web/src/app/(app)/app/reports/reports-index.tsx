@@ -12,6 +12,8 @@ import {
 } from "@newsaas/ui/components/ui/card";
 import { REPORT_GROUPS, reportsInGroup, type ReportDefinition } from "./report-catalog";
 import { fetchReport, isReportAccessDenied, userFacingReportError } from "./reports-api";
+import { useCan } from "@/lib/capabilities";
+import { REPORT_ACTIONS } from "./report-workspace";
 
 /**
  * The reports index ([[REP-008]]): every report the epic ships, grouped Core /
@@ -34,13 +36,17 @@ import { fetchReport, isReportAccessDenied, userFacingReportError } from "./repo
  * feature.
  */
 export function ReportsIndex(): JSX.Element {
+  // UX-037: when the shell KNOWS the caller lacks `reports.read` there is nothing
+  // to probe; unknown capabilities keep the probe as the honest answer.
+  const canRead = useCan(REPORT_ACTIONS.read);
   const access = useQuery({
     queryKey: ["reports", "access-probe"],
     queryFn: () => fetchReport("low-stock", { kind: "none" }),
     retry: false,
+    enabled: canRead,
   });
 
-  const denied = isReportAccessDenied(access.error);
+  const denied = !canRead || isReportAccessDenied(access.error);
 
   return (
     <div data-testid="reports-workspace" className="mx-auto max-w-5xl space-y-6">
@@ -65,7 +71,13 @@ export function ReportsIndex(): JSX.Element {
           className="rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive"
         >
           <p className="font-medium">Los informes no están disponibles para esta cuenta</p>
-          <p>{access.error === null ? "" : userFacingReportError(access.error)}</p>
+          <p>
+            {!canRead
+              ? "No tenés permiso para ver los informes."
+              : access.error === null
+                ? ""
+                : userFacingReportError(access.error)}
+          </p>
         </div>
       )}
 
@@ -81,14 +93,15 @@ export function ReportsIndex(): JSX.Element {
         </div>
       )}
 
-      {REPORT_GROUPS.map((group) => (
-        <ReportGroupSection
-          key={group.id}
-          title={group.title}
-          description={group.description}
-          entries={reportsInGroup(group.id)}
-        />
-      ))}
+      {canRead &&
+        REPORT_GROUPS.map((group) => (
+          <ReportGroupSection
+            key={group.id}
+            title={group.title}
+            description={group.description}
+            entries={reportsInGroup(group.id)}
+          />
+        ))}
     </div>
   );
 }

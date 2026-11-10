@@ -6,6 +6,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@newsaas/ui/components/ui/button";
 import { Card, CardContent } from "@newsaas/ui/components/ui/card";
 import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
+import { EmptyState } from "@/components/feedback";
+import { canUse, useCapabilities, type CapabilityRequirement } from "@/lib/capabilities";
 import Link from "next/link";
 import {
   APPOINTMENT_STATUSES,
@@ -55,6 +57,21 @@ function professionalDisplayLabel(membershipId: string, displayName?: string | n
     ? name
     : `Profesional (ID) ${membershipId.slice(0, 8)}`;
 }
+
+/**
+ * What each agenda action needs ([[UX-037]]), mirroring the API guards in
+ * `apps/api/src/scheduling/appointments.controller.ts` and
+ * `apps/api/src/scheduling/booking-requests.controller.ts`. UX only: unknown
+ * capabilities offer everything and the API stays the authority.
+ */
+export const AGENDA_ACTIONS = {
+  /** GET /appointments, /appointments/options, /appointments/availability. */
+  read: { permission: "scheduling.appointment.read" },
+  /** POST /appointments, PUT /appointments/:id, GET+approve/reject booking requests. */
+  manage: { permission: "scheduling.appointment.manage" },
+  /** POST /appointments/:id/{confirm,arrive,start,complete,cancel,no-show}. */
+  transition: { permission: "scheduling.appointment.transition" },
+} as const satisfies Record<string, CapabilityRequirement>;
 
 const VIEWS: readonly { readonly id: AgendaView; readonly label: string }[] = [
   { id: "day", label: "Día" },
@@ -410,6 +427,8 @@ function ManageAppointmentForm({
   onReschedule,
   onTransition,
   onClose,
+  canReschedule = true,
+  canTransition = true,
 }: {
   readonly appointment: Appointment;
   readonly patientName: string;
@@ -419,6 +438,10 @@ function ManageAppointmentForm({
   readonly onReschedule: (startIso: string, endIso: string, serviceId: string | null) => void;
   readonly onTransition: (command: TransitionCommand) => void | Promise<void>;
   readonly onClose: () => void;
+  /** UX-037: hides the reschedule form when the caller cannot manage appointments. */
+  readonly canReschedule?: boolean;
+  /** UX-037: hides the status commands when the caller cannot transition appointments. */
+  readonly canTransition?: boolean;
 }): JSX.Element {
   const [startAt, setStartAt] = useState(() => isoToLocalInput(appointment.startAt));
   const [endAt, setEndAt] = useState(() => isoToLocalInput(appointment.endAt));
@@ -445,7 +468,7 @@ function ManageAppointmentForm({
     onReschedule(startIso, endIso, serviceId === "" ? null : serviceId);
   }
 
-  const transitions = allowedTransitions(appointment.status);
+  const transitions = canTransition ? allowedTransitions(appointment.status) : [];
   const serviceOptions = serviceOptionsFor(services, appointment);
 
   return (
@@ -470,71 +493,77 @@ function ManageAppointmentForm({
             Cerrar
           </Button>
         </div>
-        <form noValidate className="grid gap-3 sm:grid-cols-2" onSubmit={handleSubmit}>
-          <label className="space-y-1 text-sm">
-            <span className="font-medium">Inicio</span>
-            <input
-              type="datetime-local"
-              aria-label="Inicio"
-              className={fieldClassName}
-              value={startAt}
-              onChange={(event) => setStartAt(event.target.value)}
-              required
-              aria-invalid={
-                validation !== null && (startAt === "" || isInvalidLocalDateTime(startAt))
-              }
-              aria-describedby={validation !== null ? "reschedule-validation" : undefined}
-            />
-          </label>
-          <label className="space-y-1 text-sm">
-            <span className="font-medium">Fin</span>
-            <input
-              type="datetime-local"
-              aria-label="Fin"
-              className={fieldClassName}
-              value={endAt}
-              onChange={(event) => setEndAt(event.target.value)}
-              required
-              aria-invalid={
-                validation !== null &&
-                (endAt === "" || isInvalidLocalDateTime(endAt) || startAt === "")
-              }
-              aria-describedby={validation !== null ? "reschedule-validation" : undefined}
-            />
-          </label>
-          <label className="space-y-1 text-sm">
-            <span className="font-medium">Servicio (opcional)</span>
-            <select
-              aria-label="Servicio"
-              className={fieldClassName}
-              value={serviceId}
-              onChange={(event) => setServiceId(event.target.value)}
-            >
-              <option value="">Sin servicio</option>
-              {serviceOptions.map((service) => (
-                <option key={service.id} value={service.id}>
-                  {service.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div aria-hidden className="hidden sm:block" />
-          <div className="sm:col-span-2">
-            {validation !== null && (
-              <p id="reschedule-validation" role="alert" className="mb-2 text-sm text-destructive">
-                {validation}
-              </p>
-            )}
-            {error !== null && transitionToConfirm === null && (
-              <p role="alert" className="mb-2 text-sm text-destructive">
-                {userFacingAgendaError(error)}
-              </p>
-            )}
-            <Button type="submit" disabled={isPending}>
-              {isPending ? "Guardando…" : "Guardar cambios"}
-            </Button>
-          </div>
-        </form>
+        {canReschedule && (
+          <form noValidate className="grid gap-3 sm:grid-cols-2" onSubmit={handleSubmit}>
+            <label className="space-y-1 text-sm">
+              <span className="font-medium">Inicio</span>
+              <input
+                type="datetime-local"
+                aria-label="Inicio"
+                className={fieldClassName}
+                value={startAt}
+                onChange={(event) => setStartAt(event.target.value)}
+                required
+                aria-invalid={
+                  validation !== null && (startAt === "" || isInvalidLocalDateTime(startAt))
+                }
+                aria-describedby={validation !== null ? "reschedule-validation" : undefined}
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="font-medium">Fin</span>
+              <input
+                type="datetime-local"
+                aria-label="Fin"
+                className={fieldClassName}
+                value={endAt}
+                onChange={(event) => setEndAt(event.target.value)}
+                required
+                aria-invalid={
+                  validation !== null &&
+                  (endAt === "" || isInvalidLocalDateTime(endAt) || startAt === "")
+                }
+                aria-describedby={validation !== null ? "reschedule-validation" : undefined}
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="font-medium">Servicio (opcional)</span>
+              <select
+                aria-label="Servicio"
+                className={fieldClassName}
+                value={serviceId}
+                onChange={(event) => setServiceId(event.target.value)}
+              >
+                <option value="">Sin servicio</option>
+                {serviceOptions.map((service) => (
+                  <option key={service.id} value={service.id}>
+                    {service.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div aria-hidden className="hidden sm:block" />
+            <div className="sm:col-span-2">
+              {validation !== null && (
+                <p
+                  id="reschedule-validation"
+                  role="alert"
+                  className="mb-2 text-sm text-destructive"
+                >
+                  {validation}
+                </p>
+              )}
+              {error !== null && transitionToConfirm === null && (
+                <p role="alert" className="mb-2 text-sm text-destructive">
+                  {userFacingAgendaError(error)}
+                </p>
+              )}
+              <Button type="submit" disabled={isPending}>
+                {isPending ? "Guardando…" : "Guardar cambios"}
+              </Button>
+            </div>
+          </form>
+        )}
         {transitions.length > 0 && (
           <div className="space-y-2 border-t pt-3">
             <p className="text-xs font-medium text-muted-foreground">Estado del turno</p>
@@ -869,6 +898,12 @@ function BookingRequestDecisionForm({
  */
 export function Agenda(): JSX.Element {
   const queryClient = useQueryClient();
+  // UX-037: the shell's capabilities decide which actions are offered; the API
+  // re-checks every one.
+  const capabilities = useCapabilities();
+  const canRead = canUse(capabilities, AGENDA_ACTIONS.read);
+  const canManage = canUse(capabilities, AGENDA_ACTIONS.manage);
+  const canTransition = canUse(capabilities, AGENDA_ACTIONS.transition);
   const [view, setView] = useState<AgendaView>("day");
   const [anchor, setAnchor] = useState<string>(() => dateKeyOf(new Date().toISOString()));
   const [branchFilter, setBranchFilter] = useState("");
@@ -895,14 +930,17 @@ export function Agenda(): JSX.Element {
   const optionsQuery = useQuery({
     queryKey: ["scheduling", "options"],
     queryFn: listAppointmentOptions,
+    enabled: canRead,
   });
   const appointmentsQuery = useQuery({
     queryKey: ["scheduling", "appointments", filters],
     queryFn: () => listAppointments(filters),
+    enabled: canRead,
   });
   const requestsQuery = useQuery({
     queryKey: ["scheduling", "booking-requests"],
     queryFn: listBookingRequests,
+    enabled: canRead && canManage,
   });
   // The `scheduling` namespace read that feeds the availability overlay. The
   // settings proxy is a separate allowlisted surface, so this does not go
@@ -910,6 +948,7 @@ export function Agenda(): JSX.Element {
   const settingsQuery = useQuery({
     queryKey: ["scheduling", "settings"],
     queryFn: getSchedulingSettings,
+    enabled: canRead,
   });
   // The active SERVICE items the selector and the agenda filter offer. This
   // reuses the catalog client instead of duplicating one, and it is a
@@ -919,6 +958,7 @@ export function Agenda(): JSX.Element {
   const serviceOptionsQuery = useQuery({
     queryKey: ["catalog", "service-options"],
     queryFn: () => listCatalogItems({ kind: "SERVICE", isActive: true }),
+    enabled: canRead,
   });
 
   function invalidateAppointments(): void {
@@ -1157,6 +1197,19 @@ export function Agenda(): JSX.Element {
     approveRequestMutation.isPending || rejectRequestMutation.isPending;
   const requestMutationError = approveRequestMutation.error ?? rejectRequestMutation.error;
 
+  if (!canRead) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-2xl font-semibold tracking-tight">Agenda</h1>
+        <EmptyState
+          icon="shield"
+          title="No tenés permiso para ver la agenda"
+          description="Pedile a quien administra la clínica que te habilite el acceso a los turnos."
+        />
+      </div>
+    );
+  }
+
   function step(direction: 1 | -1): void {
     if (view === "month") {
       setAnchor((current) => addMonthsToKey(current, direction));
@@ -1184,9 +1237,11 @@ export function Agenda(): JSX.Element {
             Organizá turnos por sucursal y profesional.
           </p>
         </div>
-        <Button type="button" onClick={() => setEditorClearingConflict({ kind: "create" })}>
-          Nuevo turno
-        </Button>
+        {canManage && (
+          <Button type="button" onClick={() => setEditorClearingConflict({ kind: "create" })}>
+            Nuevo turno
+          </Button>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1333,28 +1388,30 @@ export function Agenda(): JSX.Element {
        * region only surfaces the loading/empty/error/denied states so "no pending
        * requests" reads as the normal state, never as an error.
        */}
-      <section aria-label="Solicitudes de turno pendientes" className="space-y-2">
-        {requestsQuery.isLoading ? (
-          <p className="text-sm text-muted-foreground">Cargando solicitudes pendientes…</p>
-        ) : requestsQuery.error ? (
-          <div
-            role="alert"
-            data-testid="pending-requests-alert"
-            data-state={requestsDenied ? "denied" : "error"}
-            className="rounded-lg border border-destructive bg-destructive/10 p-3 text-sm text-destructive"
-          >
-            {userFacingBookingRequestError(requestsQuery.error)}
-          </div>
-        ) : pendingRequests.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No hay solicitudes de turno pendientes.</p>
-        ) : (
-          <p role="status" className="text-sm text-muted-foreground">
-            {pendingRequests.length === 1
-              ? "Hay 1 solicitud pendiente en el calendario y la lista."
-              : `Hay ${pendingRequests.length} solicitudes pendientes en el calendario y la lista.`}
-          </p>
-        )}
-      </section>
+      {canManage && (
+        <section aria-label="Solicitudes de turno pendientes" className="space-y-2">
+          {requestsQuery.isLoading ? (
+            <p className="text-sm text-muted-foreground">Cargando solicitudes pendientes…</p>
+          ) : requestsQuery.error ? (
+            <div
+              role="alert"
+              data-testid="pending-requests-alert"
+              data-state={requestsDenied ? "denied" : "error"}
+              className="rounded-lg border border-destructive bg-destructive/10 p-3 text-sm text-destructive"
+            >
+              {userFacingBookingRequestError(requestsQuery.error)}
+            </div>
+          ) : pendingRequests.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No hay solicitudes de turno pendientes.</p>
+          ) : (
+            <p role="status" className="text-sm text-muted-foreground">
+              {pendingRequests.length === 1
+                ? "Hay 1 solicitud pendiente en el calendario y la lista."
+                : `Hay ${pendingRequests.length} solicitudes pendientes en el calendario y la lista.`}
+            </p>
+          )}
+        </section>
+      )}
 
       {identities.error && (
         <div role="status" className="space-y-2 rounded-lg border bg-muted p-3 text-sm">
@@ -1371,7 +1428,7 @@ export function Agenda(): JSX.Element {
           </Button>
         </div>
       )}
-      {editor?.kind === "create" && (
+      {editor?.kind === "create" && canManage && (
         <CreateAppointmentForm
           branches={bookableBranches(branches)}
           professionals={professionals}
@@ -1403,6 +1460,8 @@ export function Agenda(): JSX.Element {
           isPending={mutationPending}
           error={staleConflict !== null ? null : mutationError}
           onClose={() => setEditorClearingConflict(null)}
+          canReschedule={canManage}
+          canTransition={canTransition}
           onReschedule={(startIso, endIso, serviceId) =>
             rescheduleMutation.mutate({
               id: editor.appointment.id,
@@ -1418,7 +1477,7 @@ export function Agenda(): JSX.Element {
         />
       )}
 
-      {editor?.kind === "request" && (
+      {editor?.kind === "request" && canManage && (
         <BookingRequestDecisionForm
           key={editor.request.id}
           request={editor.request}
@@ -1483,6 +1542,7 @@ export function Agenda(): JSX.Element {
             setEditorClearingConflict({ kind: "create", startAt: startIso, endAt: endIso })
           }
           onRescheduleRange={handleRescheduleRange}
+          canManage={canManage}
         />
       )}
     </div>
