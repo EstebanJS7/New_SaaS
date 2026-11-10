@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createFakeNotificationChannel, FAKE_CHANNEL_RETAINED_ATTEMPTS } from "./fake.channel.js";
+import { NOTIFICATION_CHANNEL_REASON } from "./channel.port.js";
 
 const request = {
   tenantId: "11111111-1111-1111-1111-111111111111",
@@ -106,5 +107,50 @@ describe("fake notification channel", () => {
 
     expect(fake.attempts[0]?.parameters).toEqual(["one"]);
     expect(fake.attempts[0]?.parameters).not.toBe(mutable.parameters);
+  });
+
+  it("records an attachment's metadata only, never its bytes (DEC-098)", async () => {
+    const fake = createFakeNotificationChannel({ channel: "EMAIL", clock: fixedClock });
+    const content = Buffer.from("<html>CONFIDENTIAL KuDE</html>", "utf8");
+
+    await expect(
+      fake.send({
+        ...request,
+        attachments: [
+          { filename: "kude-A-0000042.html", contentType: "text/html; charset=utf-8", content },
+        ],
+      })
+    ).resolves.toMatchObject({ outcome: "SENT" });
+
+    expect(fake.attempts[0]?.attachments).toEqual([
+      {
+        filename: "kude-A-0000042.html",
+        contentType: "text/html; charset=utf-8",
+        byteLength: content.byteLength,
+      },
+    ]);
+    expect(JSON.stringify(fake.attempts)).not.toContain("CONFIDENTIAL");
+  });
+
+  it("refuses an attachment outside the contract, as the real email channel does", async () => {
+    const fake = createFakeNotificationChannel({ channel: "EMAIL", clock: fixedClock });
+
+    await expect(
+      fake.send({
+        ...request,
+        attachments: [
+          {
+            filename: "../x.html",
+            contentType: "text/html; charset=utf-8",
+            content: Buffer.from("x"),
+          },
+        ],
+      })
+    ).resolves.toEqual({
+      outcome: "FAILED",
+      retryable: false,
+      reasonCode: NOTIFICATION_CHANNEL_REASON.ATTACHMENT_REJECTED,
+      reason: "The message's attachment is outside the channel's attachment contract.",
+    });
   });
 });

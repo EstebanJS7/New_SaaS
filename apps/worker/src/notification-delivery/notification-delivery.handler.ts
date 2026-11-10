@@ -1,9 +1,11 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { PrismaService } from "@newsaas/database";
 import {
+  isAcceptableNotificationAttachment,
   NOTIFICATION_CHANNELS,
   NOTIFICATION_DELIVERY_REASON,
   type NotificationChannel,
+  type NotificationChannelAttachment,
   type NotificationChannels,
   type NotificationRecipientPort,
   type NotificationEntitlementPort,
@@ -11,8 +13,10 @@ import {
   NOTIFICATION_ENTITLEMENT,
   NOTIFICATION_RECIPIENT,
 } from "@newsaas/notifications";
+import { STORAGE_PORT, type StoragePort } from "@newsaas/storage";
 import {
   NOTIFICATION_CONTENT_BUILDER,
+  type NotificationAttachmentReference,
   type NotificationContentBuilder,
 } from "./notification-content.js";
 import { UnsupportedRecipientTypeError } from "./notification-recipient.read.js";
@@ -113,6 +117,24 @@ const CHANNEL_FEATURE_CODE: Readonly<Partial<Record<NotificationChannel, string>
   WHATSAPP: "whatsapp",
 };
 
+/**
+ * The channels that carry an attachment ([[DEC-098]]). WhatsApp sends an approved
+ * template and refuses a file, so a reference on a WhatsApp delivery is not read.
+ */
+const ATTACHMENT_CHANNELS: readonly NotificationChannel[] = ["EMAIL"];
+
+/** The KuDE is stored as UTF-8 HTML by the fiscal submission handler (FISC-021). */
+const KUDE_CONTENT_TYPE = "text/html; charset=utf-8";
+
+/** What `decide` hands `send`: the resolved message, still only in this call frame. */
+interface PreparedMessage {
+  readonly address: string;
+  readonly subject: string;
+  readonly body: string;
+  readonly parameters: readonly string[];
+  readonly attachments: readonly NotificationChannelAttachment[];
+}
+
 @Injectable()
 export class NotificationDeliveryHandler {
   constructor(
@@ -120,7 +142,8 @@ export class NotificationDeliveryHandler {
     @Inject(NOTIFICATION_CHANNELS) private readonly channels: NotificationChannels,
     @Inject(NOTIFICATION_RECIPIENT) private readonly recipients: NotificationRecipientPort,
     @Inject(NOTIFICATION_ENTITLEMENT) private readonly entitlements: NotificationEntitlementPort,
-    @Inject(NOTIFICATION_CONTENT_BUILDER) private readonly content: NotificationContentBuilder
+    @Inject(NOTIFICATION_CONTENT_BUILDER) private readonly content: NotificationContentBuilder,
+    @Inject(STORAGE_PORT) private readonly storage: StoragePort
   ) {}
 
   async handle(job: NotificationDeliveryJob): Promise<void> {
@@ -221,15 +244,10 @@ export class NotificationDeliveryHandler {
    * One exception becomes a settle rather than a retry: a recipient type with no
    * reader is a programming error, and a retry reaches the same absent reader.
    */
-  private async decide(delivery: DeliveryRecord): Promise<
-    | {
-        readonly prepared: {
-          readonly address: string;
-          readonly subject: string;
-          readonly body: string;
-          readonly parameters: readonly string[];
-        };
-      }
+  private async decide(
+    delivery: DeliveryRecord
+  ): Promise<
+    | { readonly prepared: PreparedMessage }
     | { readonly failure: { readonly reasonCode: string; readonly reason: string } }
   > {
     let step = "entitlement";
@@ -263,6 +281,7 @@ export class NotificationDeliveryHandler {
           subject: content.subject,
           body: content.body,
           parameters: content.parameters,
+          attachments: await this.resolveAttachments(delivery, content.attachment),
         },
       };
     } catch (error) {
@@ -295,15 +314,7 @@ export class NotificationDeliveryHandler {
   }
 
   /** The provider call and its outcome. The adapters return outcomes; a throw is the boundary's. */
-  private async send(
-    delivery: DeliveryRecord,
-    prepared: {
-      readonly address: string;
-      readonly subject: string;
-      readonly body: string;
-      readonly parameters: readonly string[];
-    }
-  ): Promise<void> {
+  private async send(delivery: DeliveryRecord, prepared: PreparedMessage): Promise<void> {
     let outcome;
     try {
       outcome = await this.channels.for(delivery.channel).send({
@@ -313,6 +324,9 @@ export class NotificationDeliveryHandler {
         subject: prepared.subject,
         body: prepared.body,
         parameters: prepared.parameters,
+        // Only when there is one, so every other message is the request it was
+        // before attachments existed (DEC-098).
+        ...(prepared.attachments.length === 0 ? {} : { attachments: prepared.attachments }),
       });
     } catch {
       // The adapters classify their own failures, so reaching here means the
@@ -358,10 +372,43 @@ export class NotificationDeliveryHandler {
     };
   }
 
-  private async resolveContent(
-    delivery: DeliveryRecord
-  ): Promise<
-    | { readonly subject: string; readonly body: string; readonly parameters: readonly string[] }
+  /**
+   * Reads a referenced attachment AT SEND TIME ([[DEC-098]]).
+   *
+   * The KuDE is a courtesy on top of the notice, never a condition of it: a missing
+   * reference, a channel that cannot carry a file, a failed read, an oversized
+   * object or anything else outside the channel's attachment contract all answer
+   * an empty list, and the notice is sent without it. Nothing is recorded about
+   * WHY: the handler has no content-free log, and a storage driver's error text
+   * cannot be proven free of the bytes, which are CONFIDENTIAL. Read again on
+   * every attempt, so a retry carries the same stored bytes.
+   */
+  private async resolveAttachments(
+    delivery: DeliveryRecord,
+    reference: NotificationAttachmentReference | undefined
+  ): Promise<readonly NotificationChannelAttachment[]> {
+    if (reference === undefined) return [];
+    if (!ATTACHMENT_CHANNELS.includes(delivery.channel)) return [];
+    try {
+      const stored = await this.storage.get({ key: reference.storageKey });
+      const attachment: NotificationChannelAttachment = {
+        filename: reference.filename,
+        contentType: KUDE_CONTENT_TYPE,
+        content: stored.body,
+      };
+      return isAcceptableNotificationAttachment(attachment) ? [attachment] : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private async resolveContent(delivery: DeliveryRecord): Promise<
+    | {
+        readonly subject: string;
+        readonly body: string;
+        readonly parameters: readonly string[];
+        readonly attachment?: NotificationAttachmentReference;
+      }
     | { readonly reasonCode: string; readonly reason: string }
   > {
     const built = await this.content.build({
@@ -369,9 +416,13 @@ export class NotificationDeliveryHandler {
       deliveryId: delivery.id,
       channel: delivery.channel,
     });
-    return built.outcome === "READY"
-      ? { subject: built.subject, body: built.body, parameters: built.parameters }
-      : { reasonCode: built.reasonCode, reason: built.reason };
+    if (built.outcome !== "READY") return { reasonCode: built.reasonCode, reason: built.reason };
+    return {
+      subject: built.subject,
+      body: built.body,
+      parameters: built.parameters,
+      ...(built.attachment === undefined ? {} : { attachment: built.attachment }),
+    };
   }
 
   /**

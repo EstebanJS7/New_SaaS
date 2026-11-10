@@ -30,10 +30,10 @@ import type { KudeDocument, KudeItem, KudeRow } from "./kude.types.js";
 
 export interface KudeHtmlOptions {
   /**
-   * The QR as a data URL, when the caller has an encoder. The repository has
-   * none — `dte.qr.ts` builds the QR's *content* — so this is an input rather
-   * than something this renderer invents, and its absence prints the content
-   * instead of a code that would not scan.
+   * The QR as a data URL. `dte.qr.ts` builds the QR's *content* and
+   * `kude.qr.ts` draws it (`renderKudeForRequest` wires both, FISC-021);
+   * the renderer takes the image as an input, and its absence prints the
+   * content instead of a code that would not scan.
    */
   readonly qrImageDataUrl?: string;
 }

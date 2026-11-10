@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  NOTIFICATION_ATTACHMENT_MAX_BYTES,
   NOTIFICATION_DELIVERY_REASON,
   createDenyAllNotificationEntitlementPort,
   createNullNotificationRecipientPort,
@@ -14,6 +15,7 @@ import {
   type NotificationContentBuilder,
   type NotificationContentOutcome,
 } from "./notification-content.js";
+import type { StoragePort } from "@newsaas/storage";
 import {
   NotificationDeliveryHandler,
   UnsupportedRecipientTypeError,
@@ -53,6 +55,7 @@ interface Setup {
   readonly prismaCalls: { transactions: number };
   readonly claimCalls: () => number;
   readonly channelSend: (channel: NotificationChannel) => ReturnType<typeof vi.fn>;
+  readonly storageGet: ReturnType<typeof vi.fn>;
 }
 
 function setup(args: {
@@ -68,6 +71,8 @@ function setup(args: {
   readonly attemptCount?: number;
   readonly rowPresent?: boolean;
   readonly channelThrows?: boolean;
+  /** What the object store answers for a KuDE key (DEC-098); absent: it throws. */
+  readonly storedKude?: Buffer | "THROWS";
 }): Setup {
   const attempts = args.lastAttemptAt ?? null;
   const delivery: DeliveryFixture = {
@@ -134,12 +139,20 @@ function setup(args: {
       ),
   };
 
+  const storageGet = vi.fn((_args: { key: string }) =>
+    args.storedKude === undefined || args.storedKude === "THROWS"
+      ? Promise.reject(new Error("storage unavailable"))
+      : Promise.resolve({ body: args.storedKude, contentType: "text/html; charset=utf-8" })
+  );
+  const storage = { get: storageGet } as unknown as StoragePort;
+
   const handler = new NotificationDeliveryHandler(
     prisma,
     channels,
     args.recipient ?? { resolve: () => Promise.resolve({ address: "person@example.test" }) },
     args.entitlement ?? createDenyAllNotificationEntitlementPort(),
-    content
+    content,
+    storage
   );
 
   return {
@@ -149,7 +162,15 @@ function setup(args: {
     writes,
     claimCalls: () => updateMany.mock.calls.length,
     channelSend: (channel) => sends[channel],
+    storageGet,
   };
+}
+
+/** A store no case here reads from: any read is a failure the test would see. */
+function unreadableStorage(): StoragePort {
+  return {
+    get: () => Promise.reject(new Error("no storage read expected")),
+  } as unknown as StoragePort;
 }
 
 /** The claim write is the first one that increments the attempt count. */
@@ -300,7 +321,8 @@ describe("the delivery handler's gates", () => {
       (handler as unknown as { channels: NotificationChannels }).channels,
       (handler as unknown as { recipients: NotificationRecipientPort }).recipients,
       (handler as unknown as { entitlements: NotificationEntitlementPort }).entitlements,
-      createUnavailableNotificationContentBuilder()
+      createUnavailableNotificationContentBuilder(),
+      unreadableStorage()
     );
     await handlerWithNoContent.handle(job);
 
@@ -397,7 +419,8 @@ describe("the delivery handler's outcome", () => {
       createDenyAllNotificationEntitlementPort(),
       {
         build: () => Promise.resolve({ outcome: "READY", subject: "s", body: "b", parameters: [] }),
-      }
+      },
+      unreadableStorage()
     );
 
     await handler.handle(job);
@@ -555,7 +578,8 @@ describe("the settle path", () => {
       createDenyAllNotificationEntitlementPort(),
       {
         build: () => Promise.resolve({ outcome: "READY", subject: "s", body: "b", parameters: [] }),
-      }
+      },
+      unreadableStorage()
     );
 
     // The settle's failure propagates as itself: nothing rewrites it into a
@@ -684,5 +708,162 @@ describe("the attempt log", () => {
     expect(prismaCalls.transactions).toBeGreaterThan(0);
     // One settle, one transaction: the claim is its own CAS and is not wrapped.
     expect(prismaCalls.transactions).toBe(1);
+  });
+});
+
+describe("the fiscal notice's KuDE attachment (DEC-098)", () => {
+  const KUDE_KEY = "fiscal-kude_opaque-key";
+  const KUDE_HTML = "<html>CONFIDENTIAL-RECEPTOR-DATA</html>";
+  const fiscalNotice: NotificationContentOutcome = {
+    outcome: "READY",
+    subject: "Documento fiscal A-0000042",
+    body: "Su documento fiscal A-0000042 está disponible.",
+    parameters: ["A-0000042"],
+    attachment: { kind: "FISCAL_KUDE", storageKey: KUDE_KEY, filename: "kude-A-0000042.html" },
+  };
+  const plainRequest = {
+    tenantId: job.tenantId,
+    deliveryId: job.notificationDeliveryId,
+    recipient: "person@example.test",
+    subject: "Documento fiscal A-0000042",
+    body: "Su documento fiscal A-0000042 está disponible.",
+    parameters: ["A-0000042"],
+  };
+
+  it("reads the stored KuDE at send time and attaches exactly its bytes", async () => {
+    const { handler, channelSend, storageGet, writes } = setup({
+      content: fiscalNotice,
+      storedKude: Buffer.from(KUDE_HTML, "utf8"),
+    });
+
+    await handler.handle(job);
+
+    expect(storageGet).toHaveBeenCalledWith({ key: KUDE_KEY });
+    expect(channelSend("EMAIL")).toHaveBeenCalledTimes(1);
+    const sent = channelSend("EMAIL").mock.calls[0]?.[0] as {
+      attachments?: { filename: string; contentType: string; content: Uint8Array }[];
+    };
+    expect(sent).toMatchObject(plainRequest);
+    expect(sent.attachments).toHaveLength(1);
+    expect(sent.attachments?.[0]?.filename).toBe("kude-A-0000042.html");
+    expect(sent.attachments?.[0]?.contentType).toBe("text/html; charset=utf-8");
+    expect(Buffer.from(sent.attachments?.[0]?.content ?? []).toString("utf8")).toBe(KUDE_HTML);
+    expect(lastWrite(writes).data.status).toBe("SENT");
+  });
+
+  it("sends the notice WITHOUT an attachment when the KuDE cannot be read, and still settles SENT", async () => {
+    const { handler, channelSend, writes, attemptRows } = setup({
+      content: fiscalNotice,
+      storedKude: "THROWS",
+    });
+
+    await expect(handler.handle(job)).resolves.toBeUndefined();
+
+    expect(channelSend("EMAIL")).toHaveBeenCalledWith(plainRequest);
+    expect(lastWrite(writes).data.status).toBe("SENT");
+    expect(attemptRows).toEqual([expect.objectContaining({ outcome: "SENT" })]);
+  });
+
+  it("sends the notice WITHOUT an attachment when the stored KuDE is over the cap", async () => {
+    const { handler, channelSend, writes } = setup({
+      content: fiscalNotice,
+      storedKude: Buffer.alloc(NOTIFICATION_ATTACHMENT_MAX_BYTES + 1, 0x61),
+    });
+
+    await handler.handle(job);
+
+    expect(channelSend("EMAIL")).toHaveBeenCalledWith(plainRequest);
+    expect(lastWrite(writes).data.status).toBe("SENT");
+  });
+
+  it("sends WITHOUT an attachment when the filename is outside the contract", async () => {
+    const { handler, channelSend } = setup({
+      content: {
+        ...fiscalNotice,
+        attachment: { kind: "FISCAL_KUDE", storageKey: KUDE_KEY, filename: "../kude.html" },
+      },
+      storedKude: Buffer.from(KUDE_HTML, "utf8"),
+    });
+
+    await handler.handle(job);
+
+    expect(channelSend("EMAIL")).toHaveBeenCalledWith(plainRequest);
+  });
+
+  it("never reads storage or attaches on a channel that cannot carry a file", async () => {
+    const { handler, channelSend, storageGet } = setup({
+      channel: "WHATSAPP",
+      entitlement: { has: () => Promise.resolve(true) },
+      content: fiscalNotice,
+      storedKude: Buffer.from(KUDE_HTML, "utf8"),
+    });
+
+    await handler.handle(job);
+
+    expect(storageGet).not.toHaveBeenCalled();
+    expect(channelSend("WHATSAPP")).toHaveBeenCalledWith(plainRequest);
+  });
+
+  it("reads the KuDE again on every attempt, so a retry carries the same bytes", async () => {
+    const first = setup({
+      content: fiscalNotice,
+      storedKude: Buffer.from(KUDE_HTML, "utf8"),
+      channelOutcome: "RETRYABLE_FAILURE",
+    });
+    await expect(first.handler.handle(job)).rejects.toThrow();
+    const retry = setup({
+      status: "SENDING",
+      lastAttemptAt: new Date(Date.now() - 10 * 60_000),
+      content: fiscalNotice,
+      storedKude: Buffer.from(KUDE_HTML, "utf8"),
+    });
+    await retry.handler.handle(job);
+
+    const bytes = (calls: unknown[][]) =>
+      Buffer.from(
+        (calls[0]?.[0] as { attachments: { content: Uint8Array }[] }).attachments[0]?.content ?? []
+      ).toString("utf8");
+    expect(first.storageGet).toHaveBeenCalledTimes(1);
+    expect(retry.storageGet).toHaveBeenCalledTimes(1);
+    expect(bytes(retry.channelSend("EMAIL").mock.calls)).toBe(
+      bytes(first.channelSend("EMAIL").mock.calls)
+    );
+  });
+
+  it("writes neither the KuDE's bytes nor its key to the delivery record or the attempt log", async () => {
+    for (const outcome of ["SENT", "RETRYABLE_FAILURE", "PERMANENT_FAILURE"] as const) {
+      const { handler, writes, attemptRows } = setup({
+        content: fiscalNotice,
+        storedKude: Buffer.from(KUDE_HTML, "utf8"),
+        channelOutcome: outcome,
+      });
+      await handler.handle(job).catch(() => undefined);
+
+      const persisted = JSON.stringify({ writes, attemptRows });
+      expect(persisted, outcome).not.toContain("CONFIDENTIAL-RECEPTOR-DATA");
+      expect(persisted, outcome).not.toContain(KUDE_KEY);
+      expect(persisted, outcome).not.toContain("kude-A-0000042.html");
+    }
+    // The job payload is the two ids and nothing else: the KuDE is resolved from
+    // the delivery's source at send time, never carried.
+    expect(Object.keys(job).sort()).toEqual(["notificationDeliveryId", "tenantId"]);
+  });
+
+  it("sends a notification without an attachment reference exactly as before, with no storage read", async () => {
+    const { handler, channelSend, storageGet } = setup({
+      content: { outcome: "READY", subject: "Recordatorio", body: "Mañana", parameters: ["x"] },
+    });
+
+    await handler.handle(job);
+
+    expect(storageGet).not.toHaveBeenCalled();
+    expect(channelSend("EMAIL")).toHaveBeenCalledWith({
+      tenantId: job.tenantId,
+      deliveryId: job.notificationDeliveryId,
+      recipient: "person@example.test",
+      subject: "Recordatorio",
+      body: "Mañana",
+      parameters: ["x"],
+    });
   });
 });

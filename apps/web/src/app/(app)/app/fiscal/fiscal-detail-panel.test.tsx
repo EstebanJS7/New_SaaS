@@ -14,6 +14,7 @@ const DOCUMENT: FiscalDocument = {
   createdAt: "2026-10-01T08:00:00.000Z",
   updatedAt: "2026-10-01T08:00:00.000Z",
   cancelledAt: null,
+  hasKude: false,
 };
 function renderPanel(overrides: Partial<Parameters<typeof FiscalDetailPanel>[0]> = {}) {
   const onCancel = vi.fn().mockResolvedValue(undefined);
@@ -71,5 +72,30 @@ describe("FiscalDetailPanel", () => {
     unmount();
     renderPanel({ document: { ...DOCUMENT, status: "CANCELLED" } });
     expect(screen.queryByLabelText("Motivo de la cancelación")).not.toBeInTheDocument();
+  });
+  it("offers «Ver KuDE» in a new tab when the document has a KuDE (FISC-021)", () => {
+    renderPanel({ document: { ...DOCUMENT, status: "APPROVED", hasKude: true } });
+    const link = screen.getByRole("link", { name: "Ver KuDE" });
+    expect(link).toHaveAttribute("href", `/api/fiscal/fiscal-documents/${DOCUMENT.id}/kude`);
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  });
+  it("offers «Ver KuDE» for a credit note's document too (FISC-021)", () => {
+    renderPanel({
+      document: {
+        ...DOCUMENT,
+        status: "APPROVED",
+        creditNoteId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        hasKude: true,
+      },
+    });
+    expect(screen.getByRole("link", { name: "Ver KuDE" })).toHaveAttribute(
+      "href",
+      `/api/fiscal/fiscal-documents/${DOCUMENT.id}/kude`
+    );
+  });
+  it("does not offer «Ver KuDE» when the document has no KuDE (FISC-021)", () => {
+    renderPanel({ document: { ...DOCUMENT, status: "APPROVED", hasKude: false } });
+    expect(screen.queryByRole("link", { name: "Ver KuDE" })).not.toBeInTheDocument();
   });
 });

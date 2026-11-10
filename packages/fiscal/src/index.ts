@@ -644,6 +644,11 @@ export {
 } from "./kude/kude.format.js";
 export { escapeHtml, renderKudeHtml } from "./kude/kude.html.js";
 export type { KudeHtmlOptions } from "./kude/kude.html.js";
+// FISC-021 / DEC-098: the KuDE the worker stores at signing, with its QR drawn
+// as an SVG image. `kude.qr.ts` is the one file that imports the QR library.
+export { qrSvgDataUrl } from "./kude/kude.qr.js";
+export { renderKudeForRequest } from "./kude/kude.render.js";
+export type { KudeRenderResult } from "./kude/kude.render.js";
 export {
   KUDE_ADMINISTRATION_LEGEND,
   KUDE_DOCUMENT_TYPES,

@@ -305,7 +305,7 @@ export class FiscalSubmissionHandler {
    * The stage between the claim and the provider call (ADR-009 §4):
    *
    * ```text
-   * build -> store -> xml_storage_key -> XSD gate -> SIGNING -> SENDING
+   * build -> store (XML, KuDE) -> xml_storage_key + kude_storage_key -> XSD gate -> SIGNING -> SENDING
    * ```
    *
    * It runs only when the provider requires a document. With the fake — or any
@@ -374,12 +374,25 @@ export class FiscalSubmissionHandler {
       return { outcome: "FAILED" };
     }
 
+    // FISC-021 / DEC-098: the KuDE rendered from the same request is stored
+    // next to the XML, before the key write, so its key travels in the same
+    // conditional update.
+    const kudeStorageKey =
+      built.kudeHtml === undefined ? null : await this.storeKude(built.kudeHtml);
+
     // The CDC goes with the key: both are read back by a `SENDING` recovery,
     // and the CDC is the identity the reconciliation asks with when the
     // hand-over answer is lost (ADR-007 §2).
     const keyed = await this.prisma.fiscalDocument.updateMany({
       where: { id: document.id, tenantId: document.tenantId, status: "SIGNING" },
-      data: { xmlStorageKey: storageKey, cdc: built.document.cdc },
+      data: {
+        xmlStorageKey: storageKey,
+        // Always written, null included: a document re-claimed from ERROR is
+        // rebuilt with a new CDC, so a KuDE stored for the previous one must
+        // not stay attached to the row.
+        kudeStorageKey,
+        cdc: built.document.cdc,
+      },
     });
     if (keyed.count !== 1) {
       // The claim was stolen; the stored object is an orphan, and this worker
@@ -399,6 +412,29 @@ export class FiscalSubmissionHandler {
       return { outcome: "FAILED" };
     }
     return { outcome: "READY", document: built.document };
+  }
+
+  /**
+   * Store the KuDE, or answer `null`.
+   *
+   * The KuDE is the DE's printed representation, not part of the submission, so
+   * a failed put never stops a signed document from reaching the provider: the
+   * document is submitted and `kude_storage_key` stays null — the same state as
+   * a type without a KuDE. Nothing of the failure is recorded: the driver's
+   * message cannot be proven free of the stored bytes, and the bytes carry the
+   * receptor's data (CONFIDENTIAL).
+   */
+  private async storeKude(html: string): Promise<string | null> {
+    try {
+      const stored = await this.storage.put({
+        key: createOpaqueStorageKey(STORAGE_KEY_PREFIXES.fiscalKude),
+        body: Buffer.from(html, "utf8"),
+        contentType: "text/html; charset=utf-8",
+      });
+      return stored.key;
+    } catch {
+      return null;
+    }
   }
 
   /**

@@ -13,4 +13,6 @@ export interface FiscalDocumentResponse {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly cancelledAt: string | null;
+  /** FISC-021: a KuDE is stored for this document; the storage key itself is never returned. */
+  readonly hasKude: boolean;
 }

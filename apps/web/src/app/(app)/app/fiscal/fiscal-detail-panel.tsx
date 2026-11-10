@@ -10,7 +10,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@newsaas/ui/components/ui/card";
-import type { FiscalDocument } from "./fiscal-api";
+import { fiscalKudeHref, type FiscalDocument } from "./fiscal-api";
 import { FISCAL_STATUS_LABELS, fiscalTextareaClassName, formatTimestamp } from "./fiscal-display";
 import { FiscalErrorAlert } from "./fiscal-outcome";
 import { fiscalCancelReasonError } from "./fiscal-validation";
@@ -141,6 +141,18 @@ export function FiscalDetailPanel({
                 </div>
               ))}
             </dl>
+            {document.hasKude && (
+              <Button asChild variant="outline">
+                <a
+                  href={fiscalKudeHref(document.id)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  data-testid="fiscal-kude-link"
+                >
+                  Ver KuDE
+                </a>
+              </Button>
+            )}
             {document.status !== "SENDING" && document.status !== "CANCELLED" && (
               <form onSubmit={handleSubmit} className="space-y-3 border-t border-border pt-4">
                 <div className="space-y-2">

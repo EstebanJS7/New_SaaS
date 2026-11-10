@@ -1,5 +1,7 @@
 import { createTransport } from "nodemailer";
 import {
+  areAcceptableNotificationAttachments,
+  NOTIFICATION_ATTACHMENT_REJECTED_OUTCOME,
   NOTIFICATION_CHANNEL_REASON,
   type NotificationChannelOutcome,
   type NotificationChannelPort,
@@ -169,6 +171,25 @@ export function classifyEmailFailure(error: unknown): {
   };
 }
 
+/**
+ * The attachments as nodemailer receives them: `{ filename, content, contentType }`
+ * and nothing else — never `path`, `href`, `raw` or `encoding`, the keys that make
+ * the library read a file or a URL (DEC-098, [[ADR-011]] guardrail 3). An absent
+ * or empty list adds no key, so a message without attachments is unchanged.
+ */
+function toInMemoryAttachments(request: NotificationChannelRequest): {
+  attachments?: { filename: string; content: Buffer; contentType: string }[];
+} {
+  if (request.attachments === undefined || request.attachments.length === 0) return {};
+  return {
+    attachments: request.attachments.map((attachment) => ({
+      filename: attachment.filename,
+      content: Buffer.from(attachment.content),
+      contentType: attachment.contentType,
+    })),
+  };
+}
+
 export function createSmtpEmailChannel(options: SmtpEmailChannelOptions): NotificationChannelPort {
   const transportFactory = options.transportFactory ?? defaultTransportFactory;
 
@@ -184,6 +205,12 @@ export function createSmtpEmailChannel(options: SmtpEmailChannelOptions): Notifi
           reasonCode: NOTIFICATION_CHANNEL_REASON.REJECTED,
           reason: "The resolved recipient is not a deliverable email address.",
         };
+      }
+
+      // DEC-098: refused before a transport exists, so a malformed attachment
+      // never reaches the library at all.
+      if (!areAcceptableNotificationAttachments(request.attachments)) {
+        return NOTIFICATION_ATTACHMENT_REJECTED_OUTCOME;
       }
 
       let transport: EmailTransport;
@@ -206,6 +233,7 @@ export function createSmtpEmailChannel(options: SmtpEmailChannelOptions): Notifi
           // file or a URL (GHSA-8m3c-c648-2xjj).
           disableFileAccess: true,
           disableUrlAccess: true,
+          ...toInMemoryAttachments(request),
         });
         return {
           outcome: "SENT",
