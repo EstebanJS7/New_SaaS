@@ -165,6 +165,20 @@ Observed on branch `docs/dec-095-fiscal-issuance-point`, uncommitted tree:
 - Limits: no browser/web criteria in this unit; the in-memory unit fake emulates
   the database rules, which live-pg proves for real.
 
+## Conflicto al retirar un CSC
+
+2026-11-10: un error Prisma `P2034` al retirar un CSC se convierte en
+`409 CONFLICT`, con el mismo mensaje estable de concurrencia que al cargarlo:
+`Another operation changed the CSCs at the same time; refresh and try again.` No
+se reintenta la operación ni se incluye el error original en la respuesta. La
+regresión inyecta el fallo después de actualizar la fila y eliminar el secreto:
+la transacción revierte fila, secreto y auditoría. Otros errores conservan su
+comportamiento. RED: 1 falla / 10 pasan; GREEN: CSC, signing-material y RBAC
+111/111.
+
+Risk: item 2 (manejo de errores en el ciclo de vida del secreto, sin cambiar la
+transacción ni las reglas de autorización).
+
 ## Validación del identificador CSC
 
 2026-11-10: el formulario acepta exactamente los cuatro caracteres ASCII `!`–`~`
