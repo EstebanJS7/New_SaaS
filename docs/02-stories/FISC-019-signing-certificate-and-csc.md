@@ -165,6 +165,18 @@ Observed on branch `docs/dec-095-fiscal-issuance-point`, uncommitted tree:
 - Limits: no browser/web criteria in this unit; the in-memory unit fake emulates
   the database rules, which live-pg proves for real.
 
+## Comportamiento conocido: orden de autorización
+
+2026-11-10: se conserva el orden actual, aceptado por el usuario. En las rutas
+CSC y signing-material, el guard de permisos del controlador se ejecuta antes
+del chequeo de la función `fiscal` del servicio. Si faltan ambos, responde
+`403 FORBIDDEN`, no `FEATURE_NOT_ENTITLED`. Con el permiso presente pero sin la
+función se conserva `FEATURE_NOT_ENTITLED`. No se cambia ningún guard ni se
+relaja el acceso a los secretos.
+
+Risk: none (documentación del comportamiento existente; sin cambio de
+ejecución).
+
 ## Decisiones / ADRs
 
 - [[ADR-005]], [[DEC-057]], [[DEC-090]], [[DEC-095]]
