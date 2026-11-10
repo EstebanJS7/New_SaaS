@@ -74,6 +74,10 @@ See [[Tenant Settings]].
   not offer editing.
 - The web mirrors the reminder lead-hour bounds and channels of
   `@newsaas/notifications`; a web test reads that package's source to pin them.
+- Browser lane: `apps/e2e/specs/tenant-settings.spec.ts` drives the four
+  sections against the built apps and restores the demo tenant's settings whole
+  afterwards (the namespace has no `DELETE`, so a tenant that had no row keeps
+  one holding the values it was already served).
 
 ## Related Architecture
 

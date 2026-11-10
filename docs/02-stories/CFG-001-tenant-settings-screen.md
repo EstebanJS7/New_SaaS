@@ -56,14 +56,14 @@ por profesional y sucursal.
 
 ## Criterios de aceptación
 
-- [ ] Cada sección muestra los valores actuales (o los defaults) y guarda solo
+- [x] Cada sección muestra los valores actuales (o los defaults) y guarda solo
       lo que cambió.
 - [ ] Sin el permiso de una sección, la sección no se ofrece; sin el feature, la
       sección no se ofrece.
-- [ ] Horarios y bloqueos: alta, edición y baja; fin posterior al inicio; solo
+- [x] Horarios y bloqueos: alta, edición y baja; fin posterior al inicio; solo
       profesionales y sucursales de la clínica.
-- [ ] El proxy acepta los cuatro namespaces y rechaza cualquier otro como antes.
-- [ ] Prueba en navegador del recorrido.
+- [x] El proxy acepta los cuatro namespaces y rechaza cualquier otro como antes.
+- [x] Prueba en navegador del recorrido.
 
 ## Avance
 
@@ -141,7 +141,42 @@ formulario se guarda por separado.
 
 ## Verificación
 
-Pendiente (T3).
+- **T1:** web 2431 tests en verde; typecheck, lint y prettier en verde; parent
+  rerun focalizado 83/83 tras la corrección del mensaje en español (UX-036).
+- **T2:** 14 tests nuevos RED→GREEN (`availability-editor.test.tsx`); web 2445
+  en verde; typecheck, lint y prettier en verde; parent rerun de settings 43/43.
+- **T3 — navegador** (`apps/e2e/specs/tenant-settings.spec.ts`, apps construidas
+  con `pnpm build`, navegador en `America/Los_Angeles`): el dueño demo entra por
+  «Configuración › General» y, por la pantalla real:
+  - Ventas: cambia «La factura exige cliente», guarda, recarga y sigue cambiado;
+    `GET /api/settings/sales` coincide; la moneda se ve `readonly` con el valor
+    de la API.
+  - Portal: cambia «Las reservas necesitan aprobación» y persiste (pantalla y
+    API).
+  - Notificaciones: 169 horas se rechaza en la página con su mensaje y **sin
+    ningún `PUT`**; horas válidas distintas por corrida y WhatsApp alternado
+    persisten con un único `PUT`.
+  - Agenda: la política de superposición persiste y la API conserva las listas.
+    Un horario (profesional y sucursal de los selectores, día y `HH:MM` al azar)
+    y un bloqueo (diciembre, hora local) se guardan; tras recargar se ven con
+    los mismos valores locales y la API guarda `weekday`/minutos locales y los
+    instantes UTC esperados (local + 3 h). Se edita el fin del horario y se
+    quita el bloqueo en un solo guardado; persiste.
+  - Restauración: antes de cambiar nada lee los cuatro namespaces por el BFF y
+    en un `finally` los escribe enteros y comprueba que la lectura es igual. La
+    base quedó idéntica tras cada corrida (`tenant_setting_namespace` comparada
+    antes/después). Como no hay `DELETE` de namespace, el tenant demo, que no
+    tenía filas, queda con filas que guardan exactamente los defaults que ya se
+    le servían.
+- **Corridas:** la spec sola dos veces (2/2 en verde); de nuevo sola y enseguida
+  las sensibles a estos ajustes (`branches`, `reports`, `portal-sign-in`,
+  `payment-detail`, `sale-reversal`, `electronic-credit-note`): 9/9 en verde;
+  lane completa una vez: **35/35 en verde**. `@newsaas/e2e` typecheck y lint en
+  verde; prettier en verde en los archivos tocados.
+- No hay en la lane una spec de reservas del portal ni de recordatorios; esos
+  consumidores se cubren solo con la restauración exacta.
+- Criterio de permisos/feature: sigue sin marcar para la app en vivo (solo
+  probado en el componente; ver la limitación de abajo).
 
 ## Limitación conocida: permisos y features en la web
 

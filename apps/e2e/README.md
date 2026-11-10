@@ -38,6 +38,7 @@ A failing run writes a trace; `pnpm --filter @newsaas/e2e e2e:report` opens it.
 | `payment-detail`, `sale-reversal`, `recoverable-attempts` | PostgreSQL, Redis, the built API and web                                             |
 | `branch-stock`                                            | PostgreSQL, Redis, the built API and web                                             |
 | `branch-reports`                                          | PostgreSQL, Redis, the built API and web                                             |
+| `tenant-settings`                                         | PostgreSQL, Redis, the built API and web                                             |
 
 The recovery spec starts the worker itself and listens on port 2526 as a minimal
 SMTP server, because there is no other place the link exists: the channel fake
@@ -90,6 +91,19 @@ the "one branch, no filter" state; the web component test covers it.
 
 `staff-team` invites a new address each run, for the reason the recovery
 identity is fresh.
+
+`tenant-settings` (CFG-001) edits the demo tenant's `sales`, `portal`,
+`notifications` and `scheduling` settings through «Configuración › General»,
+which every other spec shares: the sales flows read `requireCustomerForInvoice`,
+the agenda and branch flows book under the conflict policy, availability and
+blocks. It reads all four namespaces through the BFF before changing anything
+and, in a `finally`, writes each back whole and asserts the read equals what it
+found. There is no `DELETE` for a namespace, so a tenant that had no stored row
+ends with one holding exactly the values it was already served. Lead hours,
+weekday, times and the block's date vary per run; the browser runs in
+`America/Los_Angeles` to prove minutes and block instants follow the clinic's
+zone. A block is placed in December, when Paraguay is at UTC-03 under both the
+old and the current tz rules.
 
 ## What it does NOT prove
 

@@ -24,11 +24,11 @@ authored lines.
 
 ## Tasks
 
-| ID  | Specs    | Route                        | Status  | Commit / evidence |
-| --- | -------- | ---------------------------- | ------- | ----------------- |
-| T1  | S1-S3,S5 | delegated (context backstop) | done    | see L4            |
-| T2  | S4       | delegated (context backstop) | done    | see L5            |
-| T3  | S1-S6    | tbd                          | pending | browser + docs    |
+| ID  | Specs    | Route                        | Status | Commit / evidence |
+| --- | -------- | ---------------------------- | ------ | ----------------- |
+| T1  | S1-S3,S5 | delegated (context backstop) | done   | see L4            |
+| T2  | S4       | delegated (context backstop) | done   | see L5            |
+| T3  | S1-S6    | delegated (context backstop) | done   | see L6            |
 
 Risk: item 2 only if permission gating is wrong (backend re-checks); item 3 for
 the shared settings proxy (pin existing behavior).
@@ -67,3 +67,12 @@ the shared settings proxy (pin existing behavior).
   settings-manager roles). 14 new tests RED→GREEN; web 2445 pass,
   typecheck/lint/prettier pass; parent rerun settings 43/43. Limitation: saving
   one Agenda form reloads and discards unsaved edits in the other.
+- L6 (2026-11-10): T3 done (delegated). tenant-settings.spec.ts drives all four
+  sections through the screen (browser in America/Los_Angeles to prove clinic-
+  zone times), checks API persistence, refuses out-of-range lead hours with no
+  PUT, and restores every namespace exactly in finally (DB table identical after
+  runs; caveat: demo tenant now has stored rows equal to defaults — no DELETE
+  exists). Spec alone 2/2, sensitive specs 9/9, full lane 35/35; parent rerun
+  1/1. No product defect. Permission/feature box stays unticked (live app has no
+  caller claims). Risk: none (requested proxy widening; existing proxy and nav
+  behavior pinned by tests).
