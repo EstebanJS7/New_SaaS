@@ -93,9 +93,31 @@ profesional. Primera entrega de [[DEC-094]].
   - Agenda filtra por sucursal.
   - Proxies.
   - Build de Next.
-- **Pendiente:** la prueba en navegador (T3). Si una clínica tuviera dos
-  sucursales con el mismo nombre (solo posible insertando a mano), la migración
-  falla en el índice único: renombrar una antes de migrar.
+  - Prueba en navegador: `apps/e2e/specs/branches.spec.ts` (ver abajo).
+- **Riesgo:** si una clínica tuviera dos sucursales con el mismo nombre (solo
+  posible insertando a mano), la migración falla en el índice único: renombrar
+  una antes de migrar.
+
+## Prueba en navegador
+
+`apps/e2e/specs/branches.spec.ts` recorre las pantallas reales contra el tenant
+demo y los servicios de la lane: crea una sucursal en Configuración ›
+Sucursales, asigna al veterinario y al propietario en Personal, y comprueba cada
+restricción contra la API y contra la superficie que muestra el rechazo.
+
+| Paso                           | Qué se observa                                                                                                                                                                                                                                       |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Última sucursal activa         | Con una sola sucursal activa la pantalla no ofrece «Desactivar»; `POST /branches/:id/deactivate` responde `409 CONFLICT` «Tiene que quedar al menos una sucursal activa.» y la sucursal sigue activa.                                                |
+| Sucursal con turnos pendientes | Un turno en la sucursal nueva hace que el diálogo muestre «La sucursal tiene 1 turno pendiente: reprogramalo o cancelalo antes de desactivarla.»; la API responde lo mismo, la sucursal sigue activa y el turno sigue `SCHEDULED`.                   |
+| Personal con turnos pendientes | Quitarle esa sucursal a la profesional se rechaza con «Esa persona tiene 1 turno pendiente en una sucursal que le quitás: reasignalo antes.» y la asignación no cambia.                                                                              |
+| Sucursal de trabajo            | Antes de asignar, crear una venta o una caja en la sucursal nueva responde `400 VALIDATION_FAILED` «No trabajás en esa sucursal o está desactivada…» sin crear nada. Después de asignar al propietario, Caja y Mostrador ofrecen elegir la sucursal. |
+| Caja y venta                   | La caja creada queda en la sucursal elegida (`branchId`/`branchName`); la venta cobrada en efectivo queda con ese `branchId` y su movimiento `SALE` aparece en la sesión de esa caja.                                                                |
+
+**Evidencia observada (2026-11-10):** la lane pasó 1 test con `pnpm build` y
+Playwright sobre los servicios de `newsaas-e2e-*`. El nombre de la sucursal, la
+caja y el turno llevan un tag por corrida; la limpieza devuelve al tenant a una
+sucursal activa y una sola sucursal de trabajo, y una corrida interrumpida se
+limpia al empezar la siguiente.
 
 ## Drill de migración con datos
 
