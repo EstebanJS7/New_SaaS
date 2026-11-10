@@ -9,6 +9,7 @@ import { PrismaService } from "@newsaas/database";
 import type { Prisma } from "@newsaas/database";
 import type { DomainError } from "@newsaas/shared";
 import { AppModule } from "../src/app.module.js";
+import { expectCrossTenant404 } from "./support/expect-cross-tenant-404.js";
 import { AUTH_CONFIG, readAuthConfig } from "../src/auth/auth.config.js";
 import { SessionService } from "../src/auth/session.service.js";
 import { STAFF_SESSION_COOKIE } from "../src/auth/session-cookie.js";
@@ -19,6 +20,11 @@ import { createApiLogger } from "../src/common/http/api-logger.factory.js";
 import { createFastifyAdapter } from "../src/common/http/fastify-adapter.factory.js";
 import { RequestContextService } from "../src/context/request-context.service.js";
 import { PermissionResolver } from "../src/rbac/permission-resolver.service.js";
+import {
+  LAST_MANAGER_CONFLICT_MESSAGE,
+  MEMBERSHIP_MANAGE_KEY,
+  applyOverrides,
+} from "../src/rbac/manage-holdership.js";
 import { stockSerializationLockKey } from "../src/inventory/inventory.repository.js";
 import { APPLICATION_EVENT_DISPATCHER } from "../src/events/application-events.module.js";
 import {
@@ -20484,6 +20490,802 @@ describe.skipIf(!livePgDatabaseUrl)("live-pg application-path isolation", () => 
       ]) {
         await supertest(serverUrl).get(path).set("Cookie", attemptsTenant.cookie).expect(404);
       }
+    });
+  });
+
+  /**
+   * TD-006 S1 — the Batch 5 cross-tenant isolation cases of
+   * `cross-tenant-isolation.e2e-spec.ts`, re-run over real HTTP against real
+   * PostgreSQL. The in-memory suite proves the guard chain over a structural
+   * fake; this block executes the SAME behaviours through the generated
+   * client's SQL, so a scoping predicate that diverged from the fake's
+   * semantics would fail here.
+   *
+   * Fixture parity with `seedTwoTenants`: two dedicated tenants; tenant A has
+   * one ACTIVE and one SUSPENDED member holding a non-seeded role that grants
+   * ONLY `users.membership.manage` (so `branches.manage` and
+   * `sales.settings.manage` are absent); tenant B has one ACTIVE OWNER; one
+   * authenticated profile has no membership at all. Dedicated tenants keep the
+   * roster counts independent of every other block in this file.
+   *
+   * Deliberately not ported: the structured-log fence of the last in-memory
+   * case. It inspects captured application logs, not a query path, and this
+   * suite boots its logger at `error` level without capture.
+   */
+  describe("TD-006 Batch 5 cross-tenant isolation against real PostgreSQL", () => {
+    interface MembershipListBody {
+      memberships: { id: string; tenantId: string; userProfileId: string; status: string }[];
+    }
+    interface RolesBody {
+      roles: { code: string; permissions: string[] }[];
+    }
+    interface Actor {
+      profileId: string;
+      email: string;
+      membershipId: string | null;
+      cookie: string;
+    }
+
+    let isoTenantA: { id: string; slug: string };
+    let isoTenantB: { id: string; slug: string };
+    let actorA: Actor;
+    let actorB: Actor;
+    let suspendedA: Actor;
+    let noMembership: Actor;
+
+    const issueCookie = async (profileId: string): Promise<string> => {
+      const session = await app.get(SessionService).issue(profileId);
+      return `${STAFF_SESSION_COOKIE}=${session.token}`;
+    };
+
+    const createActor = async (
+      label: string,
+      membership: { tenantId: string; roleId: string; status: "ACTIVE" | "SUSPENDED" } | null
+    ): Promise<Actor> => {
+      const email = `iso-${label}@live.test`;
+      const profile = await prisma.userProfile.create({
+        data: { email, displayName: `Iso ${label}`, status: "active" },
+      });
+      const row = membership
+        ? await prisma.tenantMembership.create({
+            data: { ...membership, userProfileId: profile.id },
+          })
+        : null;
+      return {
+        profileId: profile.id,
+        email,
+        membershipId: row?.id ?? null,
+        cookie: await issueCookie(profile.id),
+      };
+    };
+
+    const foreignIdentifiers = (): string[] => [
+      isoTenantB.id,
+      isoTenantB.slug,
+      actorB.profileId,
+      actorB.membershipId!,
+      actorB.email,
+    ];
+
+    beforeAll(async () => {
+      isoTenantA = await prisma.tenant.create({
+        data: { slug: "live-iso-a", name: "Isolation Tenant A" },
+      });
+      isoTenantB = await prisma.tenant.create({
+        data: { slug: "live-iso-b", name: "Isolation Tenant B" },
+      });
+
+      // Non-seeded role granting ONLY the governance key, like the in-memory
+      // fixture's role: listing/role/override routes pass, branch and sales
+      // settings administration does not.
+      const managerRole = await prisma.role.create({
+        data: { code: "LIVE-ISO-MANAGER", name: "Isolation Manager" },
+      });
+      const managePermission = await prisma.permission.findUniqueOrThrow({
+        where: { key: "users.membership.manage" },
+      });
+      await prisma.rolePermission.create({
+        data: { roleId: managerRole.id, permissionId: managePermission.id },
+      });
+      const ownerRole = await prisma.role.findUniqueOrThrow({ where: { code: "OWNER" } });
+
+      actorA = await createActor("a", {
+        tenantId: isoTenantA.id,
+        roleId: managerRole.id,
+        status: "ACTIVE",
+      });
+      suspendedA = await createActor("suspended-a", {
+        tenantId: isoTenantA.id,
+        roleId: managerRole.id,
+        status: "SUSPENDED",
+      });
+      actorB = await createActor("b", {
+        tenantId: isoTenantB.id,
+        roleId: ownerRole.id,
+        status: "ACTIVE",
+      });
+      noMembership = await createActor("no-membership", null);
+
+      // Tenant B (only) holds the explicit sales entitlement the settings case writes under.
+      const salesFeature = await prisma.featureCode.upsert({
+        where: { code: "sales" },
+        create: { code: "sales" },
+        update: {},
+      });
+      await prisma.tenantEntitlement.create({
+        data: { tenantId: isoTenantB.id, featureCodeId: salesFeature.id },
+      });
+    }, 60_000);
+
+    it("rejects UNAUTHENTICATED access with a 401 envelope before any tenancy logic", async () => {
+      for (const url of ["/memberships", `/memberships/${actorA.membershipId!}`]) {
+        const response = await supertest(serverUrl).get(url).expect(401);
+        expect((response.body as ErrorEnvelope).error.code).toBe("UNAUTHENTICATED");
+      }
+    });
+
+    it("scopes listing IMPLICITLY: tenant A observes only A rows even though B exists", async () => {
+      const asA = await supertest(serverUrl)
+        .get("/memberships")
+        .set("Cookie", actorA.cookie)
+        .expect(200);
+      const listA = (asA.body as MembershipListBody).memberships;
+
+      expect(listA).toHaveLength(2);
+      expect(listA.map((entry) => entry.tenantId)).toEqual([isoTenantA.id, isoTenantA.id]);
+      expect(listA.map((entry) => entry.id).sort()).toEqual(
+        [actorA.membershipId!, suspendedA.membershipId!].sort()
+      );
+      expect(listA.map((entry) => entry.status).sort()).toEqual(["ACTIVE", "SUSPENDED"]);
+      for (const identifier of foreignIdentifiers()) {
+        expect(asA.text).not.toContain(identifier);
+      }
+    });
+
+    it("masks a FOREIGN membership as 404 and stays byte-equivalent to nonexistent", async () => {
+      await expectCrossTenant404({
+        app,
+        cookie: actorA.cookie,
+        nonexistentUrl: `/memberships/${randomUUID()}`,
+        foreignUrl: `/memberships/${actorB.membershipId!}`,
+        forbiddenIdentifiers: foreignIdentifiers(),
+      });
+    });
+
+    it("masks a FOREIGN membership from ROLE ASSIGNMENT as 404 too, writing nothing", async () => {
+      const sharedRequestId = randomUUID();
+      const payload = { roleCode: "VETERINARIAN" };
+      const before = await prisma.tenantMembership.findUniqueOrThrow({
+        where: { id: actorB.membershipId! },
+      });
+      const auditsBefore = await prisma.auditLog.count({
+        where: { action: "rbac.membership_role_assigned", targetId: actorB.membershipId! },
+      });
+
+      const nonexistentResponse = await supertest(serverUrl)
+        .post(`/memberships/${randomUUID()}/role`)
+        .set("Cookie", actorA.cookie)
+        .set("X-Request-Id", sharedRequestId)
+        .send(payload)
+        .expect(404);
+      const foreignResponse = await supertest(serverUrl)
+        .post(`/memberships/${actorB.membershipId!}/role`)
+        .set("Cookie", actorA.cookie)
+        .set("X-Request-Id", sharedRequestId)
+        .send(payload)
+        .expect(404);
+
+      expect((nonexistentResponse.body as ErrorEnvelope).error.code).toBe("NOT_FOUND");
+      expect((foreignResponse.body as ErrorEnvelope).error.code).toBe("NOT_FOUND");
+      expect(nonexistentResponse.text).toBe(foreignResponse.text);
+      for (const body of [nonexistentResponse.text, foreignResponse.text]) {
+        expect(body).not.toContain(actorB.membershipId!);
+      }
+
+      // Live-only fence: the foreign row and its audit trail are untouched.
+      const after = await prisma.tenantMembership.findUniqueOrThrow({
+        where: { id: actorB.membershipId! },
+      });
+      expect(after.roleId).toBe(before.roleId);
+      expect(
+        await prisma.auditLog.count({
+          where: { action: "rbac.membership_role_assigned", targetId: actorB.membershipId! },
+        })
+      ).toBe(auditsBefore);
+    });
+
+    it("scopes RBAC permission OVERRIDES to the caller's tenant only (DEC-003)", async () => {
+      const CASHIER_ROLE = "CASHIER";
+      const GRANTED_KEY = "cash.session.close";
+      const cashier = await prisma.role.findUniqueOrThrow({ where: { code: CASHIER_ROLE } });
+      const cashierFor = (body: unknown) =>
+        (body as RolesBody).roles.find((role) => role.code === CASHIER_ROLE)?.permissions;
+
+      const seenByBBefore = await supertest(serverUrl)
+        .get("/rbac/roles")
+        .set("Cookie", actorB.cookie)
+        .expect(200);
+      const baselineForB = cashierFor(seenByBBefore.body);
+      expect(baselineForB).toBeDefined();
+      expect(baselineForB).not.toEqual([GRANTED_KEY]);
+
+      await supertest(serverUrl)
+        .put(`/rbac/roles/${CASHIER_ROLE}/permissions`)
+        .set("Cookie", actorA.cookie)
+        .send({ keys: [GRANTED_KEY] })
+        .expect(200);
+
+      const seenByA = await supertest(serverUrl)
+        .get("/rbac/roles")
+        .set("Cookie", actorA.cookie)
+        .expect(200);
+      expect(cashierFor(seenByA.body)).toEqual([GRANTED_KEY]);
+
+      // Tenant B — same global role row, zero overrides of its own — still sees
+      // its untouched baseline, byte-for-byte.
+      const seenByB = await supertest(serverUrl)
+        .get("/rbac/roles")
+        .set("Cookie", actorB.cookie)
+        .expect(200);
+      expect(seenByB.text).toBe(seenByBBefore.text);
+
+      // Physical fence: every stored CASHIER verdict of these two tenants is A's.
+      const overrides = await prisma.tenantRolePermissionOverride.findMany({
+        where: { roleId: cashier.id, tenantId: { in: [isoTenantA.id, isoTenantB.id] } },
+      });
+      expect(overrides.length).toBeGreaterThan(0);
+      for (const override of overrides) {
+        expect(override.tenantId).toBe(isoTenantA.id);
+      }
+    });
+
+    it("ignores query/header tenant hints: scoping still resolves to tenant A", async () => {
+      const plainList = await supertest(serverUrl)
+        .get("/memberships")
+        .set("Cookie", actorA.cookie)
+        .expect(200);
+
+      const hintedList = await supertest(serverUrl)
+        .get("/memberships")
+        .set("Cookie", actorA.cookie)
+        .query({ tenantId: isoTenantB.id })
+        .query({ slug: isoTenantB.slug })
+        .set("x-tenant-id", isoTenantB.id)
+        .expect(200);
+      expect(hintedList.text).toBe(plainList.text);
+
+      const hintedDetail = await supertest(serverUrl)
+        .get(`/memberships/${actorB.membershipId!}`)
+        .set("Cookie", actorA.cookie)
+        .query({ tenantId: isoTenantB.id })
+        .set("x-tenant-id", isoTenantB.id)
+        .expect(404);
+      expect((hintedDetail.body as ErrorEnvelope).error.code).toBe("NOT_FOUND");
+    });
+
+    it("gives an authenticated session WITHOUT memberships 403 — but /auth/me still works", async () => {
+      const denied = await supertest(serverUrl)
+        .get("/memberships")
+        .set("Cookie", noMembership.cookie)
+        .expect(403);
+      expect((denied.body as ErrorEnvelope).error.code).toBe("FORBIDDEN");
+
+      const foreignDetail = await supertest(serverUrl)
+        .get(`/memberships/${actorB.membershipId!}`)
+        .set("Cookie", noMembership.cookie)
+        .expect(403);
+      expect(foreignDetail.text).not.toContain(actorB.membershipId!);
+
+      const me = await supertest(serverUrl)
+        .get("/auth/me")
+        .set("Cookie", noMembership.cookie)
+        .expect(200);
+      expect((me.body as { user: { id: string } }).user.id).toBe(noMembership.profileId);
+    });
+
+    it("treats SUSPENDED memberships as no authority at all (ACTIVE-only rule)", async () => {
+      const suspended = await supertest(serverUrl)
+        .get("/memberships")
+        .set("Cookie", suspendedA.cookie)
+        .expect(403);
+      expect((suspended.body as ErrorEnvelope).error.code).toBe("FORBIDDEN");
+    });
+
+    it("has NO self-service creation surface: signup attempts hit absent routes (404)", async () => {
+      const tenantsBefore = await prisma.tenant.count();
+      const attempts: [string, Record<string, unknown>][] = [
+        ["/tenants", { slug: "evil-tenant", name: "Evil" }],
+        ["/auth/register", { email: "evil@isolation.test", password: "whatever123" }],
+        ["/tenants/register", { name: "Evil" }],
+        ["/roles", { code: "SUPERUSER" }],
+      ];
+      for (const [url, payload] of attempts) {
+        const response = await supertest(serverUrl)
+          .post(url)
+          .set("Cookie", actorA.cookie)
+          .send(payload)
+          .expect(404);
+        expect((response.body as ErrorEnvelope).error.code).toBe("NOT_FOUND");
+      }
+      await supertest(serverUrl).post("/auth/register").send({}).expect(404);
+
+      expect(await prisma.tenant.count()).toBe(tenantsBefore);
+      expect(await prisma.role.count({ where: { code: "SUPERUSER" } })).toBe(0);
+    });
+
+    it("keeps the UN-namespaced legacy administration paths absent (RBAC lives under /rbac)", async () => {
+      for (const url of ["/roles", `/roles/${randomUUID()}`, "/permissions"]) {
+        const response = await supertest(serverUrl)
+          .get(url)
+          .set("Cookie", actorA.cookie)
+          .expect(404);
+        expect((response.body as ErrorEnvelope).error.code).toBe("NOT_FOUND");
+      }
+    });
+
+    it("MB-001: branch administration is guarded by branches.manage, not by membership", async () => {
+      const branchesBefore = await prisma.branch.count({ where: { tenantId: isoTenantA.id } });
+      const responses = [
+        await supertest(serverUrl).get("/branches").set("Cookie", actorA.cookie),
+        await supertest(serverUrl)
+          .post("/branches")
+          .set("Cookie", actorA.cookie)
+          .send({ name: "Shadow" }),
+        await supertest(serverUrl)
+          .put(`/memberships/${actorA.membershipId!}/branches`)
+          .set("Cookie", actorA.cookie)
+          .send({ branchIds: [randomUUID()] }),
+      ];
+      for (const response of responses) {
+        expect(response.status).toBe(403);
+        expect((response.body as ErrorEnvelope).error.code).toBe("FORBIDDEN");
+      }
+      for (const response of [
+        await supertest(serverUrl).get(`/branches/${randomUUID()}`).set("Cookie", actorA.cookie),
+        await supertest(serverUrl).delete(`/branches/${randomUUID()}`).set("Cookie", actorA.cookie),
+      ]) {
+        expect(response.status).toBe(404);
+      }
+      expect(await prisma.branch.count({ where: { tenantId: isoTenantA.id } })).toBe(
+        branchesBefore
+      );
+    });
+
+    it("keeps schema-only scaffolding inert: CustomerPortalAccess has no routes", async () => {
+      for (const url of ["/portal-access", `/portal-access/${randomUUID()}`]) {
+        const response = await supertest(serverUrl)
+          .get(url)
+          .set("Cookie", actorA.cookie)
+          .expect(404);
+        expect((response.body as ErrorEnvelope).error.code).toBe("NOT_FOUND");
+      }
+
+      for (const method of ["patch", "put", "delete"] as const) {
+        const response = await supertest(serverUrl)
+          [method](`/memberships/${actorA.membershipId!}`)
+          .set("Cookie", actorA.cookie)
+          .send({ status: "SUSPENDED" })
+          .expect(404);
+        expect((response.body as ErrorEnvelope).error.code).toBe("NOT_FOUND");
+      }
+      const membership = await prisma.tenantMembership.findUniqueOrThrow({
+        where: { id: actorA.membershipId! },
+      });
+      expect(membership.status).toBe("ACTIVE");
+    });
+
+    it("settings reads resolve to the caller's tenant only — no cross-tenant-addressable resource", async () => {
+      await supertest(serverUrl)
+        .put("/settings/sales")
+        .set("Cookie", actorB.cookie)
+        .send({ defaultCurrency: "USD" })
+        .expect(200);
+
+      const aReadBefore = await supertest(serverUrl)
+        .get("/settings/sales")
+        .set("Cookie", actorA.cookie)
+        .expect(200);
+      expect((aReadBefore.body as { settings: Record<string, unknown> }).settings).toEqual({
+        defaultCurrency: "PYG",
+        requireCustomerForInvoice: false,
+      });
+
+      const aReadAfter = await supertest(serverUrl)
+        .get("/settings/sales")
+        .set("Cookie", actorA.cookie)
+        .expect(200);
+      expect(aReadAfter.text).toBe(aReadBefore.text);
+
+      const aWrite = await supertest(serverUrl)
+        .put("/settings/sales")
+        .set("Cookie", actorA.cookie)
+        .send({ defaultCurrency: "ARS" })
+        .expect(403);
+      expect((aWrite.body as ErrorEnvelope).error.code).toBe("FORBIDDEN");
+
+      // Physical fence: of these two tenants, exactly one sales row exists and it is B's.
+      const rows = await prisma.tenantSettingNamespace.findMany({
+        where: { namespace: "sales", tenantId: { in: [isoTenantA.id, isoTenantB.id] } },
+      });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.tenantId).toBe(isoTenantB.id);
+      expect(rows[0]?.data).toEqual({ defaultCurrency: "USD", requireCustomerForInvoice: false });
+    });
+
+    it("leaks ZERO tenant-B identifiers across every observed response body", async () => {
+      const responses = [
+        await supertest(serverUrl).get("/memberships").set("Cookie", actorA.cookie),
+        await supertest(serverUrl)
+          .get(`/memberships/${actorB.membershipId!}`)
+          .set("Cookie", actorA.cookie),
+        await supertest(serverUrl).get("/memberships").set("Cookie", noMembership.cookie),
+        await supertest(serverUrl).get("/rbac/roles").set("Cookie", actorA.cookie),
+        await supertest(serverUrl).get("/settings/sales").set("Cookie", actorA.cookie),
+      ];
+      const serialized = responses.map((response) => response.text).join("\n");
+      for (const identifier of foreignIdentifiers()) {
+        expect(serialized).not.toContain(identifier);
+      }
+    });
+  });
+
+  /**
+   * TD-006 S2 — the two RBAC transactional properties the in-memory fake
+   * cannot express, proven against real PostgreSQL.
+   *
+   * Both administration flows (tenant override replacement and membership
+   * role assignment) take `SELECT ... FOR UPDATE` over every ACTIVE membership
+   * row of the tenant, in id order, before evaluating the shared effective-
+   * holdership predicate (`manage-holdership.ts`). Each governance tenant here
+   * has exactly TWO effective `users.membership.manage` holders — an OWNER and
+   * an ADMIN — so removing either alone is allowed, removing both strands it.
+   */
+  describe("TD-006 RBAC effective-holder concurrency and audit rollback against real PostgreSQL", () => {
+    interface GovernanceTenant {
+      tenantId: string;
+      owner: { membershipId: string; cookie: string };
+      admin: { membershipId: string; cookie: string };
+    }
+
+    const provisionGovernanceTenant = async (slug: string): Promise<GovernanceTenant> => {
+      const tenant = await prisma.tenant.create({ data: { slug, name: `Tenant ${slug}` } });
+      const member = async (code: "OWNER" | "ADMIN") => {
+        const role = await prisma.role.findUniqueOrThrow({ where: { code } });
+        const profile = await prisma.userProfile.create({
+          data: {
+            email: `${code.toLowerCase()}-${slug}@live.test`,
+            displayName: `${code} ${slug}`,
+            status: "active",
+          },
+        });
+        const membership = await prisma.tenantMembership.create({
+          data: {
+            tenantId: tenant.id,
+            userProfileId: profile.id,
+            roleId: role.id,
+            status: "ACTIVE",
+          },
+        });
+        const session = await app.get(SessionService).issue(profile.id);
+        return { membershipId: membership.id, cookie: `${STAFF_SESSION_COOKIE}=${session.token}` };
+      };
+      return { tenantId: tenant.id, owner: await member("OWNER"), admin: await member("ADMIN") };
+    };
+
+    /** Count of ACTIVE memberships whose role EFFECTIVELY holds the governance key. */
+    const effectiveHolderCount = async (tenantId: string): Promise<number> => {
+      const memberships = await prisma.tenantMembership.findMany({
+        where: { tenantId, status: "ACTIVE" },
+      });
+      let holders = 0;
+      for (const membership of memberships) {
+        const mappings = await prisma.rolePermission.findMany({
+          where: { roleId: membership.roleId },
+          select: { permission: { select: { key: true } } },
+        });
+        const overrides = await prisma.tenantRolePermissionOverride.findMany({
+          where: { tenantId, roleId: membership.roleId },
+        });
+        if (
+          applyOverrides(
+            mappings.map((row) => row.permission.key),
+            overrides,
+            membership.roleId
+          ).has(MEMBERSHIP_MANAGE_KEY)
+        ) {
+          holders += 1;
+        }
+      }
+      return holders;
+    };
+
+    /** Every stored fact either RBAC mutation can write for one tenant. */
+    const governanceState = async (tenantId: string) => ({
+      memberships: await prisma.tenantMembership.findMany({
+        where: { tenantId },
+        select: { id: true, roleId: true, status: true },
+        orderBy: { id: "asc" },
+      }),
+      overrides: await prisma.tenantRolePermissionOverride.findMany({
+        where: { tenantId },
+        select: { id: true, roleId: true, permissionKey: true, granted: true, updatedAt: true },
+        orderBy: { id: "asc" },
+      }),
+      audits: await prisma.auditLog.findMany({
+        where: { tenantId, action: { startsWith: "rbac." } },
+        select: { id: true, action: true, targetId: true },
+        orderBy: { id: "asc" },
+      }),
+    });
+
+    /** ADMIN's effective set minus the governance key — the override that strips it. */
+    const adminKeysWithoutManage = async (cookie: string): Promise<string[]> => {
+      const listed = await supertest(serverUrl)
+        .get("/rbac/roles")
+        .set("Cookie", cookie)
+        .expect(200);
+      const admin = (
+        listed.body as { roles: { code: string; permissions: string[] }[] }
+      ).roles.find((role) => role.code === "ADMIN");
+      expect(admin?.permissions).toContain(MEMBERSHIP_MANAGE_KEY);
+      return admin!.permissions.filter((key) => key !== MEMBERSHIP_MANAGE_KEY);
+    };
+
+    const stripAdminManage = (tenant: GovernanceTenant, keys: string[]) =>
+      supertest(serverUrl)
+        .put("/rbac/roles/ADMIN/permissions")
+        .set("Cookie", tenant.owner.cookie)
+        .send({ keys });
+
+    const demoteOwner = (tenant: GovernanceTenant, cookie: string) =>
+      supertest(serverUrl)
+        .post(`/memberships/${tenant.owner.membershipId}/role`)
+        .set("Cookie", cookie)
+        .send({ roleCode: "VETERINARIAN" });
+
+    /**
+     * Deterministic barrier over the shared lock protocol: a barrier
+     * transaction takes the SAME tenant-wide `FOR UPDATE` both flows take, the
+     * first racer is started and proven parked on the lowest-id membership row
+     * (the first row both flows lock), then the second racer is started and
+     * proven parked behind it. Only then is the barrier released, so both
+     * administration transactions are provably in flight on the row lock and
+     * the PostgreSQL lock queue decides the order (first-parked acquires first).
+     */
+    const raceOnMembershipLock = async <T>(
+      tenantId: string,
+      startFirst: () => PromiseLike<T>,
+      startSecond: () => PromiseLike<T>
+    ): Promise<[T, T]> => {
+      const lowest = await prisma.tenantMembership.findFirstOrThrow({
+        where: { tenantId, status: "ACTIVE" },
+        orderBy: { id: "asc" },
+      });
+      let releaseBarrier!: () => void;
+      const barrierReleased = new Promise<void>((resolve) => {
+        releaseBarrier = resolve;
+      });
+      let signalBarrierReady!: () => void;
+      const barrierReady = new Promise<void>((resolve) => {
+        signalBarrierReady = resolve;
+      });
+      const barrierTransaction = prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`
+            SELECT "id" FROM "tenant_membership"
+            WHERE "tenant_id" = ${tenantId}::uuid AND "status" = 'ACTIVE'
+            ORDER BY "id" ASC
+            FOR UPDATE`;
+          signalBarrierReady();
+          await barrierReleased;
+        },
+        { timeout: 20_000, maxWait: 10_000 }
+      );
+      await barrierReady;
+
+      let first: Promise<T> | undefined;
+      let second: Promise<T> | undefined;
+      try {
+        const { page, tuple } = await readRowCtid(prisma, "tenant_membership", lowest.id);
+        first = Promise.resolve(startFirst());
+        await waitForRowLockWaiters(prisma, "tenant_membership", page, tuple, 1, 10_000);
+        second = Promise.resolve(startSecond());
+        await waitForRowLockWaiters(prisma, "tenant_membership", page, tuple, 2, 10_000);
+      } finally {
+        releaseBarrier();
+        await barrierTransaction;
+      }
+      return [await first, await second];
+    };
+
+    it("serializes override-first vs assignment: the override wins, the demotion is refused, one holder remains", async () => {
+      const tenant = await provisionGovernanceTenant("live-rbac-race-override-first");
+      const keys = await adminKeysWithoutManage(tenant.owner.cookie);
+      expect(await effectiveHolderCount(tenant.tenantId)).toBe(2);
+
+      const [override, demotion] = await raceOnMembershipLock(
+        tenant.tenantId,
+        () => stripAdminManage(tenant, keys),
+        () => demoteOwner(tenant, tenant.admin.cookie)
+      );
+
+      expect(override.status).toBe(200);
+      expect(demotion.status).toBe(409);
+      expect((demotion.body as ErrorEnvelope).error).toMatchObject({
+        code: "CONFLICT",
+        message: LAST_MANAGER_CONFLICT_MESSAGE,
+      });
+
+      const state = await governanceState(tenant.tenantId);
+      const ownerRole = await prisma.role.findUniqueOrThrow({ where: { code: "OWNER" } });
+      expect(state.memberships.find((row) => row.id === tenant.owner.membershipId)?.roleId).toBe(
+        ownerRole.id
+      );
+      expect(state.audits.map((row) => row.action)).toEqual(["rbac.role_permissions_overridden"]);
+      expect(await effectiveHolderCount(tenant.tenantId)).toBe(1);
+      // The survivor really administers the tenant over HTTP.
+      await supertest(serverUrl).get("/memberships").set("Cookie", tenant.owner.cookie).expect(200);
+    });
+
+    it("serializes assignment-first vs override: the demotion wins, the override is refused, one holder remains", async () => {
+      const tenant = await provisionGovernanceTenant("live-rbac-race-assignment-first");
+      const keys = await adminKeysWithoutManage(tenant.owner.cookie);
+      expect(await effectiveHolderCount(tenant.tenantId)).toBe(2);
+
+      const [demotion, override] = await raceOnMembershipLock(
+        tenant.tenantId,
+        () => demoteOwner(tenant, tenant.admin.cookie),
+        () => stripAdminManage(tenant, keys)
+      );
+
+      expect(demotion.status).toBe(201);
+      expect(override.status).toBe(409);
+      expect((override.body as ErrorEnvelope).error).toMatchObject({
+        code: "CONFLICT",
+        message: LAST_MANAGER_CONFLICT_MESSAGE,
+      });
+
+      const state = await governanceState(tenant.tenantId);
+      expect(state.overrides).toEqual([]);
+      expect(state.audits.map((row) => row.action)).toEqual(["rbac.membership_role_assigned"]);
+      expect(await effectiveHolderCount(tenant.tenantId)).toBe(1);
+      await supertest(serverUrl).get("/memberships").set("Cookie", tenant.admin.cookie).expect(200);
+    });
+
+    it("rolls back the composed stranding repro on BOTH flows: no business write, no audit row", async () => {
+      const tenant = await provisionGovernanceTenant("live-rbac-stranding");
+      const keys = await adminKeysWithoutManage(tenant.owner.cookie);
+
+      // Composition step 1 (allowed alone): strip the key from ADMIN.
+      await stripAdminManage(tenant, keys).expect(200);
+      expect(await effectiveHolderCount(tenant.tenantId)).toBe(1);
+      const before = await governanceState(tenant.tenantId);
+
+      // Step 2a — assignment flow: demoting the last true holder strands the tenant.
+      const demotion = await demoteOwner(tenant, tenant.owner.cookie).expect(409);
+      expect((demotion.body as { error: { message: string } }).error.message).toBe(
+        LAST_MANAGER_CONFLICT_MESSAGE
+      );
+      // Step 2b — override flow: stripping the key from the holder's own role.
+      const ownerListed = await supertest(serverUrl)
+        .get("/rbac/roles")
+        .set("Cookie", tenant.owner.cookie)
+        .expect(200);
+      const ownerKeys = (
+        ownerListed.body as { roles: { code: string; permissions: string[] }[] }
+      ).roles
+        .find((role) => role.code === "OWNER")!
+        .permissions.filter((key) => key !== MEMBERSHIP_MANAGE_KEY);
+      const ownerStrip = await supertest(serverUrl)
+        .put("/rbac/roles/OWNER/permissions")
+        .set("Cookie", tenant.owner.cookie)
+        .send({ keys: ownerKeys })
+        .expect(409);
+      expect((ownerStrip.body as { error: { message: string } }).error.message).toBe(
+        LAST_MANAGER_CONFLICT_MESSAGE
+      );
+
+      expect(await governanceState(tenant.tenantId)).toEqual(before);
+      expect(await effectiveHolderCount(tenant.tenantId)).toBe(1);
+    });
+
+    /**
+     * The stranding refusal above is decided BEFORE any row is rewritten, so it
+     * alone cannot show a rollback. This case forces a failure AFTER the
+     * business write: a test-only BEFORE INSERT trigger on `audit_log` raises
+     * only when the in-flight transaction's own business write is already
+     * visible to it (otherwise it lets the audit row through, which the
+     * assertions would catch). Real PostgreSQL must then discard BOTH.
+     */
+    it("rolls back a business write already executed when its in-transaction audit append fails", async () => {
+      const tenant = await provisionGovernanceTenant("live-rbac-audit-rollback");
+      const cashier = await prisma.role.findUniqueOrThrow({ where: { code: "CASHIER" } });
+      const veterinarian = await prisma.role.findUniqueOrThrow({
+        where: { code: "VETERINARIAN" },
+      });
+      const uuidPattern = /^[0-9a-f-]{36}$/;
+      for (const id of [tenant.tenantId, tenant.admin.membershipId, cashier.id, veterinarian.id]) {
+        expect(id).toMatch(uuidPattern);
+      }
+
+      const installAbortingTrigger = async (action: string, writeVisible: string) => {
+        await prisma.$executeRawUnsafe(`
+          CREATE OR REPLACE FUNCTION td006_abort_audit_after_write() RETURNS trigger
+          LANGUAGE plpgsql AS $fn$
+          BEGIN
+            IF NEW.tenant_id = '${tenant.tenantId}'::uuid
+               AND NEW.action = '${action}'
+               AND ${writeVisible} THEN
+              RAISE EXCEPTION 'td006 forced post-write audit failure';
+            END IF;
+            RETURN NEW;
+          END
+          $fn$`);
+        await prisma.$executeRawUnsafe(
+          `CREATE TRIGGER td006_abort_audit_after_write BEFORE INSERT ON "audit_log"
+           FOR EACH ROW EXECUTE FUNCTION td006_abort_audit_after_write()`
+        );
+      };
+      const dropAbortingTrigger = async () => {
+        await prisma.$executeRawUnsafe(
+          `DROP TRIGGER IF EXISTS td006_abort_audit_after_write ON "audit_log"`
+        );
+        await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS td006_abort_audit_after_write()`);
+      };
+
+      const before = await governanceState(tenant.tenantId);
+      try {
+        // Assignment flow: ADMIN → VETERINARIAN (OWNER retains, so no stranding refusal).
+        await installAbortingTrigger(
+          "rbac.membership_role_assigned",
+          `EXISTS (SELECT 1 FROM "tenant_membership" WHERE "id" = '${tenant.admin.membershipId}'::uuid AND "role_id" = '${veterinarian.id}'::uuid)`
+        );
+        const assignment = await supertest(serverUrl)
+          .post(`/memberships/${tenant.admin.membershipId}/role`)
+          .set("Cookie", tenant.owner.cookie)
+          .send({ roleCode: "VETERINARIAN" })
+          .expect(500);
+        expect((assignment.body as ErrorEnvelope).error.code).toBe("INTERNAL");
+        await dropAbortingTrigger();
+        expect(await governanceState(tenant.tenantId)).toEqual(before);
+
+        // Override flow: CASHIER → empty set (only deny verdicts; not a governance role).
+        await installAbortingTrigger(
+          "rbac.role_permissions_overridden",
+          `EXISTS (SELECT 1 FROM "tenant_role_permission_override" WHERE "tenant_id" = '${tenant.tenantId}'::uuid AND "role_id" = '${cashier.id}'::uuid AND NOT "granted")`
+        );
+        const override = await supertest(serverUrl)
+          .put("/rbac/roles/CASHIER/permissions")
+          .set("Cookie", tenant.owner.cookie)
+          .send({ keys: [] })
+          .expect(500);
+        expect((override.body as ErrorEnvelope).error.code).toBe("INTERNAL");
+        await dropAbortingTrigger();
+        expect(await governanceState(tenant.tenantId)).toEqual(before);
+      } finally {
+        await dropAbortingTrigger();
+      }
+
+      // Control: with the trigger gone the same commands commit write + audit together.
+      await supertest(serverUrl)
+        .post(`/memberships/${tenant.admin.membershipId}/role`)
+        .set("Cookie", tenant.owner.cookie)
+        .send({ roleCode: "VETERINARIAN" })
+        .expect(201);
+      await supertest(serverUrl)
+        .put("/rbac/roles/CASHIER/permissions")
+        .set("Cookie", tenant.owner.cookie)
+        .send({ keys: [] })
+        .expect(200);
+      const after = await governanceState(tenant.tenantId);
+      expect(after.audits.map((row) => row.action).sort()).toEqual([
+        "rbac.membership_role_assigned",
+        "rbac.role_permissions_overridden",
+      ]);
+      expect(after.overrides.length).toBeGreaterThan(0);
+      expect(after.memberships.find((row) => row.id === tenant.admin.membershipId)?.roleId).toBe(
+        veterinarian.id
+      );
     });
   });
 });
