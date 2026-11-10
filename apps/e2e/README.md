@@ -38,6 +38,8 @@ A failing run writes a trace; `pnpm --filter @newsaas/e2e e2e:report` opens it.
 | `payment-detail`, `sale-reversal`, `recoverable-attempts` | PostgreSQL, Redis, the built API and web                                             |
 | `branch-stock`                                            | PostgreSQL, Redis, the built API and web                                             |
 | `branch-reports`                                          | PostgreSQL, Redis, the built API and web                                             |
+| `electronic-credit-note`                                  | the same, plus the **worker** as fiscal pipeline, object storage and `DTE_XSD_DIR`   |
+| `kude-delivery`                                           | the same as `electronic-credit-note`, plus the **SMTP sink**: one worker does both   |
 
 The recovery spec starts the worker itself and listens on port 2526 as a minimal
 SMTP server, because there is no other place the link exists: the channel fake
@@ -90,6 +92,26 @@ the "one branch, no filter" state; the web component test covers it.
 
 `staff-team` invites a new address each run, for the reason the recovery
 identity is fresh.
+
+### The fiscal specs share their setup
+
+`electronic-credit-note` (NCE-001) and `kude-delivery` (FISC-021) configure the
+tenant through «Configuración fiscal», sell, confirm and issue an invoice, and
+wait for the worker to approve it with the same helpers
+(`support/fiscal-issuance.ts`). The worker runs the fake SIFEN provider in the
+TEST environment and signs the DE, so the lane needs the official XSDs
+(`pnpm --filter @newsaas/fiscal fetch:dte-schemas`, then `DTE_XSD_DIR`) and the
+object storage the signed XML and the KuDE are written to.
+
+`kude-delivery` starts **one** worker with the fiscal variables and the mail
+variables together (`startMailWorker(FISCAL_WORKER_ENV)`): `FiscalApproved` is
+dispatched in-process, so the approval notice is scheduled by the worker that
+approved the document, and two consumers of the fiscal queue would race for it.
+The customer gets a per-run EMAIL contact, the notice's recipient. The spec
+reads the raw message the sink captured and decodes the attachment
+(`support/mime.ts`) to compare it byte for byte with what the KuDE route serves.
+It does not decode the QR: no QR decoder is a dependency, so the image is
+checked to be an SVG, and the text placeholder to be absent.
 
 ## What it does NOT prove
 

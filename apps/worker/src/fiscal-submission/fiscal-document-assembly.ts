@@ -25,6 +25,7 @@
  * 13  xml                       buildDteXml (QR placeholder inside) FISC-008 WU-A
  * 14  signature                 signDteXml                         FISC-009
  * 15  the QR                    buildQrContent + fillQrContent      FISC-012 WU-C
+ * 16  the KuDE                  renderKudeForRequest               FISC-021
  * ```
  *
  * The order is not a preference. `dCodSeg` is both `gOpeDE.dCodSeg` and one of
@@ -93,8 +94,10 @@ import {
   generateSecurityCode,
   isCredentialFresh,
   QR_PLACEHOLDER,
+  renderKudeForRequest,
   signDteXml,
   type DteReceptor,
+  type DteRequest,
   type FiscalCredentialPort,
   type FiscalSigningEnvironment,
 } from "@newsaas/fiscal";
@@ -359,6 +362,23 @@ function qrReceptorIdentity(receptor: DteReceptor): string {
  * job's own failure path.
  */
 const DIGEST_VALUE_PATTERN = /<DigestValue>([^<]*)<\/DigestValue>/;
+
+/**
+ * The KuDE for a signed request, or nothing.
+ *
+ * The KuDE is the printed representation of the DE, not part of the submission:
+ * a type without a KuDE model (`UNAVAILABLE`) or a renderer defect must never
+ * stop a signed document from reaching the provider, so both answer "no KuDE"
+ * and the document is submitted as before, with `kude_storage_key` left null.
+ */
+function renderKudeSafely(request: DteRequest): string | undefined {
+  try {
+    const rendered = renderKudeForRequest(request);
+    return rendered.outcome === "RENDERED" ? rendered.html : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 function digestValueOf(signedXml: string): string {
   const digest = DIGEST_VALUE_PATTERN.exec(signedXml)?.[1];
@@ -685,12 +705,21 @@ export function createFiscalDocumentAssembly(
           csc: csc.csc,
         });
 
+        // FISC-021 / DEC-098: the KuDE is rendered from the SAME request that
+        // was signed, with `dCarQR` holding the QR's final content, because it
+        // cannot be rebuilt later (a second build draws another `dCodSeg`).
+        const kudeHtml = renderKudeSafely({
+          ...mapped.request,
+          gCamFuFD: { ...mapped.request.gCamFuFD, dCarQR: qrContent },
+        });
+
         return {
           outcome: "BUILT",
           document: {
             cdc: identity.cdc,
             signedXml: fillQrContent({ signedXml: signed, qrContent }),
           },
+          ...(kudeHtml === undefined ? {} : { kudeHtml }),
         };
       } catch (error) {
         const refusal = builderRefusal(error);

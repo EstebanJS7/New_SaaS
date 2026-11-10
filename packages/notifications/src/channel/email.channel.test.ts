@@ -6,6 +6,13 @@ import {
   type EmailTransport,
   type SmtpEmailConfig,
 } from "./email.channel.js";
+import {
+  isAcceptableNotificationAttachment,
+  NOTIFICATION_ATTACHMENT_CONTENT_TYPES,
+  NOTIFICATION_ATTACHMENT_MAX_BYTES,
+  NOTIFICATION_ATTACHMENT_MAX_COUNT,
+  NOTIFICATION_CHANNEL_REASON,
+} from "./channel.port.js";
 
 const config: SmtpEmailConfig = {
   host: "smtp.example.test",
@@ -240,5 +247,144 @@ describe("email failure classification", () => {
         retryable: false,
       });
     }
+  });
+});
+
+describe("the SMTP email adapter's in-memory attachments (DEC-098)", () => {
+  const kude = {
+    filename: "kude-001-001-0000042.html",
+    contentType: "text/html; charset=utf-8" as const,
+    content: Buffer.from("<html>KuDE</html>", "utf8"),
+  };
+
+  it("sends a message without attachments exactly as before", async () => {
+    // The pinned shape: no `attachments` key at all, so a reminder or a recovery
+    // mail is byte-for-byte the message it was before attachments existed.
+    for (const attachments of [undefined, []]) {
+      const { transport, sendMail } = recordingTransport({ messageId: "one" });
+      const channel = createSmtpEmailChannel({ config, transportFactory: () => transport });
+
+      await channel.send({ ...request, ...(attachments === undefined ? {} : { attachments }) });
+
+      expect(sendMail.mock.calls[0]?.[0]).toEqual({
+        from: "no-reply@example.test",
+        to: "person@example.test",
+        subject: "Recordatorio",
+        text: "Su turno es mañana.",
+        disableFileAccess: true,
+        disableUrlAccess: true,
+      });
+    }
+  });
+
+  it("passes an attachment as in-memory content only, with file and URL access still off", async () => {
+    const { transport, sendMail } = recordingTransport({ messageId: "one" });
+    const channel = createSmtpEmailChannel({ config, transportFactory: () => transport });
+
+    await expect(channel.send({ ...request, attachments: [kude] })).resolves.toEqual({
+      outcome: "SENT",
+      providerReference: "one",
+    });
+
+    const options = sendMail.mock.calls[0]?.[0];
+    expect(options.disableFileAccess).toBe(true);
+    expect(options.disableUrlAccess).toBe(true);
+    const attachments = options.attachments as Record<string, unknown>[];
+    expect(attachments).toHaveLength(1);
+    const [first] = attachments;
+    // Exactly these three keys: never `path`, `href`, `raw`, `encoding` or `cid`.
+    expect(Object.keys(first ?? {}).sort()).toEqual(["content", "contentType", "filename"]);
+    expect(first?.filename).toBe("kude-001-001-0000042.html");
+    expect(first?.contentType).toBe("text/html; charset=utf-8");
+    expect(Buffer.isBuffer(first?.content)).toBe(true);
+    expect((first?.content as Buffer).toString("utf8")).toBe("<html>KuDE</html>");
+  });
+
+  it("accepts a plain Uint8Array and hands nodemailer a Buffer", async () => {
+    const { transport, sendMail } = recordingTransport({ messageId: "one" });
+    const channel = createSmtpEmailChannel({ config, transportFactory: () => transport });
+
+    await channel.send({
+      ...request,
+      attachments: [{ ...kude, content: new Uint8Array([60, 104, 62]) }],
+    });
+
+    const options = sendMail.mock.calls[0]?.[0] as { attachments: { content: unknown }[] };
+    expect(Buffer.isBuffer(options.attachments[0]?.content)).toBe(true);
+    expect((options.attachments[0]?.content as Buffer).toString("utf8")).toBe("<h>");
+  });
+
+  it("refuses an attachment outside the contract, without a retry and without sending", async () => {
+    const violations: unknown[] = [
+      // A second attachment.
+      [kude, { ...kude, filename: "kude-2.html" }],
+      // A content type outside the closed allowlist.
+      [{ ...kude, contentType: "application/pdf" }],
+      // Oversize: one byte over the cap.
+      [{ ...kude, content: Buffer.alloc(NOTIFICATION_ATTACHMENT_MAX_BYTES + 1) }],
+      // Filenames that could name a path, a header or another type.
+      [{ ...kude, filename: "../etc/passwd" }],
+      [{ ...kude, filename: "kude.html\r\nBcc: x@example.test" }],
+      [{ ...kude, filename: "kude.exe" }],
+      [{ ...kude, filename: ".html" }],
+      // A path or URL smuggled in place of the bytes.
+      [{ ...kude, content: "/etc/passwd" }],
+      [{ ...kude, path: "/etc/passwd" }],
+      [{ ...kude, href: "https://example.test/x" }],
+    ];
+    for (const attachments of violations) {
+      const { transport, sendMail } = recordingTransport({ messageId: "one" });
+      const channel = createSmtpEmailChannel({ config, transportFactory: () => transport });
+
+      const outcome = await channel.send({
+        ...request,
+        attachments: attachments as never,
+      });
+
+      expect(outcome).toEqual({
+        outcome: "FAILED",
+        retryable: false,
+        reasonCode: NOTIFICATION_CHANNEL_REASON.ATTACHMENT_REJECTED,
+        reason: "The message's attachment is outside the channel's attachment contract.",
+      });
+      expect(sendMail).not.toHaveBeenCalled();
+    }
+  });
+
+  it("accepts an attachment of exactly the byte cap", async () => {
+    const { transport, sendMail } = recordingTransport({ messageId: "one" });
+    const channel = createSmtpEmailChannel({ config, transportFactory: () => transport });
+
+    await expect(
+      channel.send({
+        ...request,
+        attachments: [{ ...kude, content: Buffer.alloc(NOTIFICATION_ATTACHMENT_MAX_BYTES) }],
+      })
+    ).resolves.toMatchObject({ outcome: "SENT" });
+    expect(sendMail).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the attachment contract", () => {
+  it("pins the cap, the count and the closed content-type allowlist", () => {
+    expect(NOTIFICATION_ATTACHMENT_MAX_BYTES).toBe(512 * 1024);
+    expect(NOTIFICATION_ATTACHMENT_MAX_COUNT).toBe(1);
+    expect(NOTIFICATION_ATTACHMENT_CONTENT_TYPES).toEqual(["text/html; charset=utf-8"]);
+  });
+
+  it("accepts the KuDE's shape and refuses anything else", () => {
+    const valid = {
+      filename: "kude-A-0000042.html",
+      contentType: "text/html; charset=utf-8",
+      content: new Uint8Array([1]),
+    };
+    expect(isAcceptableNotificationAttachment(valid)).toBe(true);
+    expect(isAcceptableNotificationAttachment({ ...valid, filename: "a b.html" })).toBe(false);
+    expect(
+      isAcceptableNotificationAttachment({ ...valid, filename: `${"a".repeat(65)}.html` })
+    ).toBe(false);
+    expect(isAcceptableNotificationAttachment({ ...valid, content: new Uint8Array() })).toBe(false);
+    expect(isAcceptableNotificationAttachment({ ...valid, extra: 1 })).toBe(false);
+    expect(isAcceptableNotificationAttachment(null)).toBe(false);
   });
 });

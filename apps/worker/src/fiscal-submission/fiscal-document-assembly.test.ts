@@ -27,14 +27,18 @@
  */
 
 import { createHash, createPublicKey, verify } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildQrContent,
   composeCdc,
   DTE_NAMESPACE,
+  escapeHtml,
+  groupKudeCdc,
+  qrSvgDataUrl,
   QR_PLACEHOLDER,
   SIFEN_TEST_EMITTER_NAME,
   XMLDSIG_NAMESPACE,
+  type DteRequest,
   type FiscalCredentialPort,
   type FiscalTransportCredential,
 } from "@newsaas/fiscal";
@@ -70,6 +74,17 @@ import {
   type FiscalDocumentAssemblyInvoiceRow,
 } from "./fiscal-document-assembly.js";
 import type { FiscalDocumentBuildOutcome } from "./fiscal-document-builder.js";
+
+/**
+ * FISC-021: the KuDE renderer is the real one by default; a case that needs the
+ * renderer to refuse or to throw scripts the spy for one call.
+ */
+const { renderKudeSpy } = vi.hoisted(() => ({ renderKudeSpy: vi.fn() }));
+vi.mock("@newsaas/fiscal", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@newsaas/fiscal")>();
+  renderKudeSpy.mockImplementation(actual.renderKudeForRequest);
+  return { ...actual, renderKudeForRequest: renderKudeSpy };
+});
 
 const TENANT_ID = "11111111-1111-4111-8111-111111111111";
 const FISCAL_DOCUMENT_ID = "22222222-2222-4222-8222-222222222222";
@@ -636,6 +651,54 @@ describe("the assembly — the chain", () => {
   });
 });
 
+describe("the assembly — the KuDE (FISC-021)", () => {
+  /** The `BUILT` outcome's KuDE, whatever it is. */
+  function kudeOf(result: FiscalDocumentBuildOutcome): string | undefined {
+    expect(result.outcome).toBe("BUILT");
+    if (result.outcome !== "BUILT") throw new Error(`expected BUILT, received ${result.outcome}`);
+    return result.kudeHtml;
+  }
+
+  it("renders the KuDE from the request it signed, with dCarQR already filled", async () => {
+    const { result } = await build();
+    const document = built(result);
+    const qrContent = expectedQrContent(document.cdc, digestValueOf(document.signedXml));
+
+    // The renderer received the signed request with the QR's final content,
+    // not the placeholder the XML was built with.
+    const rendered = renderKudeSpy.mock.calls.at(-1)?.[0] as DteRequest | undefined;
+    expect(rendered?.cdc).toBe(document.cdc);
+    expect(rendered?.gCamFuFD.dCarQR).toBe(qrContent);
+
+    const html = kudeOf(result);
+    expect(html).toBeDefined();
+    expect(html).toContain(`CDC: ${groupKudeCdc(document.cdc)}`);
+    expect(html).toContain(`src="${escapeHtml(qrSvgDataUrl(qrContent))}"`);
+    expect(html).not.toContain(escapeHtml(qrSvgDataUrl(QR_PLACEHOLDER)));
+    expect(html).not.toContain(TEST_CSC);
+  });
+
+  it("builds the document without a KuDE when the renderer refuses the type", async () => {
+    renderKudeSpy.mockReturnValueOnce({
+      outcome: "UNAVAILABLE",
+      refusal: "TYPE_NOT_PROFILED",
+      message: "no model",
+    });
+    const { result } = await build();
+    built(result);
+    expect(kudeOf(result)).toBeUndefined();
+  });
+
+  it("builds the document without a KuDE when the renderer throws", async () => {
+    renderKudeSpy.mockImplementationOnce(() => {
+      throw new Error("renderer defect");
+    });
+    const { result } = await build();
+    built(result);
+    expect(kudeOf(result)).toBeUndefined();
+  });
+});
+
 describe("the assembly — the factura's payments (PAY-DET-001)", () => {
   it("emits gCamFE and gCamCond with the card's type and brand", async () => {
     const { result } = await build();
@@ -710,6 +773,16 @@ describe("the assembly — a credit note's document (NCE-001)", () => {
     );
     expect(xml).toContain(`<dCdCDERef>${FE_CDC}</dCdCDERef>`);
     expect(xml).not.toContain("<iTipTra>");
+  });
+
+  it("renders the credit note's KuDE with its own CDC", async () => {
+    const { result } = await build({
+      state: { document: { invoiceId: INVOICE_ID, creditNoteId: "cn-1" }, creditNote: NOTE },
+    });
+    const { cdc } = built(result);
+    expect(result.outcome === "BUILT" ? result.kudeHtml : undefined).toContain(
+      `CDC: ${groupKudeCdc(cdc)}`
+    );
   });
 
   it("answers CREDIT_NOTE_UNAVAILABLE when the note is not readable", async () => {

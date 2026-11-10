@@ -41,13 +41,21 @@ export {
 } from "./notification-delivery.producer.js";
 export type { NotificationDeliveryProducer } from "./notification-delivery.producer.js";
 export {
+  areAcceptableNotificationAttachments,
+  isAcceptableNotificationAttachment,
+  NOTIFICATION_ATTACHMENT_CONTENT_TYPES,
+  NOTIFICATION_ATTACHMENT_MAX_BYTES,
+  NOTIFICATION_ATTACHMENT_MAX_COUNT,
+  NOTIFICATION_ATTACHMENT_REJECTED_OUTCOME,
   NOTIFICATION_CHANNEL_PROVIDER_IDS,
   NOTIFICATION_CHANNEL_VALUES,
   NOTIFICATION_CHANNEL_REASON,
   NOTIFICATION_CHANNELS,
 } from "./channel/channel.port.js";
 export type {
+  NotificationAttachmentContentType,
   NotificationChannel,
+  NotificationChannelAttachment,
   NotificationChannelOutcome,
   NotificationChannelPort,
   NotificationChannelProviderId,

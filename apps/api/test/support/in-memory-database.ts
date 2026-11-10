@@ -705,6 +705,8 @@ export interface FiscalDocumentRow {
   updatedAt: Date;
   requestSnapshot?: unknown;
   responseSnapshot?: unknown;
+  /** FISC-021: opaque key of the stored KuDE; CONFIDENTIAL, never returned by the API. */
+  kudeStorageKey?: string | null;
 }
 
 /**

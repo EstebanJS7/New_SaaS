@@ -11,8 +11,9 @@ related_epics:
   - EPIC-16
 related_stories:
   - BILL-005
+  - FISC-021
 created: 2026-10-01
-updated: 2026-10-01
+updated: 2026-11-10
 ---
 
 # TD-022 — Portal invoice and document surfaces remain deferred
@@ -109,6 +110,16 @@ Re-evaluate when [[EPIC-15]] or [[EPIC-16]] ships an authorised fiscal document
 (the KuDE), or earlier if product explicitly asks for a customer invoice view
 before a fiscal document exists. Owner: the maintainer, who decides the
 visibility rule; explicitly **not** [[EPIC-14]].
+
+## Progress
+
+- 2026-11-10 — [[FISC-021]] ([[DEC-098]]): the KuDE now exists. The worker
+  generates and stores it when it signs; staff open it from the fiscal detail
+  («Ver KuDE», `GET /fiscal-documents/:id/kude`, `fiscal.read`), and the
+  approval email attaches it. The trigger above has therefore fired, but the
+  **portal** surface is still deferred: no portal route serves the KuDE or the
+  customer's documents. Whether and how to expose it to portal identities is the
+  maintainer's decision; this record stays open.
 
 ## Verification After Resolution
 

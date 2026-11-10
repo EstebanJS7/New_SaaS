@@ -15,6 +15,7 @@ const DOCUMENT: FiscalDocument = {
   createdAt: "2026-10-01T08:00:00.000Z",
   updatedAt: "2026-10-01T08:00:00.000Z",
   cancelledAt: null,
+  hasKude: false,
 };
 function renderPanel(overrides: Partial<Parameters<typeof FiscalListPanel>[0]> = {}) {
   const onSelectDocument = vi.fn();

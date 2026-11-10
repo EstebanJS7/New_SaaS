@@ -60,9 +60,12 @@ export interface NotificationContentClient {
     findFirst(args: Prisma.BranchFindFirstArgs): Promise<{ name: string } | null>;
   };
   fiscalDocument: {
-    findFirst(
-      args: Prisma.FiscalDocumentFindFirstArgs
-    ): Promise<{ status: string; invoiceId: string; cdc: string | null } | null>;
+    findFirst(args: Prisma.FiscalDocumentFindFirstArgs): Promise<{
+      status: string;
+      invoiceId: string;
+      cdc: string | null;
+      kudeStorageKey: string | null;
+    } | null>;
   };
   invoice: {
     findFirst(
@@ -232,7 +235,9 @@ async function buildFiscalNotice(
 ): Promise<NotificationContentOutcome> {
   const document = await client.fiscalDocument.findFirst({
     where: { id: fiscalDocumentId, tenantId: request.tenantId },
-    select: { status: true, invoiceId: true, cdc: true },
+    // `kudeStorageKey` rides the same tenant-scoped read (DEC-098): a key can only
+    // come from a row of the delivery's own tenant.
+    select: { status: true, invoiceId: true, cdc: true, kudeStorageKey: true },
   });
   if (document === null) return unavailable(NOTIFICATION_DELIVERY_REASON.SOURCE_UNAVAILABLE);
 
@@ -264,6 +269,17 @@ async function buildFiscalNotice(
     subject: `Documento fiscal ${documentNumber}`,
     body: `Su documento fiscal ${documentNumber} está disponible.`,
     parameters: [documentNumber],
+    // DEC-098: the stored KuDE, by REFERENCE. The handler reads the bytes at send
+    // time; a document without a stored KuDE is announced exactly as before.
+    ...(document.kudeStorageKey === null
+      ? {}
+      : {
+          attachment: {
+            kind: "FISCAL_KUDE" as const,
+            storageKey: document.kudeStorageKey,
+            filename: `kude-${documentNumber}.html`,
+          },
+        }),
   };
 }
 

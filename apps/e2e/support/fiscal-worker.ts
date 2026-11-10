@@ -14,6 +14,20 @@ const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
  * `node` directly, as `mail-worker.ts` explains: killing a `pnpm` wrapper would leave the consumer
  * alive. Start it in `beforeAll` and stop it in `afterAll` of ONE file.
  */
+/**
+ * The fiscal pipeline's variables: the fake SIFEN provider in the TEST environment. Exported so a
+ * spec whose flow also leaves by mail ([[FISC-021]]) runs ONE worker that does both — two workers
+ * would share the fiscal queue, and the approval's in-process event would reach only one of them.
+ */
+export const FISCAL_WORKER_ENV: Readonly<Record<string, string>> = Object.freeze({
+  FISCAL_PROVIDER: "fake",
+  SIFEN_ENVIRONMENT: "TEST",
+  // FISC-019: the fake asks for a signed DE, so the worker builds, signs
+  // and XSD-gates it with the certificate and CSC loaded on the screen.
+  // DTE_XSD_DIR (the official schemas) comes from the lane's environment.
+  FISCAL_FAKE_REQUIRES_SIGNED_DOCUMENT: "true",
+});
+
 export interface FiscalWorker {
   /** Everything the worker printed so far — the diagnostic a failed wait attaches. */
   output(): string;
@@ -28,15 +42,7 @@ export function startFiscalWorker(): FiscalWorker {
     {
       cwd: REPO_ROOT,
       stdio: ["ignore", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        FISCAL_PROVIDER: "fake",
-        SIFEN_ENVIRONMENT: "TEST",
-        // FISC-019: the fake asks for a signed DE, so the worker builds, signs
-        // and XSD-gates it with the certificate and CSC loaded on the screen.
-        // DTE_XSD_DIR (the official schemas) comes from the lane's environment.
-        FISCAL_FAKE_REQUIRES_SIGNED_DOCUMENT: "true",
-      },
+      env: { ...process.env, ...FISCAL_WORKER_ENV },
     }
   );
   for (const stream of [worker.stdout, worker.stderr]) {

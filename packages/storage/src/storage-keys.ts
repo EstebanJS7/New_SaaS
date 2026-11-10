@@ -22,6 +22,13 @@ export const STORAGE_KEY_PREFIXES = Object.freeze({
    */
   fiscalDocument: "fiscal-document",
   /**
+   * FISC-021 / DEC-098: the KuDE the worker renders at signing, stored next to
+   * the signed XML. The key is written to `fiscal_document.kude_storage_key`;
+   * the HTML carries the receptor's data (CONFIDENTIAL), so it has its own
+   * prefix rather than sharing the XML's.
+   */
+  fiscalKude: "fiscal-kude",
+  /**
    * EPIC-19 IMP-001: the uploaded CSV an import job previews and commits from.
    *
    * The key is written to `import_job.storage_key` and never leaves the server:

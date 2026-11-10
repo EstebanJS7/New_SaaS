@@ -19,6 +19,10 @@ import {
   FISCAL_DOCUMENT_TARGET_NOT_FOUND_MESSAGE,
 } from "./fiscal.repository.js";
 import {
+  FISCAL_KUDE_CONTENT_SECURITY_POLICY,
+  FISCAL_KUDE_NOT_FOUND_MESSAGE,
+} from "./fiscal-kude.service.js";
+import {
   FISCAL_DOCUMENT_ALREADY_ISSUED_MESSAGE,
   FISCAL_FEATURE_NOT_ENTITLED_MESSAGE,
   FISCAL_INVOICE_NOT_CONFIRMED_MESSAGE,
@@ -43,6 +47,7 @@ interface FiscalDocumentDto {
   createdAt: string;
   updatedAt: string;
   cancelledAt: string | null;
+  hasKude: boolean;
 }
 
 const RESPONSE_KEYS = [
@@ -58,6 +63,7 @@ const RESPONSE_KEYS = [
   "createdAt",
   "updatedAt",
   "cancelledAt",
+  "hasKude",
 ];
 
 interface FiscalTenant {
@@ -474,12 +480,220 @@ describe("Fiscal HTTP boundary — read commands", () => {
     expect((invalidId.body as ErrorDto).error.code).toBe("VALIDATION_FAILED");
   });
 
+  it("reports hasKude from the stored KuDE key without exposing the key (FISC-021)", async () => {
+    const withKude = document(entitled.tenant.id, "APPROVED", new Date("2105-01-01T00:00:00.000Z"));
+    withKude.kudeStorageKey = `fiscal-kude_${randomUUID()}`;
+    const withoutKude = document(entitled.tenant.id, "APPROVED", new Date());
+
+    const detail = await getDocument(entitled.actor.cookie, withKude.id).expect(200);
+    expect((detail.body as FiscalDocumentDto).hasKude).toBe(true);
+    expect(Object.keys(detail.body as object).sort()).toEqual([...RESPONSE_KEYS].sort());
+    expect(detail.text).not.toContain(withKude.kudeStorageKey);
+    const bare = await getDocument(entitled.actor.cookie, withoutKude.id).expect(200);
+    expect((bare.body as FiscalDocumentDto).hasKude).toBe(false);
+
+    const list = await getDocuments(entitled.actor.cookie).expect(200);
+    const rows = list.body as FiscalDocumentDto[];
+    expect(rows.find((row) => row.id === withKude.id)?.hasKude).toBe(true);
+    expect(rows.find((row) => row.id === withoutKude.id)?.hasKude).toBe(false);
+    expect(list.text).not.toContain(withKude.kudeStorageKey);
+  });
+
   it("does not append audit rows for list or get reads", async () => {
     const row = document(entitled.tenant.id, "QUEUED", new Date());
     const auditsBefore = booted.db.tables.audits.size;
     await getDocuments(entitled.actor.cookie).expect(200);
     await getDocument(entitled.actor.cookie, row.id).expect(200);
     expect(booted.db.tables.audits.size).toBe(auditsBefore);
+  });
+});
+
+describe("Fiscal HTTP boundary — KuDE read (FISC-021)", () => {
+  let booted: BootedTestApp;
+  let reader: FiscalTenant;
+  let foreign: FiscalTenant;
+  let noRead: FiscalTenant;
+  const KUDE_HTML =
+    "<!doctype html><html><body>KuDE Ñandutí 01800000000000000000000000000000000000000000</body></html>";
+
+  beforeAll(async () => {
+    booted = await bootTestApp();
+    const seed = (label: string, keys: string[]): FiscalTenant => {
+      const suffix = randomUUID().slice(0, 8);
+      const tenant = booted.db.prisma.tenant.create({
+        data: { slug: `fiscal-kude-${label}-${suffix}`, name: `Fiscal kude ${label}` },
+      });
+      const role = seedRoleWithKeys(
+        booted.db,
+        `FISCAL_KUDE_${label}_${suffix}`,
+        `Kude ${label}`,
+        keys
+      );
+      const actor = seedRbacActor(booted.db, {
+        email: `fiscal-kude-${label}-${suffix}@isolation.test`,
+        tenantId: tenant.id,
+        roleId: role.role.id,
+      });
+      const feature = booted.db.prisma.featureCode.create({ data: { code: "fiscal" } });
+      booted.db.prisma.tenantEntitlement.create({
+        data: { tenantId: tenant.id, featureCodeId: feature.id },
+      });
+      return { tenant, actor };
+    };
+    reader = seed("a", [FISCAL_PERMISSIONS.read]);
+    foreign = seed("b", [FISCAL_PERMISSIONS.read]);
+    noRead = seed("c", [FISCAL_PERMISSIONS.issue]);
+  });
+  afterAll(async () => booted.close());
+
+  async function documentWithKude(
+    tenantId: string,
+    options: {
+      cdc?: string | null;
+      stored?: boolean;
+      withKey?: boolean;
+      status?: FiscalDocumentRow["status"];
+    } = {}
+  ): Promise<FiscalDocumentRow> {
+    const invoice = seedInvoice(booted, tenantId, "CONFIRMED");
+    const now = new Date();
+    const key = `fiscal-kude_${randomUUID()}`;
+    const row: FiscalDocumentRow = {
+      id: randomUUID(),
+      tenantId,
+      invoiceId: invoice.id,
+      provider: "FAKE",
+      status: options.status ?? "APPROVED",
+      attemptCount: 1,
+      externalId: null,
+      cdc: options.cdc === undefined ? "01800000000000000000000000000000000000000000" : options.cdc,
+      lastErrorCode: null,
+      createdAt: now,
+      updatedAt: now,
+      kudeStorageKey: options.withKey === false ? null : key,
+    };
+    booted.db.tables.fiscalDocuments.set(row.id, row);
+    if (options.withKey !== false && options.stored !== false) {
+      await booted.db.storage.put({
+        key,
+        body: Buffer.from(KUDE_HTML, "utf8"),
+        contentType: "text/html; charset=utf-8",
+      });
+    }
+    return row;
+  }
+
+  const getKude = (cookie: string, id: string) =>
+    supertest(booted.app.getHttpServer()).get(`/fiscal-documents/${id}/kude`).set("Cookie", cookie);
+
+  it("answers the stored KuDE bytes as inline, uncached HTML", async () => {
+    const row = await documentWithKude(reader.tenant.id);
+    const response = await getKude(reader.actor.cookie, row.id).expect(200);
+    expect(response.headers["content-type"]).toBe("text/html; charset=utf-8");
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.headers["content-disposition"]).toBe(
+      `inline; filename="kude-${row.cdc ?? ""}.html"`
+    );
+    expect(response.text).toBe(KUDE_HTML);
+  });
+
+  it("serves the KuDE with a no-script content policy and nosniff", async () => {
+    const row = await documentWithKude(reader.tenant.id);
+    const response = await getKude(reader.actor.cookie, row.id).expect(200);
+    expect(response.headers["x-content-type-options"]).toBe("nosniff");
+    expect(response.headers["content-security-policy"]).toBe(FISCAL_KUDE_CONTENT_SECURITY_POLICY);
+    expect(FISCAL_KUDE_CONTENT_SECURITY_POLICY).toContain("default-src 'none'");
+    expect(FISCAL_KUDE_CONTENT_SECURITY_POLICY).not.toContain("script-src");
+  });
+
+  it.each(["APPROVED", "CANCEL_PENDING", "CANCELLED"] as const)(
+    "delivers the KuDE of a %s document, which SIFEN approved",
+    async (status) => {
+      const row = await documentWithKude(reader.tenant.id, { status });
+      await getKude(reader.actor.cookie, row.id).expect(200);
+      const detail = await supertest(booted.app.getHttpServer())
+        .get(`/fiscal-documents/${row.id}`)
+        .set("Cookie", reader.actor.cookie)
+        .expect(200);
+      expect((detail.body as { hasKude: boolean }).hasKude).toBe(true);
+    }
+  );
+
+  it.each(["REJECTED", "ERROR", "SUBMITTED", "SENDING"] as const)(
+    "withholds the stored KuDE of a %s document, which SIFEN has not approved",
+    async (status) => {
+      const row = await documentWithKude(reader.tenant.id, { status });
+      const response = await getKude(reader.actor.cookie, row.id).expect(404);
+      expect((response.body as ErrorDto).error).toMatchObject({
+        code: "NOT_FOUND",
+        message: FISCAL_KUDE_NOT_FOUND_MESSAGE,
+      });
+      expect(response.text).not.toContain(KUDE_HTML);
+      const detail = await supertest(booted.app.getHttpServer())
+        .get(`/fiscal-documents/${row.id}`)
+        .set("Cookie", reader.actor.cookie)
+        .expect(200);
+      expect((detail.body as { hasKude: boolean }).hasKude).toBe(false);
+    }
+  );
+
+  it("names the file after the document id when the document has no CDC", async () => {
+    const row = await documentWithKude(reader.tenant.id, { cdc: null });
+    const response = await getKude(reader.actor.cookie, row.id).expect(200);
+    expect(response.headers["content-disposition"]).toBe(`inline; filename="kude-${row.id}.html"`);
+  });
+
+  it("refuses a caller without fiscal.read with 403", async () => {
+    const row = await documentWithKude(noRead.tenant.id);
+    const response = await getKude(noRead.actor.cookie, row.id).expect(403);
+    expect((response.body as ErrorDto).error.code).toBe("FORBIDDEN");
+    expect(response.text).not.toContain("KuDE Ñandutí");
+  });
+
+  it("masks unknown and foreign documents as byte-equivalent 404s", async () => {
+    const foreignRow = await documentWithKude(foreign.tenant.id);
+    await expectCrossTenant404({
+      app: booted.app,
+      cookie: reader.actor.cookie,
+      method: "GET",
+      nonexistentUrl: `/fiscal-documents/${randomUUID()}/kude`,
+      foreignUrl: `/fiscal-documents/${foreignRow.id}/kude`,
+      forbiddenIdentifiers: [foreignRow.id, foreign.tenant.id, foreignRow.kudeStorageKey ?? ""],
+    });
+    const unknown = await getKude(reader.actor.cookie, randomUUID()).expect(404);
+    expect((unknown.body as ErrorDto).error.message).toBe(FISCAL_DOCUMENT_TARGET_NOT_FOUND_MESSAGE);
+  });
+
+  it("answers 404 when the document has no KuDE", async () => {
+    const row = await documentWithKude(reader.tenant.id, { withKey: false });
+    const response = await getKude(reader.actor.cookie, row.id).expect(404);
+    expect((response.body as ErrorDto).error).toMatchObject({
+      code: "NOT_FOUND",
+      message: FISCAL_KUDE_NOT_FOUND_MESSAGE,
+    });
+  });
+
+  it("answers a stable 500 without the driver message when storage cannot be read", async () => {
+    const row = await documentWithKude(reader.tenant.id, { stored: false });
+    const response = await getKude(reader.actor.cookie, row.id).expect(500);
+    // The envelope masks INTERNAL messages; what matters is the stable code and
+    // that neither the driver's message nor the storage key leaks.
+    expect((response.body as ErrorDto).error.code).toBe("INTERNAL");
+    expect(response.text).not.toContain("Storage key not found");
+    expect(response.text).not.toContain(row.kudeStorageKey ?? "-");
+    expect(response.headers["content-disposition"]).toBeUndefined();
+  });
+
+  it("rejects a non-UUID id with 400", async () => {
+    const response = await getKude(reader.actor.cookie, "not-a-uuid").expect(400);
+    expect((response.body as ErrorDto).error.code).toBe("VALIDATION_FAILED");
+  });
+
+  it("does not append audit rows for the KuDE read", async () => {
+    const row = await documentWithKude(reader.tenant.id);
+    const before = booted.db.tables.audits.size;
+    await getKude(reader.actor.cookie, row.id).expect(200);
+    expect(booted.db.tables.audits.size).toBe(before);
   });
 });
 
