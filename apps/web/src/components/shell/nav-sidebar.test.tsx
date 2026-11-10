@@ -34,10 +34,11 @@ describe("NavSidebar", () => {
       "Sucursales",
       "Marca",
       "Configuración fiscal",
+      "General",
     ]) {
       expect(within(nav).getByRole("link", { name: label })).toBeInTheDocument();
     }
-    expect(within(nav).getAllByRole("link")).toHaveLength(19);
+    expect(within(nav).getAllByRole("link")).toHaveLength(20);
     expect(within(nav).queryByRole("button")).not.toBeInTheDocument();
     expect(screen.queryByText(/Section one|Section two|Section three/)).not.toBeInTheDocument();
     expect(screen.getByText("Example workspace")).toBeInTheDocument();
@@ -96,6 +97,42 @@ describe("NavSidebar", () => {
   it("hides «Configuración fiscal» without the fiscal feature (FISC-018)", () => {
     render(<NavSidebar entitlements={["sales", "cash", "billing"]} />);
     expect(screen.queryByRole("link", { name: "Configuración fiscal" })).not.toBeInTheDocument();
+  });
+
+  describe("«Configuración › General» (CFG-001)", () => {
+    const SETTINGS_PERMISSIONS = [
+      "sales.settings.manage",
+      "portal.settings.manage",
+      "notifications.settings.manage",
+      "scheduling.settings.manage",
+    ];
+
+    it("links «General» from «Configuración» to /app/settings/general", () => {
+      const link = NAV_LINKS.find((candidate) => candidate.href === "/app/settings/general");
+      expect(link).toMatchObject({ label: "General", section: "Configuración" });
+      expect(link?.requiredFeature).toBeUndefined();
+      render(<NavSidebar />);
+      expect(screen.getByRole("link", { name: "General" })).toHaveAttribute(
+        "href",
+        "/app/settings/general"
+      );
+    });
+
+    it("does not hide «General» when the caller's permissions are unknown", () => {
+      expect(visibleNavLinks(NAV_LINKS, undefined, undefined)).toEqual(NAV_LINKS);
+    });
+
+    it("hides «General» when the caller holds none of the four settings permissions", () => {
+      render(<NavSidebar permissions={["sales.read", "users.membership.manage"]} />);
+      expect(screen.queryByRole("link", { name: "General" })).not.toBeInTheDocument();
+      // Ungated destinations stay: permissions only gate links that declare them.
+      expect(screen.getByRole("link", { name: "Sucursales" })).toBeInTheDocument();
+    });
+
+    it.each(SETTINGS_PERMISSIONS)("shows «General» with only %s", (permission) => {
+      render(<NavSidebar permissions={[permission]} />);
+      expect(screen.getByRole("link", { name: "General" })).toBeInTheDocument();
+    });
   });
 
   it("notifies the mobile shell after a navigation choice", () => {

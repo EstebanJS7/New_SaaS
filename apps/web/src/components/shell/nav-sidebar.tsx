@@ -11,6 +11,11 @@ export interface NavLink {
   readonly href: string;
   readonly label: string;
   readonly requiredFeature?: string;
+  /**
+   * The link is offered when the caller holds ANY of these permission keys.
+   * UX only, like `requiredFeature`: the API re-checks every operation.
+   */
+  readonly requiredAnyPermission?: readonly string[];
   readonly section?: string;
   readonly icon?: IconName;
 }
@@ -55,6 +60,19 @@ export const NAV_LINKS: readonly NavLink[] = [
   { href: "/app/reports", label: "Informes", section: "Gestión", icon: "chart" },
   { href: "/app/notifications", label: "Notificaciones", section: "Gestión", icon: "bell" },
   { href: "/app/imports", label: "Importaciones", section: "Gestión", icon: "upload" },
+  {
+    href: "/app/settings/general",
+    label: "General",
+    section: "Configuración",
+    icon: "settings",
+    // CFG-001: one section per settings namespace, each behind its own key.
+    requiredAnyPermission: [
+      "sales.settings.manage",
+      "portal.settings.manage",
+      "notifications.settings.manage",
+      "scheduling.settings.manage",
+    ],
+  },
   { href: "/app/settings/team", label: "Personal", section: "Configuración", icon: "users" },
   {
     href: "/app/settings/branches",
@@ -72,26 +90,36 @@ export const NAV_LINKS: readonly NavLink[] = [
   },
 ];
 
-// UX only: unknown entitlements never hide a working destination.
+// UX only: unknown entitlements or permissions never hide a working destination.
 // The backend remains the authority for all permissions and tenant ownership.
 export function visibleNavLinks(
   links: readonly NavLink[],
-  entitlements?: readonly string[]
+  entitlements?: readonly string[],
+  permissions?: readonly string[]
 ): readonly NavLink[] {
-  if (entitlements === undefined) return links;
-  const granted = new Set(entitlements);
+  const features = entitlements === undefined ? undefined : new Set(entitlements);
+  const held = permissions === undefined ? undefined : new Set(permissions);
   return links.filter(
-    (link) => link.requiredFeature === undefined || granted.has(link.requiredFeature)
+    (link) =>
+      (features === undefined ||
+        link.requiredFeature === undefined ||
+        features.has(link.requiredFeature)) &&
+      (held === undefined ||
+        link.requiredAnyPermission === undefined ||
+        link.requiredAnyPermission.some((key) => held.has(key)))
   );
 }
 
 export function NavSidebar({
   entitlements,
+  permissions,
   productName = "Espacio de trabajo",
   onNavigate,
   mobile = false,
 }: {
   entitlements?: readonly string[];
+  /** The caller's permission keys when the shell knows them; unknown shows every link. */
+  permissions?: readonly string[];
   productName?: string;
   onNavigate?: () => void;
   mobile?: boolean;
@@ -99,7 +127,7 @@ export function NavSidebar({
   const pathname = usePathname() ?? "/app";
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState(false);
-  const links = visibleNavLinks(NAV_LINKS, entitlements);
+  const links = visibleNavLinks(NAV_LINKS, entitlements, permissions);
   const sections = [...new Set(links.map((link) => link.section ?? "Espacio de trabajo"))];
   async function signOut() {
     setSigningOut(true);

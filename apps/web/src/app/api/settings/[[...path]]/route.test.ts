@@ -148,16 +148,67 @@ describe("/api/settings proxy", () => {
     });
   });
 
-  it("rejects a namespace outside the allowlist with 404 and never calls upstream", async () => {
-    const request = mockNextRequest({ pathname: "/api/settings/sales" });
+  it.each(["sales", "scheduling", "portal", "notifications"])(
+    "forwards GET and PUT for the allowlisted %s namespace (CFG-001)",
+    async (namespace) => {
+      fetchMock.mockResolvedValue(upstreamOk({ settings: {} }));
 
-    const response = (await GET(request as unknown as Parameters<typeof GET>[0])) as Response;
+      const read = mockNextRequest({ pathname: `/api/settings/${namespace}` });
+      const readResponse = (await GET(read as unknown as Parameters<typeof GET>[0])) as Response;
+      expect(readResponse.status).toBe(200);
 
-    expect(response.status).toBe(404);
-    expect(await response.json()).toEqual({
-      error: { code: "NOT_FOUND", message: "Settings namespace not found." },
-    });
+      const body = byteStream([JSON.stringify({})]);
+      const write = mockNextRequest({ pathname: `/api/settings/${namespace}`, body });
+      const writeResponse = (await PUT(write as unknown as Parameters<typeof PUT>[0])) as Response;
+      expect(writeResponse.status).toBe(200);
+
+      const calls = fetchMock.mock.calls as unknown as [string, FetchInit][];
+      expect(calls.map(([url, init]) => [url, init.method])).toEqual([
+        [`http://localhost:3001/settings/${namespace}`, "GET"],
+        [`http://localhost:3001/settings/${namespace}`, "PUT"],
+      ]);
+      expect(fetchInit(1).body).toBe(body);
+    }
+  );
+
+  it.each(["branding", "fiscal", "entitlements", "SALES", "constructor"])(
+    "rejects the %s namespace outside the allowlist with 404 and never calls upstream",
+    async (namespace) => {
+      const read = mockNextRequest({ pathname: `/api/settings/${namespace}` });
+      const readResponse = (await GET(read as unknown as Parameters<typeof GET>[0])) as Response;
+      expect(readResponse.status).toBe(404);
+      expect(await readResponse.json()).toEqual({
+        error: { code: "NOT_FOUND", message: "Settings namespace not found." },
+      });
+
+      const write = mockNextRequest({
+        pathname: `/api/settings/${namespace}`,
+        body: byteStream(["{}"]),
+      });
+      const writeResponse = (await PUT(write as unknown as Parameters<typeof PUT>[0])) as Response;
+      expect(writeResponse.status).toBe(404);
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it("rejects nested paths under every allowlisted namespace", async () => {
+    for (const namespace of ["sales", "portal", "notifications"]) {
+      const nested = mockNextRequest({ pathname: `/api/settings/${namespace}/extra` });
+      expect(((await GET(nested as unknown as Parameters<typeof GET>[0])) as Response).status).toBe(
+        404
+      );
+      const encoded = mockNextRequest({ pathname: `/api/settings/${namespace}%2f..` });
+      expect(
+        ((await PUT(encoded as unknown as Parameters<typeof PUT>[0])) as Response).status
+      ).toBe(400);
+    }
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("exports only GET and PUT handlers", async () => {
+    const handlers = Object.keys(await import("./route")).filter((name) => /^[A-Z]+$/.test(name));
+    expect(handlers.sort()).toEqual(["GET", "PUT"]);
   });
 
   it("rejects an empty or nested settings path", async () => {

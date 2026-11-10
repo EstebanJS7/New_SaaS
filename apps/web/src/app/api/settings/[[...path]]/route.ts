@@ -11,13 +11,13 @@ const SETTINGS_PATH_PREFIX = "/api/settings";
 /**
  * Namespaces the staff shell is allowed to reach through this proxy.
  *
- * This allowlist is the proxy's security boundary: the typed tenant-settings
- * service exposes many namespaces, but the browser surface only needs the
- * `scheduling` namespace (availability and one-off blocks). A namespace that is
- * not listed here — or any traversal/encoded segment — can never reach the
- * upstream URL.
+ * This allowlist is the proxy's security boundary. It lists exactly the four
+ * namespaces the API registry serves today: the agenda reads `scheduling`, and
+ * «Configuración › General» ([[CFG-001]]) reads and patches all four. A
+ * namespace that is not listed here — or any traversal/encoded segment — can
+ * never reach the upstream URL; a new namespace must be added here explicitly.
  */
-const SETTINGS_NAMESPACES: readonly string[] = ["scheduling"];
+const SETTINGS_NAMESPACES: readonly string[] = ["sales", "scheduling", "portal", "notifications"];
 
 type SettingsMethod = "GET" | "PUT";
 
@@ -27,7 +27,7 @@ type UpstreamResolution =
 /**
  * Resolves the browser pathname to a safe upstream settings path.
  *
- * `/api/settings/scheduling` maps to the upstream `/settings/scheduling`. An
+ * `/api/settings/<namespace>` maps to the upstream `/settings/<namespace>`. An
  * empty remainder is a malformed request (400); a namespace outside the
  * allowlist is reported as absent (404) so the proxy never reveals which
  * namespaces exist upstream.
