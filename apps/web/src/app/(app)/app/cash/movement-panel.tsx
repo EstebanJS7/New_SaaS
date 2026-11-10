@@ -52,6 +52,8 @@ interface MovementPanelProps {
   readonly createError: Error | null;
   /** The movement the API just created, present only after a confirmed create. */
   readonly created: CashMovement | null;
+  /** [[UX-037]]: false when the caller is known to lack the command's permission. */
+  readonly canCreate?: boolean;
 }
 
 const EMPTY_DRAFT: CashMovementDraft = {
@@ -94,6 +96,7 @@ export function MovementPanel({
   isCreating,
   createError,
   created,
+  canCreate = true,
 }: MovementPanelProps): JSX.Element {
   const [draft, setDraft] = useState<CashMovementDraft>(EMPTY_DRAFT);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -221,109 +224,111 @@ export function MovementPanel({
             )}
 
             {session.status === "OPEN" ? (
-              <form onSubmit={handleSubmit} className="space-y-3 border-t border-border pt-4">
-                <div className="space-y-2">
-                  <label htmlFor="cash-movement-type" className="text-sm font-medium">
-                    Tipo de movimiento
-                  </label>
-                  <select
-                    id="cash-movement-type"
-                    value={draft.type}
-                    onChange={(event) => changeType(event.target.value as CashMovementType)}
-                    disabled={isCreating || commandsBlocked}
-                    className={cashInputClassName}
-                  >
-                    {CASH_MOVEMENT_TYPES.map((type) => (
-                      <option key={type} value={type}>
-                        {CASH_MOVEMENT_TYPE_LABELS[type]}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-2">
-                  <label htmlFor="cash-movement-amount" className="text-sm font-medium">
-                    Importe
-                  </label>
-                  <input
-                    id="cash-movement-amount"
-                    type="text"
-                    inputMode="decimal"
-                    autoComplete="off"
-                    value={draft.amount}
-                    onChange={(event) =>
-                      setDraft((previous) => ({ ...previous, amount: event.target.value }))
-                    }
-                    disabled={isCreating || commandsBlocked}
-                    placeholder="0,00"
-                    className={cashInputClassName}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Importe mayor que cero, con hasta dos decimales. Usá coma decimal y punto para
-                    los miles; el tipo determina si suma o resta.
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <label htmlFor="cash-movement-reason" className="text-sm font-medium">
-                    Motivo
-                  </label>
-                  <textarea
-                    id="cash-movement-reason"
-                    value={draft.reason}
-                    onChange={(event) =>
-                      setDraft((previous) => ({ ...previous, reason: event.target.value }))
-                    }
-                    disabled={isCreating || commandsBlocked}
-                    placeholder="Explicá el motivo del movimiento"
-                    className={cashTextareaClassName}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Obligatorio salvo para ingresos, donde es opcional.
-                  </p>
-                </div>
-
-                {draft.type === "ADJUSTMENT" && (
+              canCreate && (
+                <form onSubmit={handleSubmit} className="space-y-3 border-t border-border pt-4">
                   <div className="space-y-2">
-                    <label htmlFor="cash-movement-direction" className="text-sm font-medium">
-                      Sentido del ajuste
+                    <label htmlFor="cash-movement-type" className="text-sm font-medium">
+                      Tipo de movimiento
                     </label>
                     <select
-                      id="cash-movement-direction"
-                      value={draft.direction}
-                      onChange={(event) =>
-                        setDraft((previous) => ({
-                          ...previous,
-                          direction: event.target.value as CashMovementDirection | "",
-                        }))
-                      }
+                      id="cash-movement-type"
+                      value={draft.type}
+                      onChange={(event) => changeType(event.target.value as CashMovementType)}
                       disabled={isCreating || commandsBlocked}
                       className={cashInputClassName}
                     >
-                      <option value="">Elegí el sentido</option>
-                      {CASH_MOVEMENT_DIRECTIONS.map((direction) => (
-                        <option key={direction} value={direction}>
-                          {CASH_MOVEMENT_DIRECTION_LABELS[direction]}
+                      {CASH_MOVEMENT_TYPES.map((type) => (
+                        <option key={type} value={type}>
+                          {CASH_MOVEMENT_TYPE_LABELS[type]}
                         </option>
                       ))}
                     </select>
                   </div>
-                )}
 
-                {localError !== null && (
-                  <p
-                    role="alert"
-                    data-testid="movement-validation-error"
-                    className="text-sm text-destructive"
-                  >
-                    {localError}
-                  </p>
-                )}
+                  <div className="space-y-2">
+                    <label htmlFor="cash-movement-amount" className="text-sm font-medium">
+                      Importe
+                    </label>
+                    <input
+                      id="cash-movement-amount"
+                      type="text"
+                      inputMode="decimal"
+                      autoComplete="off"
+                      value={draft.amount}
+                      onChange={(event) =>
+                        setDraft((previous) => ({ ...previous, amount: event.target.value }))
+                      }
+                      disabled={isCreating || commandsBlocked}
+                      placeholder="0,00"
+                      className={cashInputClassName}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Importe mayor que cero, con hasta dos decimales. Usá coma decimal y punto para
+                      los miles; el tipo determina si suma o resta.
+                    </p>
+                  </div>
 
-                <Button type="submit" disabled={isCreating || commandsBlocked}>
-                  {isCreating ? "Registrando movimiento…" : "Registrar movimiento"}
-                </Button>
-              </form>
+                  <div className="space-y-2">
+                    <label htmlFor="cash-movement-reason" className="text-sm font-medium">
+                      Motivo
+                    </label>
+                    <textarea
+                      id="cash-movement-reason"
+                      value={draft.reason}
+                      onChange={(event) =>
+                        setDraft((previous) => ({ ...previous, reason: event.target.value }))
+                      }
+                      disabled={isCreating || commandsBlocked}
+                      placeholder="Explicá el motivo del movimiento"
+                      className={cashTextareaClassName}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Obligatorio salvo para ingresos, donde es opcional.
+                    </p>
+                  </div>
+
+                  {draft.type === "ADJUSTMENT" && (
+                    <div className="space-y-2">
+                      <label htmlFor="cash-movement-direction" className="text-sm font-medium">
+                        Sentido del ajuste
+                      </label>
+                      <select
+                        id="cash-movement-direction"
+                        value={draft.direction}
+                        onChange={(event) =>
+                          setDraft((previous) => ({
+                            ...previous,
+                            direction: event.target.value as CashMovementDirection | "",
+                          }))
+                        }
+                        disabled={isCreating || commandsBlocked}
+                        className={cashInputClassName}
+                      >
+                        <option value="">Elegí el sentido</option>
+                        {CASH_MOVEMENT_DIRECTIONS.map((direction) => (
+                          <option key={direction} value={direction}>
+                            {CASH_MOVEMENT_DIRECTION_LABELS[direction]}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {localError !== null && (
+                    <p
+                      role="alert"
+                      data-testid="movement-validation-error"
+                      className="text-sm text-destructive"
+                    >
+                      {localError}
+                    </p>
+                  )}
+
+                  <Button type="submit" disabled={isCreating || commandsBlocked}>
+                    {isCreating ? "Registrando movimiento…" : "Registrar movimiento"}
+                  </Button>
+                </form>
+              )
             ) : (
               <p data-testid="movements-session-closed" className="text-sm text-muted-foreground">
                 Esta sesión está cerrada y conserva sus movimientos. Abrí otra sesión para registrar

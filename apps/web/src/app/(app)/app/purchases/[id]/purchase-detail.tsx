@@ -3,6 +3,8 @@
 import type { JSX } from "react";
 import { useState } from "react";
 import Link from "next/link";
+import { useCan } from "@/lib/capabilities";
+import { PURCHASE_ACTIONS } from "../purchase-capabilities";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@newsaas/ui/components/ui/button";
@@ -98,6 +100,9 @@ function receiveErrorTitle(error: Error): string {
  * Permission checks are UX-only; the backend enforces every gate.
  */
 export function PurchaseDetail(): JSX.Element {
+  const canEdit = useCan(PURCHASE_ACTIONS.update);
+  const canCancel = useCan(PURCHASE_ACTIONS.cancel);
+  const canReceive = useCan(PURCHASE_ACTIONS.receive);
   const params = useParams<{ id: string }>();
   const purchaseId = params.id;
   const queryClient = useQueryClient();
@@ -175,24 +180,30 @@ export function PurchaseDetail(): JSX.Element {
             <div className="flex shrink-0 flex-wrap gap-2">
               {isDraft && (
                 <>
-                  <Button type="button" variant="outline" asChild>
-                    <Link href={`/app/purchases/${purchase.id}/edit`}>Editar</Link>
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setConfirmAction("cancel")}
-                    disabled={cancelMutation.isPending || receiveMutation.isPending}
-                  >
-                    {cancelMutation.isPending ? "Cancelando…" : "Cancelar compra"}
-                  </Button>
-                  <Button
-                    type="button"
-                    onClick={() => setConfirmAction("receive")}
-                    disabled={receiveMutation.isPending || cancelMutation.isPending}
-                  >
-                    {receiveMutation.isPending ? "Recibiendo…" : "Recibir compra"}
-                  </Button>
+                  {canEdit && (
+                    <Button type="button" variant="outline" asChild>
+                      <Link href={`/app/purchases/${purchase.id}/edit`}>Editar</Link>
+                    </Button>
+                  )}
+                  {canCancel && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setConfirmAction("cancel")}
+                      disabled={cancelMutation.isPending || receiveMutation.isPending}
+                    >
+                      {cancelMutation.isPending ? "Cancelando…" : "Cancelar compra"}
+                    </Button>
+                  )}
+                  {canReceive && (
+                    <Button
+                      type="button"
+                      onClick={() => setConfirmAction("receive")}
+                      disabled={receiveMutation.isPending || cancelMutation.isPending}
+                    >
+                      {receiveMutation.isPending ? "Recibiendo…" : "Recibir compra"}
+                    </Button>
+                  )}
                 </>
               )}
             </div>

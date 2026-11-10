@@ -3,6 +3,8 @@
 import type { JSX } from "react";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCan } from "@/lib/capabilities";
+import { FISCAL_ACTIONS } from "./fiscal-capabilities";
 import {
   cancelFiscalDocument,
   getFiscalDocument,
@@ -18,6 +20,9 @@ import { IssueFiscalDocumentPanel } from "./issue-fiscal-document-panel";
 
 /** Staff workspace: reads and explicit commands are owned here; panels are presentational. */
 export function FiscalSurface(): JSX.Element {
+  const fiscalEnabled = useCan(FISCAL_ACTIONS.enabled);
+  const canIssue = useCan(FISCAL_ACTIONS.issue);
+  const canCancel = useCan(FISCAL_ACTIONS.cancel);
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<FiscalStatusFilter>("ALL");
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
@@ -74,7 +79,7 @@ export function FiscalSurface(): JSX.Element {
   }
 
   const readError = documentsQuery.error ?? detailQuery.error;
-  if (readError !== null && isFiscalNotEntitled(readError)) {
+  if (!fiscalEnabled || (readError !== null && isFiscalNotEntitled(readError))) {
     return (
       <div className="mx-auto max-w-4xl space-y-6">
         <header>
@@ -151,15 +156,18 @@ export function FiscalSurface(): JSX.Element {
             isCancelling={cancelDocumentId === selectedDocumentId && cancelMutation.isPending}
             cancelError={cancelDocumentId === selectedDocumentId ? cancelMutation.error : null}
             outcome={selectedOutcome}
+            canCancel={canCancel}
           />
-          <IssueFiscalDocumentPanel
-            onIssue={async (input: CreateFiscalDocumentInput) => {
-              await issueMutation.mutateAsync(input);
-            }}
-            isIssuing={issueMutation.isPending}
-            issueError={issueMutation.error}
-            issued={issueMutation.data ?? null}
-          />
+          {canIssue && (
+            <IssueFiscalDocumentPanel
+              onIssue={async (input: CreateFiscalDocumentInput) => {
+                await issueMutation.mutateAsync(input);
+              }}
+              isIssuing={issueMutation.isPending}
+              issueError={issueMutation.error}
+              issued={issueMutation.data ?? null}
+            />
+          )}
         </>
       )}
     </div>

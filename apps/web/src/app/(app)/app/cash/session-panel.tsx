@@ -50,6 +50,8 @@ interface SessionPanelProps {
   readonly openError: Error | null;
   /** The session the API just opened, present only after a confirmed open. */
   readonly opened: CashSession | null;
+  /** [[UX-037]]: false when the caller is known to lack the command's permission. */
+  readonly canOpenSession?: boolean;
   readonly selectedSessionId: string | null;
   readonly onSelectSession: (session: CashSession) => void;
 }
@@ -83,6 +85,7 @@ export function SessionPanel({
   opened,
   selectedSessionId,
   onSelectSession,
+  canOpenSession = true,
 }: SessionPanelProps): JSX.Element {
   const [registerId, setRegisterId] = useState("");
   const [openingAmount, setOpeningAmount] = useState("");
@@ -199,68 +202,70 @@ export function SessionPanel({
 
         {openError !== null && <CashErrorAlert error={openError} testId="session-open-error" />}
 
-        <form onSubmit={handleSubmit} className="space-y-3 border-t border-border pt-4">
-          <div className="space-y-2">
-            <label htmlFor="cash-session-register" className="text-sm font-medium">
-              Caja
-            </label>
-            <select
-              id="cash-session-register"
-              value={registerId}
-              onChange={(event) => setRegisterId(event.target.value)}
-              disabled={isOpening || commandsBlocked || !canOpen}
-              className={cashInputClassName}
-            >
-              <option value="">Elegí una caja</option>
-              {registers.map((register) => (
-                <option key={register.id} value={register.id}>
-                  {register.name}
-                </option>
-              ))}
-            </select>
-          </div>
+        {canOpenSession && (
+          <form onSubmit={handleSubmit} className="space-y-3 border-t border-border pt-4">
+            <div className="space-y-2">
+              <label htmlFor="cash-session-register" className="text-sm font-medium">
+                Caja
+              </label>
+              <select
+                id="cash-session-register"
+                value={registerId}
+                onChange={(event) => setRegisterId(event.target.value)}
+                disabled={isOpening || commandsBlocked || !canOpen}
+                className={cashInputClassName}
+              >
+                <option value="">Elegí una caja</option>
+                {registers.map((register) => (
+                  <option key={register.id} value={register.id}>
+                    {register.name}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          <div className="space-y-2">
-            <label htmlFor="cash-session-opening-amount" className="text-sm font-medium">
-              Importe inicial
-            </label>
-            <input
-              id="cash-session-opening-amount"
-              type="text"
-              inputMode="decimal"
-              autoComplete="off"
-              value={openingAmount}
-              onChange={(event) => setOpeningAmount(event.target.value)}
-              disabled={isOpening || commandsBlocked || !canOpen}
-              placeholder="0,00"
-              className={cashInputClassName}
-            />
-            <p className="text-xs text-muted-foreground">
-              Efectivo inicial de la caja. Usá coma para hasta dos decimales y punto para agrupar
-              miles. El importe esperado se calcula a partir de los movimientos.
-            </p>
-          </div>
+            <div className="space-y-2">
+              <label htmlFor="cash-session-opening-amount" className="text-sm font-medium">
+                Importe inicial
+              </label>
+              <input
+                id="cash-session-opening-amount"
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
+                value={openingAmount}
+                onChange={(event) => setOpeningAmount(event.target.value)}
+                disabled={isOpening || commandsBlocked || !canOpen}
+                placeholder="0,00"
+                className={cashInputClassName}
+              />
+              <p className="text-xs text-muted-foreground">
+                Efectivo inicial de la caja. Usá coma para hasta dos decimales y punto para agrupar
+                miles. El importe esperado se calcula a partir de los movimientos.
+              </p>
+            </div>
 
-          {!canOpen && (
-            <p data-testid="session-no-registers" className="text-sm text-muted-foreground">
-              {registersLoading ? "Cargando cajas…" : "Creá una caja antes de abrir una sesión."}
-            </p>
-          )}
+            {!canOpen && (
+              <p data-testid="session-no-registers" className="text-sm text-muted-foreground">
+                {registersLoading ? "Cargando cajas…" : "Creá una caja antes de abrir una sesión."}
+              </p>
+            )}
 
-          {localError !== null && (
-            <p
-              role="alert"
-              data-testid="session-open-validation-error"
-              className="text-sm text-destructive"
-            >
-              {localError}
-            </p>
-          )}
+            {localError !== null && (
+              <p
+                role="alert"
+                data-testid="session-open-validation-error"
+                className="text-sm text-destructive"
+              >
+                {localError}
+              </p>
+            )}
 
-          <Button type="submit" disabled={isOpening || commandsBlocked || !canOpen}>
-            {isOpening ? "Abriendo sesión…" : "Abrir sesión"}
-          </Button>
-        </form>
+            <Button type="submit" disabled={isOpening || commandsBlocked || !canOpen}>
+              {isOpening ? "Abriendo sesión…" : "Abrir sesión"}
+            </Button>
+          </form>
+        )}
       </CardContent>
       <ConfirmActionDialog
         open={review !== null}

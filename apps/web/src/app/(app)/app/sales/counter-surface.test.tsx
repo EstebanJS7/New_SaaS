@@ -2,6 +2,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { CapabilitiesProvider, type Capabilities } from "@/lib/capabilities";
 import { CounterSurface } from "./counter-surface";
 
 const SALE_ID = "22222222-2222-4222-8222-222222222222";
@@ -678,5 +679,44 @@ beforeEach(() => {
     value: function (this: HTMLDialogElement) {
       this.removeAttribute("open");
     },
+  });
+});
+
+describe("CounterSurface follows the caller's capabilities (UX-037)", () => {
+  function renderCounterAs(capabilities: Capabilities): void {
+    render(
+      <CapabilitiesProvider value={capabilities}>
+        <TestWrapper>
+          <CounterSurface />
+        </TestWrapper>
+      </CapabilitiesProvider>
+    );
+  }
+
+  it("shows a no-permission state instead of the counter without sales.create and sales.complete", async () => {
+    const fetchMock = installFetch({ sales: () => jsonResponse({}) });
+    renderCounterAs({ permissions: ["sales.read", "sales.create"], features: ["sales"] });
+    expect(await screen.findByTestId("permission-denied")).toHaveTextContent(
+      "No tenés permiso para registrar ventas."
+    );
+    expect(screen.queryByLabelText("Nombre del artículo")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Continuar al pago" })).not.toBeInTheDocument();
+    expect(salesCalls(fetchMock)).toHaveLength(0);
+  });
+
+  it("shows the not-enabled state up front when the clinic lacks the sales feature", async () => {
+    installFetch({ sales: () => jsonResponse({}) });
+    renderCounterAs({ permissions: ["sales.create", "sales.complete"], features: [] });
+    expect(await screen.findByTestId("entitlement-denied")).toHaveTextContent(
+      "Ventas no habilitadas"
+    );
+    expect(screen.queryByRole("button", { name: "Continuar al pago" })).not.toBeInTheDocument();
+  });
+
+  it("offers the counter to a caller who can sell", async () => {
+    installFetch({ sales: () => jsonResponse({}) });
+    renderCounterAs({ permissions: ["sales.create", "sales.complete"], features: ["sales"] });
+    expect(await screen.findByRole("button", { name: "Agregar a la venta" })).toBeInTheDocument();
+    expect(screen.queryByTestId("permission-denied")).not.toBeInTheDocument();
   });
 });

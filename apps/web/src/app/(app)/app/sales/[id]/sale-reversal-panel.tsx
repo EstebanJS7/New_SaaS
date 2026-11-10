@@ -34,8 +34,15 @@ import { PAYMENT_METHOD_LABELS, formatAmount, formatDate } from "../sales-displa
  * of a reversal is lost, re-sending replays it instead of being refused as "already
  * reversed". A new attempt (after closing the dialog) gets a new key.
  */
-export function SaleReversalPanel({ sale }: { readonly sale: Sale }): JSX.Element | null {
-  if (sale.status === "COMPLETED") return <ReverseSaleCard sale={sale} />;
+export function SaleReversalPanel({
+  sale,
+  canReverse = true,
+}: {
+  readonly sale: Sale;
+  /** [[UX-037]]: false when the caller is known to lack `sales.reverse`; the record still shows. */
+  readonly canReverse?: boolean;
+}): JSX.Element | null {
+  if (sale.status === "COMPLETED") return canReverse ? <ReverseSaleCard sale={sale} /> : null;
   if (sale.status === "CANCELLED") return <ReversalRecord sale={sale} />;
   return null;
 }

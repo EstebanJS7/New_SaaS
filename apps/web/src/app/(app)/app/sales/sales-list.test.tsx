@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { CapabilitiesProvider, type Capabilities } from "@/lib/capabilities";
 import { SalesList } from "./sales-list";
 import { SALE_LIST_CONTEXT_MS } from "./sales-list-state";
 import type { SaleSearchInput, SaleSearchResult } from "./sale-search-api";
@@ -220,5 +221,42 @@ describe("Sale server list", () => {
       await Promise.resolve();
     });
     expect(screen.queryByText("Rex")).not.toBeInTheDocument();
+  });
+});
+
+describe("Sale list entry points follow the caller's capabilities (UX-037)", () => {
+  function mountAs(capabilities: Capabilities) {
+    return render(
+      <CapabilitiesProvider value={capabilities}>
+        <QueryClientProvider
+          client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+        >
+          <SalesList />
+        </QueryClientProvider>
+      </CapabilitiesProvider>
+    );
+  }
+
+  it("hides the counter links from a caller who cannot sell", async () => {
+    install(() => json(page({ items: [], total: 0, totalPages: 0 })));
+    mountAs({ permissions: ["sales.read"], features: ["sales"] });
+    expect(await screen.findByText("No encontramos ventas")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Punto de venta/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Ir al punto de venta" })).not.toBeInTheDocument();
+  });
+
+  it("offers the counter links to a caller who can sell", async () => {
+    install(() => json(page({ items: [], total: 0, totalPages: 0 })));
+    mountAs({ permissions: ["sales.read", "sales.create", "sales.complete"], features: ["sales"] });
+    expect(await screen.findByText("No encontramos ventas")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Punto de venta/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Ir al punto de venta" })).toBeInTheDocument();
+  });
+
+  it("offers the counter links while capabilities are unknown", async () => {
+    install(() => json(page({ items: [], total: 0, totalPages: 0 })));
+    mount();
+    expect(await screen.findByText("No encontramos ventas")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Punto de venta/ })).toBeInTheDocument();
   });
 });

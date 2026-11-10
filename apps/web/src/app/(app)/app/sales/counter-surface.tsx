@@ -7,6 +7,8 @@ import { useMemo, useRef, useState } from "react";
 import { forgetAttempt, newAttemptKey, rememberAttempt } from "@/lib/pending-attempts";
 import { PendingSaleAttempts } from "./pending-sale-attempts";
 import Link from "next/link";
+import { useCan } from "@/lib/capabilities";
+import { SALE_ACTIONS } from "./sale-capabilities";
 import { ClinicalAssociations } from "@/components/veterinary/clinical-associations";
 import { AppointmentJourney } from "@/components/veterinary/appointment-journey";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -86,6 +88,8 @@ export function CounterSurface({
   encounterId,
 }: { appointmentId?: string; patientId?: string; encounterId?: string } = {}): JSX.Element {
   const queryClient = useQueryClient();
+  const salesEnabled = useCan({ feature: SALE_ACTIONS.sell.feature });
+  const canSell = useCan(SALE_ACTIONS.sell);
   const catalogNames = useCatalogItemNames();
   const nextKeyRef = useRef(0);
   const creatingRef = useRef(false);
@@ -283,7 +287,7 @@ export function CounterSurface({
     completeMutation.reset();
   }
 
-  if (entitlementDenied) {
+  if (entitlementDenied || !salesEnabled) {
     // UX gate only: the backend answers the same `403 FEATURE_NOT_ENTITLED` for
     // every sale call, so the surface hides itself instead of offering actions
     // that can only fail.
@@ -307,6 +311,31 @@ export function CounterSurface({
             Esta organización no tiene habilitada la función de ventas, por lo que el punto de venta
             no está disponible.
           </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!canSell) {
+    // UX gate only ([[UX-037]]): checkout always creates and completes, so a
+    // caller missing either permission gets a clear state instead of a counter
+    // whose every checkout the API would refuse.
+    return (
+      <div className="mx-auto max-w-3xl space-y-6">
+        <div>
+          <Link href="/app/sales/history" className="text-sm text-primary hover:underline">
+            Listado de ventas
+          </Link>
+          <h1 className="text-2xl font-semibold tracking-tight">Punto de venta</h1>
+          <p className="text-sm text-muted-foreground">Ventas de esta organización.</p>
+        </div>
+        <div
+          role="status"
+          data-testid="permission-denied"
+          className="rounded-lg border border-border bg-muted p-4 text-sm"
+        >
+          <p className="font-medium">Sin permiso</p>
+          <p>No tenés permiso para registrar ventas.</p>
         </div>
       </div>
     );

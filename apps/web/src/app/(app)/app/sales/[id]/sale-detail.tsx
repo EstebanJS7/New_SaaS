@@ -19,6 +19,8 @@ import {
 import { Button } from "@newsaas/ui/components/ui/button";
 import { PaymentCapture } from "../payment-capture";
 import { SaleReversalPanel } from "./sale-reversal-panel";
+import { useCan } from "@/lib/capabilities";
+import { SALE_ACTIONS } from "../sale-capabilities";
 import {
   classifySaleCompletionError,
   completeSale,
@@ -76,6 +78,8 @@ function DetailRow({
 export function SaleDetail(): JSX.Element {
   const params = useParams<{ id: string }>();
   const saleId = params.id;
+  const canComplete = useCan(SALE_ACTIONS.complete);
+  const canReverse = useCan(SALE_ACTIONS.reverse);
   const queryClient = useQueryClient();
   const catalogNames = useCatalogItemNames();
   const customerNames = useCustomerNames();
@@ -256,9 +260,9 @@ export function SaleDetail(): JSX.Element {
         </CardContent>
       </Card>
 
-      {completed === null ? <SaleReversalPanel sale={sale} /> : null}
+      {completed === null ? <SaleReversalPanel sale={sale} canReverse={canReverse} /> : null}
 
-      {isDraft && completed === null && (
+      {isDraft && completed === null && canComplete && (
         <Card>
           <CardHeader>
             <CardTitle>Completar este borrador</CardTitle>

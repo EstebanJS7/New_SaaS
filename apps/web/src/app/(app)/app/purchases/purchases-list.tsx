@@ -3,6 +3,8 @@
 import type { JSX } from "react";
 import { useState } from "react";
 import Link from "next/link";
+import { useCan } from "@/lib/capabilities";
+import { PURCHASE_ACTIONS } from "./purchase-capabilities";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@newsaas/ui/components/ui/button";
 import {
@@ -28,9 +30,11 @@ const selectClassName =
 function PurchaseCard({
   purchase,
   supplierName,
+  canEdit,
 }: {
   readonly purchase: Purchase;
   readonly supplierName: string;
+  readonly canEdit: boolean;
 }): JSX.Element {
   return (
     <div className="flex items-start justify-between rounded-lg border bg-card p-4 text-card-foreground shadow-sm">
@@ -52,7 +56,7 @@ function PurchaseCard({
         </p>
       </div>
       <div className="flex shrink-0 gap-2">
-        {purchase.status === "DRAFT" && (
+        {canEdit && purchase.status === "DRAFT" && (
           <Button type="button" variant="outline" size="sm" asChild>
             <Link href={`/app/purchases/${purchase.id}/edit`}>Editar</Link>
           </Button>
@@ -79,6 +83,8 @@ function PurchaseCard({
  * answers `403` when the staff role does not hold `purchases.read`.
  */
 export function PurchaseList(): JSX.Element {
+  const canCreate = useCan(PURCHASE_ACTIONS.create);
+  const canEdit = useCan(PURCHASE_ACTIONS.update);
   const [status, setStatus] = useState<PurchaseStatus | "">("");
   const supplierNames = useSupplierNames();
 
@@ -101,9 +107,11 @@ export function PurchaseList(): JSX.Element {
             Registrá, recibí y cancelá las compras de la organización.
           </p>
         </div>
-        <Button type="button" asChild>
-          <Link href="/app/purchases/new">Nueva compra</Link>
-        </Button>
+        {canCreate && (
+          <Button type="button" asChild>
+            <Link href="/app/purchases/new">Nueva compra</Link>
+          </Button>
+        )}
       </div>
 
       <div className="space-y-2 sm:max-w-xs">
@@ -145,11 +153,13 @@ export function PurchaseList(): JSX.Element {
             <CardTitle>{emptyTitle}</CardTitle>
             <CardDescription>{emptyDescription}</CardDescription>
           </CardHeader>
-          <CardContent>
-            <Button type="button" asChild>
-              <Link href="/app/purchases/new">Crear borrador de compra</Link>
-            </Button>
-          </CardContent>
+          {canCreate && (
+            <CardContent>
+              <Button type="button" asChild>
+                <Link href="/app/purchases/new">Crear borrador de compra</Link>
+              </Button>
+            </CardContent>
+          )}
         </Card>
       ) : (
         <div className="space-y-3">
@@ -158,6 +168,7 @@ export function PurchaseList(): JSX.Element {
               key={purchase.id}
               purchase={purchase}
               supplierName={supplierNames.nameFor(purchase.supplierId)}
+              canEdit={canEdit}
             />
           ))}
         </div>

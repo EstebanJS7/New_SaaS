@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { CapabilitiesProvider, type Capabilities } from "@/lib/capabilities";
 import { formatEsPyDateOnly } from "@/lib/es-py-format";
 import { PurchaseDetail } from "./purchase-detail";
 
@@ -439,5 +440,57 @@ describe("PurchaseDetail", () => {
     expect(screen.queryByRole("button", { name: "Recibir compra" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Cancelar compra" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Editar" })).not.toBeInTheDocument();
+  });
+});
+
+describe("PurchaseDetail actions follow the caller's capabilities (UX-037)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function renderDetailAs(capabilities: Capabilities): void {
+    render(
+      <CapabilitiesProvider value={capabilities}>
+        <TestWrapper>
+          <PurchaseDetail />
+        </TestWrapper>
+      </CapabilitiesProvider>
+    );
+  }
+
+  it("hides Edit, Cancel and Receive from a read-only caller", async () => {
+    installFetch({ read: () => jsonResponse(DRAFT_PURCHASE) });
+    renderDetailAs({ permissions: ["purchases.read"], features: [] });
+    await screen.findByRole("heading", { name: /Compra #/ });
+    expect(screen.queryByRole("link", { name: "Editar" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancelar compra" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Recibir compra" })).not.toBeInTheDocument();
+  });
+
+  it("offers only the transition the caller holds", async () => {
+    installFetch({ read: () => jsonResponse(DRAFT_PURCHASE) });
+    renderDetailAs({ permissions: ["purchases.read", "purchases.receive"], features: [] });
+    expect(await screen.findByRole("button", { name: "Recibir compra" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancelar compra" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Editar" })).not.toBeInTheDocument();
+  });
+
+  it("offers every draft action when granted", async () => {
+    installFetch({ read: () => jsonResponse(DRAFT_PURCHASE) });
+    renderDetailAs({
+      permissions: ["purchases.read", "purchases.update", "purchases.cancel", "purchases.receive"],
+      features: [],
+    });
+    expect(await screen.findByRole("button", { name: "Recibir compra" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancelar compra" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Editar" })).toBeInTheDocument();
+  });
+
+  it("offers every draft action while capabilities are unknown", async () => {
+    installFetch({ read: () => jsonResponse(DRAFT_PURCHASE) });
+    renderDetail();
+    expect(await screen.findByRole("button", { name: "Recibir compra" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancelar compra" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Editar" })).toBeInTheDocument();
   });
 });

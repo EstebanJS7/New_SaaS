@@ -7,6 +7,8 @@ import { Icon } from "@newsaas/ui/components/ui/icon";
 import { Badge } from "@newsaas/ui/components/ui/badge";
 import { EmptyState, ErrorState, ListSkeleton } from "@/components/feedback";
 import Link from "next/link";
+import { useCan } from "@/lib/capabilities";
+import { SALE_ACTIONS } from "./sale-capabilities";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@newsaas/ui/components/ui/button";
 import { SALE_STATUS_LABELS, formatDate } from "./sales-display";
@@ -14,6 +16,7 @@ import { ApiRequestError, searchSales, userFacingSaleError } from "./sale-search
 import { useSalesListState } from "./sales-list-state";
 
 export function SalesList(): JSX.Element {
+  const canSell = useCan(SALE_ACTIONS.sell);
   const [state, setState] = useSalesListState();
   const [search, setSearch] = useState(state.q);
   const [validation, setValidation] = useState<string>();
@@ -39,12 +42,14 @@ export function SalesList(): JSX.Element {
             Buscá ventas guardadas y consultá su estado.
           </p>
         </div>
-        <Button type="button" asChild>
-          <Link href="/app/sales">
-            <Icon name="plus" />
-            Punto de venta
-          </Link>
-        </Button>
+        {canSell && (
+          <Button type="button" asChild>
+            <Link href="/app/sales">
+              <Icon name="plus" />
+              Punto de venta
+            </Link>
+          </Button>
+        )}
       </div>
 
       <form
@@ -167,9 +172,11 @@ export function SalesList(): JSX.Element {
           title="No encontramos ventas"
           description="Probá con otro UUID, cliente o estado, o limpiá los filtros."
         >
-          <Button type="button" asChild>
-            <Link href="/app/sales">Ir al punto de venta</Link>
-          </Button>
+          {canSell && (
+            <Button type="button" asChild>
+              <Link href="/app/sales">Ir al punto de venta</Link>
+            </Button>
+          )}
         </EmptyState>
       ) : (
         <div className="space-y-3" aria-label="Resultados de ventas">

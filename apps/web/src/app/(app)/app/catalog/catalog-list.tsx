@@ -24,6 +24,8 @@ import {
 } from "./catalog-api";
 import { formatStaffMoney } from "@/lib/es-py-format";
 import { useCatalogListState } from "./catalog-list-state";
+import { useCan } from "@/lib/capabilities";
+import { CATALOG_ACTIONS } from "./catalog-capabilities";
 
 function catalogActionError(error: Error): string {
   return userFacingCatalogError(error);
@@ -42,7 +44,15 @@ function referencePriceLabel(item: CatalogSearchRow): string | null {
   return formatStaffMoney(item.referencePriceAmount, item.referencePriceCurrency);
 }
 
-function CatalogItemCard({ item }: { readonly item: CatalogSearchRow }): JSX.Element {
+function CatalogItemCard({
+  item,
+  canEdit,
+  canDeactivate,
+}: {
+  readonly item: CatalogSearchRow;
+  readonly canEdit: boolean;
+  readonly canDeactivate: boolean;
+}): JSX.Element {
   const queryClient = useQueryClient();
   const [confirmDeactivateOpen, setConfirmDeactivateOpen] = useState(false);
   const mutation = useMutation({
@@ -82,19 +92,23 @@ function CatalogItemCard({ item }: { readonly item: CatalogSearchRow }): JSX.Ele
         )}
       </div>
       <div className="flex shrink-0 gap-2">
-        <Button type="button" variant="outline" size="sm" asChild>
-          <Link href={`/app/catalog/${item.id}/edit`}>Editar</Link>
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => setConfirmDeactivateOpen(true)}
-          disabled={mutation.isPending || catalogWriteBlocked(mutation.error) || !item.isActive}
-          loading={mutation.isPending}
-        >
-          {mutation.isPending ? "Desactivando…" : "Desactivar"}
-        </Button>
+        {canEdit && (
+          <Button type="button" variant="outline" size="sm" asChild>
+            <Link href={`/app/catalog/${item.id}/edit`}>Editar</Link>
+          </Button>
+        )}
+        {canDeactivate && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setConfirmDeactivateOpen(true)}
+            disabled={mutation.isPending || catalogWriteBlocked(mutation.error) || !item.isActive}
+            loading={mutation.isPending}
+          >
+            {mutation.isPending ? "Desactivando…" : "Desactivar"}
+          </Button>
+        )}
       </div>
       <ConfirmActionDialog
         open={confirmDeactivateOpen}
@@ -115,6 +129,9 @@ function CatalogItemCard({ item }: { readonly item: CatalogSearchRow }): JSX.Ele
 }
 
 export function CatalogList(): JSX.Element {
+  const canCreate = useCan(CATALOG_ACTIONS.create);
+  const canEdit = useCan(CATALOG_ACTIONS.update);
+  const canDeactivate = useCan(CATALOG_ACTIONS.deactivate);
   const [state, setState] = useCatalogListState();
   const [search, setSearch] = useState(state.q);
   const [validation, setValidation] = useState<string>();
@@ -140,12 +157,14 @@ export function CatalogList(): JSX.Element {
             Encontrá productos, servicios, medicamentos e insumos.
           </p>
         </div>
-        <Button type="button" asChild>
-          <Link href="/app/catalog/new">
-            <Icon name="plus" />
-            Nuevo artículo
-          </Link>
-        </Button>
+        {canCreate && (
+          <Button type="button" asChild>
+            <Link href="/app/catalog/new">
+              <Icon name="plus" />
+              Nuevo artículo
+            </Link>
+          </Button>
+        )}
       </div>
 
       <form
@@ -270,14 +289,21 @@ export function CatalogList(): JSX.Element {
           title="No encontramos artículos"
           description="Probá con otro nombre o cambiá los filtros."
         >
-          <Button type="button" asChild>
-            <Link href="/app/catalog/new">Crear artículo</Link>
-          </Button>
+          {canCreate && (
+            <Button type="button" asChild>
+              <Link href="/app/catalog/new">Crear artículo</Link>
+            </Button>
+          )}
         </EmptyState>
       ) : (
         <div className="space-y-3" aria-label="Resultados del catálogo">
           {result?.items.map((item) => (
-            <CatalogItemCard key={item.id} item={item} />
+            <CatalogItemCard
+              key={item.id}
+              item={item}
+              canEdit={canEdit}
+              canDeactivate={canDeactivate}
+            />
           ))}
         </div>
       )}

@@ -26,6 +26,8 @@ interface FiscalDetailPanelProps {
   readonly isCancelling: boolean;
   readonly cancelError: Error | null;
   readonly outcome: FiscalCommandOutcome | null;
+  /** [[UX-037]]: false when the caller is known to lack `fiscal.invoice.issue`. */
+  readonly canCancel?: boolean;
 }
 function CommandOutcome({ outcome }: { readonly outcome: FiscalCommandOutcome }): JSX.Element {
   return (
@@ -54,6 +56,7 @@ export function FiscalDetailPanel({
   isCancelling,
   cancelError,
   outcome,
+  canCancel = true,
 }: FiscalDetailPanelProps): JSX.Element {
   const [reason, setReason] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
@@ -141,7 +144,7 @@ export function FiscalDetailPanel({
                 </div>
               ))}
             </dl>
-            {document.status !== "SENDING" && document.status !== "CANCELLED" && (
+            {canCancel && document.status !== "SENDING" && document.status !== "CANCELLED" && (
               <form onSubmit={handleSubmit} className="space-y-3 border-t border-border pt-4">
                 <div className="space-y-2">
                   <label htmlFor="fiscal-cancel-reason" className="text-sm font-medium">

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { CapabilitiesProvider, type Capabilities } from "@/lib/capabilities";
 import { FISCAL_DOCUMENT_CANCEL_REFUSED_MESSAGE, type FiscalDocument } from "./fiscal-api";
 import { FiscalSurface } from "./fiscal-surface";
 const DOCUMENT: FiscalDocument = {
@@ -150,5 +151,60 @@ describe("FiscalSurface commands", () => {
     expect(alert).toHaveTextContent("La operación fue rechazada");
     expect(alert).toHaveTextContent("El proveedor fiscal rechazó la cancelación.");
     expect(alert).not.toHaveTextContent(FISCAL_DOCUMENT_CANCEL_REFUSED_MESSAGE);
+  });
+});
+
+describe("FiscalSurface commands follow the caller's capabilities (UX-037)", () => {
+  function renderSurfaceAs(capabilities: Capabilities): void {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <CapabilitiesProvider value={capabilities}>
+        <QueryClientProvider client={client}>
+          <FiscalSurface />
+        </QueryClientProvider>
+      </CapabilitiesProvider>
+    );
+  }
+
+  async function openDocument(): Promise<void> {
+    fireEvent.click(await screen.findByRole("button", { name: "Seleccionar documento" }));
+    await screen.findByTestId("fiscal-provider");
+  }
+
+  it("keeps documents readable but offers neither issue nor cancel without fiscal.invoice.issue", async () => {
+    installFetch({ list: () => jsonResponse([DOCUMENT]), detail: () => jsonResponse(DOCUMENT) });
+    renderSurfaceAs({ permissions: ["fiscal.read"], features: ["fiscal"] });
+    await openDocument();
+    expect(
+      screen.queryByRole("button", { name: "Cancelar documento fiscal" })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Emitir documento fiscal" })
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the not-enabled state up front when the clinic lacks the fiscal feature", async () => {
+    installFetch({ list: () => jsonResponse([DOCUMENT]) });
+    renderSurfaceAs({ permissions: ["fiscal.read", "fiscal.invoice.issue"], features: [] });
+    expect(await screen.findByTestId("fiscal-entitlement-denied")).toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      "granted",
+      {
+        permissions: ["fiscal.read", "fiscal.invoice.issue"],
+        features: ["fiscal"],
+      },
+    ],
+    ["unknown", {}],
+  ])("offers issue and cancel when capabilities are %s", async (_label, capabilities) => {
+    installFetch({ list: () => jsonResponse([DOCUMENT]), detail: () => jsonResponse(DOCUMENT) });
+    renderSurfaceAs(capabilities);
+    await openDocument();
+    expect(screen.getByRole("button", { name: "Cancelar documento fiscal" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Emitir documento fiscal" })).toBeInTheDocument();
   });
 });

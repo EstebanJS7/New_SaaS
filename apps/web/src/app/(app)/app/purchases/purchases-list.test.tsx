@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { CapabilitiesProvider, type Capabilities } from "@/lib/capabilities";
 import { formatEsPyDateOnly } from "@/lib/es-py-format";
 import { PurchaseList } from "./purchases-list";
 
@@ -241,5 +242,57 @@ describe("PurchaseList", () => {
     await screen.findByText(/Distribuidora Central/);
     expect(screen.getByText("Recibida", { selector: "span" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Editar" })).not.toBeInTheDocument();
+  });
+});
+
+describe("PurchaseList actions follow the caller's capabilities (UX-037)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function renderListAs(capabilities: Capabilities): void {
+    render(
+      <CapabilitiesProvider value={capabilities}>
+        <TestWrapper>
+          <PurchaseList />
+        </TestWrapper>
+      </CapabilitiesProvider>
+    );
+  }
+
+  it("hides the create entry points and Edit from a read-only caller", async () => {
+    installFetch({ purchases: () => jsonResponse([DRAFT_PURCHASE]) });
+    renderListAs({ permissions: ["purchases.read"], features: [] });
+    await screen.findByText(/Distribuidora Central/);
+    expect(screen.queryByRole("link", { name: "Nueva compra" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Editar" })).not.toBeInTheDocument();
+  });
+
+  it("hides the empty-state create link without purchases.create", async () => {
+    installFetch({ purchases: () => jsonResponse([]) });
+    renderListAs({ permissions: ["purchases.read"], features: [] });
+    await screen.findByText(/Todavía no hay compras|No hay compras/);
+    expect(
+      screen.queryByRole("link", { name: "Crear borrador de compra" })
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers create and Edit when they are granted", async () => {
+    installFetch({ purchases: () => jsonResponse([DRAFT_PURCHASE]) });
+    renderListAs({
+      permissions: ["purchases.read", "purchases.create", "purchases.update"],
+      features: [],
+    });
+    await screen.findByText(/Distribuidora Central/);
+    expect(screen.getByRole("link", { name: "Nueva compra" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Editar" })).toBeInTheDocument();
+  });
+
+  it("offers create and Edit while capabilities are unknown", async () => {
+    installFetch({ purchases: () => jsonResponse([DRAFT_PURCHASE]) });
+    renderList();
+    await screen.findByText(/Distribuidora Central/);
+    expect(screen.getByRole("link", { name: "Nueva compra" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Editar" })).toBeInTheDocument();
   });
 });

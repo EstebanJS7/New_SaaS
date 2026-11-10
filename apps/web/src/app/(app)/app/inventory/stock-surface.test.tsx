@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { CapabilitiesProvider, type Capabilities } from "@/lib/capabilities";
 import { StockSurface } from "./stock-surface";
 import {
   INVALID_TRANSFER_BODY_MESSAGE,
@@ -168,6 +169,43 @@ describe("StockSurface (MB-003)", () => {
     expect(fetchMock.mock.calls.some(([url]) => url === "/api/inventory/stock/transfers")).toBe(
       false
     );
+  });
+});
+
+describe("StockSurface transfer follows the caller's capabilities (UX-037)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function renderAs(capabilities: Capabilities): void {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <CapabilitiesProvider value={capabilities}>
+        <QueryClientProvider client={client}>
+          <StockSurface />
+        </QueryClientProvider>
+      </CapabilitiesProvider>
+    );
+  }
+
+  it("keeps the stock readable but hides the transfer form without inventory.stock.transfer", async () => {
+    installFetch();
+    renderAs({ permissions: ["inventory.stock.read"], features: [] });
+    expect(await screen.findAllByText("Pipeta")).not.toHaveLength(0);
+    expect(screen.queryByText("Transferir entre sucursales")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Transferir" })).not.toBeInTheDocument();
+  });
+
+  it("offers the transfer form when inventory.stock.transfer is granted", async () => {
+    installFetch();
+    renderAs({ permissions: ["inventory.stock.read", "inventory.stock.transfer"], features: [] });
+    expect(await screen.findByRole("button", { name: "Transferir" })).toBeInTheDocument();
+  });
+
+  it("offers the transfer form while capabilities are unknown", async () => {
+    installFetch();
+    renderSurface();
+    expect(await screen.findByRole("button", { name: "Transferir" })).toBeInTheDocument();
   });
 });
 

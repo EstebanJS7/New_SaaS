@@ -3,6 +3,8 @@
 import type { JSX } from "react";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCan } from "@/lib/capabilities";
+import { BILLING_ACTIONS } from "./billing-capabilities";
 import {
   cancelInvoice,
   confirmInvoice,
@@ -44,6 +46,10 @@ import { InvoiceListPanel, type InvoiceStatusFilter } from "./invoice-list-panel
  * a capability problem and the backend remains the authority either way.
  */
 export function BillingSurface(): JSX.Element {
+  const billingEnabled = useCan(BILLING_ACTIONS.enabled);
+  const canCreate = useCan(BILLING_ACTIONS.create);
+  const canConfirm = useCan(BILLING_ACTIONS.confirm);
+  const canCancel = useCan(BILLING_ACTIONS.cancel);
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<InvoiceStatusFilter>("ALL");
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
@@ -143,7 +149,7 @@ export function BillingSurface(): JSX.Element {
 
   const readError = invoicesQuery.error ?? detailQuery.error;
 
-  if (readError !== null && isBillingNotEntitled(readError)) {
+  if (!billingEnabled || (readError !== null && isBillingNotEntitled(readError))) {
     // UX gate only: the backend answers the same `403 FEATURE_NOT_ENTITLED` for
     // every billing call, so the workspace hides itself instead of offering
     // actions that can only fail.
@@ -214,16 +220,20 @@ export function BillingSurface(): JSX.Element {
         isCancelling={cancelInvoiceId === selectedInvoiceId && cancelMutation.isPending}
         cancelError={cancelInvoiceId === selectedInvoiceId ? cancelMutation.error : null}
         outcome={selectedOutcome}
+        canConfirm={canConfirm}
+        canCancel={canCancel}
       />
 
-      <CreateInvoicePanel
-        onCreate={async (input: CreateInvoiceInput) => {
-          await createMutation.mutateAsync(input);
-        }}
-        isCreating={createMutation.isPending}
-        createError={createMutation.error}
-        created={createMutation.data ?? null}
-      />
+      {canCreate && (
+        <CreateInvoicePanel
+          onCreate={async (input: CreateInvoiceInput) => {
+            await createMutation.mutateAsync(input);
+          }}
+          isCreating={createMutation.isPending}
+          createError={createMutation.error}
+          created={createMutation.data ?? null}
+        />
+      )}
     </div>
   );
 }
