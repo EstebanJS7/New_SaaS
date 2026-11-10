@@ -130,6 +130,16 @@ export function createWhatsAppCloudChannel(
           reason: "The resolved recipient is not a deliverable WhatsApp number.",
         };
       }
+      if (request.attachments !== undefined && request.attachments.length > 0) {
+        // DEC-098: a template message cannot carry a file, and dropping it would
+        // report a send that did not deliver what the caller asked for.
+        return {
+          outcome: "FAILED",
+          retryable: false,
+          reasonCode: NOTIFICATION_CHANNEL_REASON.ATTACHMENT_UNSUPPORTED,
+          reason: "The WhatsApp channel does not carry attachments.",
+        };
+      }
       if (request.parameters.length === 0) {
         // An approved template with unfilled placeholders is a template
         // violation the provider bills us for; refusing it here keeps the

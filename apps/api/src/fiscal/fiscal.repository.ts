@@ -52,6 +52,12 @@ export interface FiscalDocumentRow {
   cancelPendingSince?: Date | null;
   requestSnapshot?: unknown;
   responseSnapshot?: unknown;
+  /**
+   * FISC-021: opaque object-storage key of the KuDE the worker stored when it
+   * signed; null when none was stored. CONFIDENTIAL (the KuDE carries the
+   * receiver's data) — read only to serve the KuDE, never returned by the API.
+   */
+  kudeStorageKey?: string | null;
 }
 interface FiscalWhere {
   id?: string;

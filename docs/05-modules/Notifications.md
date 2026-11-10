@@ -155,6 +155,26 @@ by exactly one file — which a dependency-boundary test enforces.
 is resolved at send time, used to build the message, handed to the port, and
 never persisted, logged, or returned.
 
+### Attachments ([[DEC-098]])
+
+`NotificationChannelRequest.attachments` is optional and closed: at most **one**
+attachment, content type from the allowlist `text/html; charset=utf-8` only, 1
+byte to **512 KiB** (`NOTIFICATION_ATTACHMENT_MAX_BYTES`), a filename matching
+our own `^[A-Za-z0-9][A-Za-z0-9-]{0,63}\.html$`, and exactly the keys
+`filename`, `contentType`, `content` (bytes in memory). Each channel answers a
+request outside that contract the same way:
+
+| Channel  | Attachment inside the contract                                            | Outside the contract / any attachment                                              |
+| -------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| SMTP     | passed to nodemailer as `{ filename, content: Buffer, contentType }` only | `FAILED`, not retryable, `CHANNEL_ATTACHMENT_REJECTED`, nothing sent               |
+| WhatsApp | —                                                                         | any attachment: `FAILED`, not retryable, `CHANNEL_ATTACHMENT_UNSUPPORTED`, no call |
+| Fake     | records filename, type and byte length — never the bytes                  | `FAILED`, not retryable, `CHANNEL_ATTACHMENT_REJECTED`                             |
+
+Never `path`, `href`, `raw` or `encoding`, and `disableFileAccess` /
+`disableUrlAccess` stay on, so [[ADR-011]] guardrail 3 is unchanged. A request
+without attachments (absent or empty) produces exactly the message it did
+before.
+
 ## The settings namespace
 
 `notifications` is a typed, versioned tenant-settings namespace: a closed
@@ -295,6 +315,19 @@ and never taken from a snapshot. The builder then **gates** — `CONFIRMED` or
 unreadable or unsendable source fails **closed**. The gate is the guarantee; the
 event is the optimisation. It renders in the tenant's timezone, in 24-hour form.
 
+**The fiscal notice's KuDE** ([[FISC-021]], [[DEC-098]]). The fiscal notice's
+source is the approved `fiscal_document`, read under the delivery's tenant; the
+same read selects `kude_storage_key`. When it is set, the builder returns a
+**reference** (`FISCAL_KUDE`, the key, filename `kude-<series>-<number>.html`),
+never the bytes. The delivery handler reads the object from storage **just
+before the provider call**, on every attempt, and attaches it only on the
+`EMAIL` channel. A null key, a failed read, an object over the cap or a filename
+outside the contract sends the notice **without the attachment**: the delivery
+neither fails nor retries because of the KuDE, and nothing about the miss is
+recorded (the handler has no content-free log, and a driver's error text cannot
+be proven free of the bytes). Subject and body are unchanged. Another tenant's
+document is never read, so its KuDE can never be attached.
+
 ## Routes
 
 ```text
@@ -339,13 +372,14 @@ later cannot leak by appearing.
 
 ## Audit and classification
 
-| Material                                   | Class          | Where it may appear                           |
-| ------------------------------------------ | -------------- | --------------------------------------------- |
-| Contact value (address, phone)             | **RESTRICTED** | the channel boundary, at send time, in memory |
-| Message content                            | INTERNAL       | built at send time, never stored              |
-| Delivery row (references, status, reasons) | INTERNAL       | the read surface, allowlisted                 |
-| Job payload                                | INTERNAL       | the delivery id                               |
-| An error's message                         | —              | **never**; `describeError` records its name   |
+| Material                                   | Class          | Where it may appear                             |
+| ------------------------------------------ | -------------- | ----------------------------------------------- |
+| Contact value (address, phone)             | **RESTRICTED** | the channel boundary, at send time, in memory   |
+| Message content                            | INTERNAL       | built at send time, never stored                |
+| Attachment bytes (the KuDE)                | CONFIDENTIAL   | read at send time, the channel call, in memory  |
+| Delivery row (references, status, reasons) | INTERNAL       | the read surface, allowlisted                   |
+| Job payload                                | INTERNAL       | the delivery id; never an attachment or its key |
+| An error's message                         | —              | **never**; `describeError` records its name     |
 
 **No notification action is audited**, and that is a decision rather than a gap:
 PRD §27 does not list a notification delivery among the critical audited

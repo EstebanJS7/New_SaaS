@@ -35,7 +35,17 @@ function setup(args: {
   readonly delivery?: { sourceType: string; sourceId: string } | null;
   readonly appointment?: { status: string; startAt: Date; branchId: string } | null;
   readonly branch?: { name: string } | null;
-  readonly fiscalDocument?: { status: string; invoiceId: string; cdc: string | null } | null;
+  readonly fiscalDocument?: {
+    status: string;
+    invoiceId: string;
+    cdc: string | null;
+    kudeStorageKey?: string | null;
+  } | null;
+  /** The fiscal documents by tenant, for a client that honours the tenant scope. */
+  readonly fiscalDocumentsByTenant?: Record<
+    string,
+    { status: string; invoiceId: string; cdc: string | null; kudeStorageKey: string | null }
+  >;
   readonly invoice?: { series: string; number: number | null } | null;
   readonly profile?: { id: string; credential?: unknown; memberships?: unknown } | null;
   readonly portalAccess?: { id: string; status: string; credential?: unknown } | null;
@@ -59,11 +69,13 @@ function setup(args: {
   const branchFind = vi.fn(() =>
     Promise.resolve(args.branch === undefined ? { name: "Sucursal Centro" } : args.branch)
   );
-  const fiscalFind = vi.fn(() =>
+  const fiscalFind = vi.fn((query: { where: { id: string; tenantId: string } }) =>
     Promise.resolve(
-      args.fiscalDocument === undefined
-        ? { status: "APPROVED", invoiceId, cdc: "cdc-1" }
-        : args.fiscalDocument
+      args.fiscalDocumentsByTenant !== undefined
+        ? (args.fiscalDocumentsByTenant[query.where.tenantId] ?? null)
+        : args.fiscalDocument === undefined
+          ? { status: "APPROVED", invoiceId, cdc: "cdc-1", kudeStorageKey: null }
+          : args.fiscalDocument
     )
   );
   const invoiceFind = vi.fn(() =>
@@ -165,6 +177,8 @@ describe("the appointment reminder", () => {
       expect(outcome.parameters).toHaveLength(2);
       expect(outcome.parameters[0]).toBe("Sucursal Centro");
       expect(outcome.parameters[1]).toContain("08:00");
+      // DEC-098: only the fiscal notice references an attachment.
+      expect("attachment" in outcome).toBe(false);
     }
     // The delivery, the appointment and the branch reads are ALL tenant-predicated.
     expect(deliveryFind).toHaveBeenCalledWith(
@@ -246,6 +260,70 @@ describe("the fiscal notice", () => {
     expect(fiscalFind).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: fiscalDocumentId, tenantId } })
     );
+  });
+
+  it("keeps the subject and body unchanged and references no attachment without a stored KuDE", async () => {
+    const outcome = await setup(fiscal).builder.build(request);
+
+    expect(outcome).toEqual({
+      outcome: "READY",
+      subject: "Documento fiscal A-0000042",
+      body: "Su documento fiscal A-0000042 está disponible.",
+      parameters: ["A-0000042"],
+    });
+  });
+
+  it("references the stored KuDE by key, never by content, read from the tenant-scoped row (DEC-098)", async () => {
+    const { builder, fiscalFind } = setup({
+      ...fiscal,
+      fiscalDocument: {
+        status: "APPROVED",
+        invoiceId,
+        cdc: "cdc-1",
+        kudeStorageKey: "fiscal-kude_abc",
+      },
+    });
+
+    const outcome = await builder.build(request);
+
+    expect(outcome).toEqual({
+      outcome: "READY",
+      subject: "Documento fiscal A-0000042",
+      body: "Su documento fiscal A-0000042 está disponible.",
+      parameters: ["A-0000042"],
+      attachment: {
+        kind: "FISCAL_KUDE",
+        storageKey: "fiscal-kude_abc",
+        filename: "kude-A-0000042.html",
+      },
+    });
+    expect(fiscalFind).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: fiscalDocumentId, tenantId },
+        select: expect.objectContaining({ kudeStorageKey: true }) as unknown,
+      })
+    );
+  });
+
+  it("never attaches another tenant's KuDE", async () => {
+    // The document id exists, but only under ANOTHER tenant: the tenant-scoped read
+    // finds nothing, so there is no notice and no key to attach.
+    const { builder } = setup({
+      ...fiscal,
+      fiscalDocumentsByTenant: {
+        "99999999-9999-9999-9999-999999999999": {
+          status: "APPROVED",
+          invoiceId,
+          cdc: "cdc-1",
+          kudeStorageKey: "fiscal-kude_foreign",
+        },
+      },
+    });
+
+    const outcome = await builder.build(request);
+
+    expect(outcome).toMatchObject({ outcome: "UNAVAILABLE" });
+    expect(JSON.stringify(outcome)).not.toContain("fiscal-kude_foreign");
   });
 
   it("refuses to announce a document that is not approved", async () => {

@@ -19,10 +19,18 @@ export interface MailWorker {
    * interrupted run left queued — are skipped, so a stale message cannot stand in for this flow's.
    */
   nextMessageTo(recipient: string, timeoutMs?: number): Promise<string>;
+  /** Everything the worker printed so far — the diagnostic a failed wait attaches. */
+  output(): string;
   stop(): Promise<void>;
 }
 
-export async function startMailWorker(): Promise<MailWorker> {
+/**
+ * `extraEnv` adds variables on top of the mail ones — `FISCAL_WORKER_ENV`, for a spec whose mail is
+ * the fiscal approval notice and therefore needs the fiscal pipeline in the same process.
+ */
+export async function startMailWorker(
+  extraEnv: Readonly<Record<string, string>> = {}
+): Promise<MailWorker> {
   const sink: SmtpSink = await startSmtpSink(SMTP_SINK_PORT);
   let output = "";
   const worker: ChildProcess = spawn(
@@ -41,6 +49,7 @@ export async function startMailWorker(): Promise<MailWorker> {
         SMTP_PASSWORD: "e2e",
         NOTIFICATION_EMAIL_FROM: "no-reply@demo.newsaas.test",
         WEB_APP_BASE_URL: "http://127.0.0.1:3000",
+        ...extraEnv,
       },
     }
   );
@@ -49,8 +58,10 @@ export async function startMailWorker(): Promise<MailWorker> {
       output += chunk.toString();
     });
   }
+  const exited = new Promise<void>((resolve) => worker.once("exit", () => resolve()));
 
   return {
+    output: () => output || "(nothing)",
     async nextMessageTo(recipient, timeoutMs = 30_000) {
       const deadline = Date.now() + timeoutMs;
       for (;;) {
@@ -70,7 +81,11 @@ export async function startMailWorker(): Promise<MailWorker> {
       }
     },
     async stop() {
-      worker.kill("SIGTERM");
+      if (worker.exitCode === null && worker.signalCode === null) {
+        worker.kill("SIGTERM");
+        // Waited for, so the next file's worker never shares a queue with this one.
+        await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 10_000))]);
+      }
       await sink.close();
     },
   };

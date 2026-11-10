@@ -31,6 +31,7 @@
     "fflate": "^0.8.3",
     "libxmljs2": "^0.37.0",
     "pkijs": "^3.4.1",
+    "qrcode-generator": "2.0.4",
     "xml-crypto": "^6.3.3"
   },
   "devDependencies": {

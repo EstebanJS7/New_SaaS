@@ -42,6 +42,93 @@ export type NotificationChannelProviderId = (typeof NOTIFICATION_CHANNEL_PROVIDE
  * what a text channel renders, and `parameters` are the ordered values a
  * template channel substitutes. Each adapter documents which half it reads.
  */
+/**
+ * The closed allowlist of attachment content types ([[DEC-098]]).
+ *
+ * One entry today: the KuDE, an HTML document. A new type is a contract change
+ * that names its own filename extension in {@link ATTACHMENT_FILENAME_PATTERNS}.
+ */
+export const NOTIFICATION_ATTACHMENT_CONTENT_TYPES = Object.freeze([
+  "text/html; charset=utf-8",
+] as const);
+
+export type NotificationAttachmentContentType =
+  (typeof NOTIFICATION_ATTACHMENT_CONTENT_TYPES)[number];
+
+/** At most one attachment per message: the fiscal notice carries its own KuDE only. */
+export const NOTIFICATION_ATTACHMENT_MAX_COUNT = 1;
+
+/**
+ * The byte cap for one attachment: 512 KiB.
+ *
+ * A KuDE is a few kilobytes of HTML plus an inline SVG QR, so the cap is far
+ * above any real document and far below what a relay refuses; anything larger is
+ * not a KuDE the worker rendered.
+ */
+export const NOTIFICATION_ATTACHMENT_MAX_BYTES = 512 * 1024;
+
+/**
+ * Our own filename rule, per content type: a short `[A-Za-z0-9-]` stem and the
+ * type's extension. No dot in the stem, no slash, no whitespace and no control
+ * character, so a filename can never name a path or break a MIME header.
+ */
+const ATTACHMENT_FILENAME_PATTERNS: Readonly<Record<NotificationAttachmentContentType, RegExp>> = {
+  "text/html; charset=utf-8": /^[A-Za-z0-9][A-Za-z0-9-]{0,63}\.html$/,
+};
+
+/**
+ * One in-memory attachment ([[DEC-098]]).
+ *
+ * The bytes travel IN the request, never as a path or a URL: that is what keeps
+ * [[ADR-011]] guardrail 3 (`disableFileAccess`, `disableUrlAccess`) intact. The
+ * content is CONFIDENTIAL (a KuDE carries the receptor's data), so like the
+ * recipient it lives in this call frame only — never in a log, an error, the
+ * delivery record or a job payload.
+ */
+export interface NotificationChannelAttachment {
+  readonly filename: string;
+  readonly contentType: NotificationAttachmentContentType;
+  /** The bytes themselves. A `Buffer` is a `Uint8Array`. */
+  readonly content: Uint8Array;
+}
+
+/**
+ * Whether one value is exactly an attachment the contract admits: the three keys
+ * and no other (a `path` or `href` beside them is refused, not ignored), an
+ * allowlisted type, a filename our pattern accepts, and 1..cap bytes.
+ */
+export function isAcceptableNotificationAttachment(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const keys = Object.keys(value).sort();
+  if (keys.length !== 3 || keys.join(",") !== "content,contentType,filename") return false;
+  const candidate = value as { filename: unknown; contentType: unknown; content: unknown };
+  if (
+    typeof candidate.contentType !== "string" ||
+    !(NOTIFICATION_ATTACHMENT_CONTENT_TYPES as readonly string[]).includes(candidate.contentType)
+  ) {
+    return false;
+  }
+  const pattern =
+    ATTACHMENT_FILENAME_PATTERNS[candidate.contentType as NotificationAttachmentContentType];
+  if (typeof candidate.filename !== "string" || !pattern.test(candidate.filename)) return false;
+  if (!(candidate.content instanceof Uint8Array)) return false;
+  return (
+    candidate.content.byteLength > 0 &&
+    candidate.content.byteLength <= NOTIFICATION_ATTACHMENT_MAX_BYTES
+  );
+}
+
+/**
+ * Whether a request's attachment list is inside the contract. An absent or empty
+ * list is: it is the message every channel sent before attachments existed.
+ */
+export function areAcceptableNotificationAttachments(attachments: unknown): boolean {
+  if (attachments === undefined) return true;
+  if (!Array.isArray(attachments)) return false;
+  if (attachments.length > NOTIFICATION_ATTACHMENT_MAX_COUNT) return false;
+  return attachments.every((attachment) => isAcceptableNotificationAttachment(attachment));
+}
+
 export interface NotificationChannelRequest {
   readonly tenantId: string;
   /** The delivery's own id, so a failure correlates without carrying content. */
@@ -54,6 +141,11 @@ export interface NotificationChannelRequest {
   readonly body: string;
   /** Ordered template values, for a channel whose message is a template. */
   readonly parameters: readonly string[];
+  /**
+   * Optional in-memory attachments ([[DEC-098]]), inside the contract above. A
+   * channel that cannot carry one refuses the send rather than dropping it.
+   */
+  readonly attachments?: readonly NotificationChannelAttachment[];
 }
 
 /**
@@ -112,4 +204,19 @@ export const NOTIFICATION_CHANNEL_REASON = Object.freeze({
   TRANSPORT_FAILURE: "CHANNEL_TRANSPORT_FAILURE",
   /** The provider accepted the call and rejected the message. Not retryable. */
   REJECTED: "CHANNEL_REJECTED",
+  /**
+   * The request's attachment is outside the attachment contract. A caller's
+   * programming error, so not retryable: a retry sends the same attachment.
+   */
+  ATTACHMENT_REJECTED: "CHANNEL_ATTACHMENT_REJECTED",
+  /** The channel cannot carry attachments at all (WhatsApp). Not retryable. */
+  ATTACHMENT_UNSUPPORTED: "CHANNEL_ATTACHMENT_UNSUPPORTED",
 } as const);
+
+/** The one failure an attachment outside the contract produces, shared by the channels. */
+export const NOTIFICATION_ATTACHMENT_REJECTED_OUTCOME: NotificationChannelOutcome = Object.freeze({
+  outcome: "FAILED",
+  retryable: false,
+  reasonCode: NOTIFICATION_CHANNEL_REASON.ATTACHMENT_REJECTED,
+  reason: "The message's attachment is outside the channel's attachment contract.",
+});

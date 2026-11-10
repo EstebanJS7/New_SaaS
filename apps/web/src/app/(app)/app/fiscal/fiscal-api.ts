@@ -47,6 +47,12 @@ export interface FiscalDocument {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly cancelledAt: string | null;
+  /** FISC-021: a KuDE is stored for this document (the storage key never reaches the web). */
+  readonly hasKude: boolean;
+}
+/** FISC-021: the BFF path that relays the stored KuDE as printable HTML. */
+export function fiscalKudeHref(id: string): string {
+  return `/api/fiscal/fiscal-documents/${encodeURIComponent(id)}/kude`;
 }
 export interface CreateFiscalDocumentInput {
   readonly invoiceId: string;

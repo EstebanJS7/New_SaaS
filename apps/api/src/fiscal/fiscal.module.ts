@@ -16,6 +16,7 @@ import {
 } from "./tax-classification/tax-classification.js";
 import { FiscalAllocationService } from "./fiscal-allocation.service.js";
 import { FiscalCreditNoteService } from "./fiscal-credit-note.service.js";
+import { FiscalKudeService } from "./fiscal-kude.service.js";
 import { FiscalRepository } from "./fiscal.repository.js";
 import { FISCAL_SIGNING_ENVIRONMENT, FiscalService } from "./fiscal.service.js";
 import { FiscalSigningMaterialRepository } from "./signing-material/signing-material.repository.js";
@@ -120,6 +121,7 @@ const signingEnvironment: Provider = {
   providers: [
     FiscalRepository,
     FiscalService,
+    FiscalKudeService,
     FiscalCscService,
     TaxClassificationService,
     signingEnvironment,
