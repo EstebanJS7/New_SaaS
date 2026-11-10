@@ -531,8 +531,19 @@ The KuDE never blocks a submission:
 
 A failed put records nothing: the driver's message cannot be proven free of the
 stored bytes, and the KuDE carries the receptor's data (CONFIDENTIAL). A
-`SENDING` recovery resends the stored XML and does not touch the KuDE. Attaching
-it to the approval email is the next part of [[FISC-021]].
+`SENDING` recovery resends the stored XML and does not touch the KuDE.
+
+### Attached to the approval email
+
+The automatic approval notice ([[Notifications]] «The content builder») carries
+the stored KuDE as an HTML attachment `kude-<series>-<number>.html`. The worker
+reads it by `kude_storage_key` — selected by the notice's own tenant-scoped
+document read — at send time, and hands the bytes to the email channel **in
+memory**; [[ADR-011]]'s guardrails are unchanged. Without a readable KuDE (no
+key, a failed read, over 512 KiB) the notice still goes, without the attachment.
+The bytes and the key never enter a job payload, the delivery record, a log or
+an error. It is sent only to the invoice customer's address, resolved as for
+every notice.
 
 ### Served to staff
 
@@ -649,9 +660,9 @@ void and the signing material stay API-only (`404` at the proxy).
   the emitter's `ingreso`. **Nothing in this module has been tested against the
   DNIT.**
 - **The KuDE's delivery surface — in progress.** The worker generates and stores
-  the KuDE at signing and staff open it from the detail ([[FISC-021]]); the
-  approval email attachment is a later task of that story ([[DEC-098]]). The
-  ticket format and a server-side PDF stay out of scope.
+  the KuDE at signing, staff open it from the detail and the approval email
+  carries it as an attachment ([[FISC-021]], [[DEC-098]]). The portal, the
+  ticket format, a server-side PDF and a manual resend stay out of scope.
 - **The secret-store capability itself** — a reusable platform boundary in
   `packages/secret-store` ([[ADR-005]]); Fiscal consumes the port and never
   reaches a concrete driver.
@@ -713,7 +724,9 @@ The stored KuDE ([[FISC-021]], [[DEC-098]]) carries the receiver's name, RUC/CI,
 address and contact: **CONFIDENTIAL**, like `kude_storage_key`. The KuDE read
 returns it only behind `fiscal.read`, uncached (`no-store`), never logs its
 content or key, and the document representation exposes only the boolean
-`hasKude` (INTERNAL).
+`hasKude` (INTERNAL). The approval email's attachment is read at send time and
+lives only in the channel call's memory, never in the delivery record or the
+job.
 
 ## Settings
 

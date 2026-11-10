@@ -192,6 +192,14 @@ both unless a specific vendor feature is required, and none is.
   require particular AUTH or header handling — but those are configuration
   differences rather than an API schema in our code.
 
+### Notes
+
+- **In-memory attachments are compatible with guardrail 3** ([[DEC-098]],
+  2026-11-10): the port's optional `attachments` carry bytes only, and the
+  adapter hands nodemailer `{ filename, content, contentType }` — never `path`,
+  `href`, `raw` or `encoding` — with `disableFileAccess` and `disableUrlAccess`
+  still on. The guardrails above are unchanged.
+
 ## Migration / Rollout
 
 No data migration. The dependency lands with [[NOTIF-002]], whose adapter is

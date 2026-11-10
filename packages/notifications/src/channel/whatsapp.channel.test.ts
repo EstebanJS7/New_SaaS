@@ -7,6 +7,7 @@ import {
   type WhatsAppCloudConfig,
   type WhatsAppFetch,
 } from "./whatsapp.channel.js";
+import { NOTIFICATION_CHANNEL_REASON } from "./channel.port.js";
 
 const config: WhatsAppCloudConfig = {
   token: "token-secret",
@@ -189,6 +190,44 @@ describe("the WhatsApp Cloud adapter", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("the WhatsApp Cloud adapter and attachments (DEC-098)", () => {
+  it("refuses a message that carries an attachment, without a retry and without a call", async () => {
+    // A template channel cannot carry a file, and dropping it silently would
+    // report a send that did not deliver what the caller asked for.
+    const { fetchImpl, calls } = recordingFetch(200, '{"messages":[{"id":"wamid.1"}]}');
+    const channel = createWhatsAppCloudChannel({ config, fetchImpl });
+
+    const outcome = await channel.send({
+      ...request,
+      attachments: [
+        {
+          filename: "kude-A-0000042.html",
+          contentType: "text/html; charset=utf-8",
+          content: Buffer.from("<html></html>"),
+        },
+      ],
+    });
+
+    expect(outcome).toEqual({
+      outcome: "FAILED",
+      retryable: false,
+      reasonCode: NOTIFICATION_CHANNEL_REASON.ATTACHMENT_UNSUPPORTED,
+      reason: "The WhatsApp channel does not carry attachments.",
+    });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("sends as before when the attachment list is empty", async () => {
+    const { fetchImpl, calls } = recordingFetch(200, '{"messages":[{"id":"wamid.1"}]}');
+    const channel = createWhatsAppCloudChannel({ config, fetchImpl });
+
+    await expect(channel.send({ ...request, attachments: [] })).resolves.toMatchObject({
+      outcome: "SENT",
+    });
+    expect(calls).toHaveLength(1);
   });
 });
 

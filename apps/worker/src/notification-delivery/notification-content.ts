@@ -20,6 +20,22 @@ export interface NotificationContentRequest {
   readonly channel: NotificationChannel;
 }
 
+/**
+ * A REFERENCE to an attachment the handler resolves at send time ([[DEC-098]]).
+ *
+ * The builder never reads the bytes: it names the stored object from the
+ * tenant-scoped row it already read, and the handler reads it from storage just
+ * before the provider call, so the bytes never enter a job, a record or a log.
+ */
+export interface NotificationAttachmentReference {
+  /** The KuDE of the approved fiscal document the notice announces. */
+  readonly kind: "FISCAL_KUDE";
+  /** `fiscal_document.kude_storage_key`, read under the delivery's tenant. */
+  readonly storageKey: string;
+  /** The filename the recipient sees, e.g. `kude-001-001-0000042.html`. */
+  readonly filename: string;
+}
+
 export type NotificationContentOutcome =
   | {
       readonly outcome: "READY";
@@ -31,6 +47,8 @@ export type NotificationContentOutcome =
        * request contract's reason, [[NOTIF-002]]).
        */
       readonly parameters: readonly string[];
+      /** Present only when the message carries an attachment (the fiscal notice's KuDE). */
+      readonly attachment?: NotificationAttachmentReference;
     }
   | {
       readonly outcome: "UNAVAILABLE";

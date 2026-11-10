@@ -1,4 +1,6 @@
 import {
+  areAcceptableNotificationAttachments,
+  NOTIFICATION_ATTACHMENT_REJECTED_OUTCOME,
   NOTIFICATION_CHANNEL_REASON,
   type NotificationChannel,
   type NotificationChannelOutcome,
@@ -41,6 +43,16 @@ export interface FakeChannelAttempt {
   readonly subject: string;
   readonly body: string;
   readonly parameters: readonly string[];
+  /**
+   * An attachment's METADATA, present only when the request carried one. The bytes
+   * are never retained: they are CONFIDENTIAL and the fake is selectable in
+   * production (DEC-098).
+   */
+  readonly attachments?: readonly {
+    readonly filename: string;
+    readonly contentType: string;
+    readonly byteLength: number;
+  }[];
   readonly at: string;
 }
 
@@ -92,10 +104,25 @@ export class FakeNotificationChannel implements NotificationChannelPort {
       subject: request.subject,
       body: request.body,
       parameters: [...request.parameters],
+      ...(request.attachments !== undefined && request.attachments.length > 0
+        ? {
+            attachments: request.attachments.map((attachment) => ({
+              filename: attachment.filename,
+              contentType: attachment.contentType,
+              byteLength: attachment.content.byteLength,
+            })),
+          }
+        : {}),
       at: this.clock().toISOString(),
     });
     if (this.attemptsLog.length > FAKE_CHANNEL_RETAINED_ATTEMPTS) {
       this.attemptsLog.shift();
+    }
+
+    // The same contract the real email channel enforces, so a caller's violation
+    // fails in tests exactly as it would in production.
+    if (!areAcceptableNotificationAttachments(request.attachments)) {
+      return Promise.resolve(NOTIFICATION_ATTACHMENT_REJECTED_OUTCOME);
     }
 
     const outcome = this.outcomes[Math.min(index - 1, this.outcomes.length - 1)];

@@ -91,6 +91,36 @@ al aprobarse».
   KuDE en el detalle fiscal abre el KuDE; sin KuDE no se ofrece» (falta la
   prueba en el navegador, T4).
 
+- **T3 — adjunto en el mail de aprobación.** Puerto del canal
+  (`packages/notifications/src/channel/channel.port.ts`): campo opcional
+  `attachments`, contrato cerrado — como máximo uno, solo
+  `text/html; charset=utf-8`, 1 byte a 512 KiB, nombre
+  `^[A-Za-z0-9][A-Za-z0-9-]{0,63}\.html$`, exactamente las claves `filename`,
+  `contentType`, `content` (bytes en memoria). SMTP pasa a nodemailer solo
+  `{ filename, content: Buffer, contentType }`, con `disableFileAccess` y
+  `disableUrlAccess` activos; fuera del contrato: `FAILED` no reintentable
+  `CHANNEL_ATTACHMENT_REJECTED`, sin enviar. WhatsApp rechaza cualquier adjunto
+  (`CHANNEL_ATTACHMENT_UNSUPPORTED`, sin llamada); el fake registra solo nombre,
+  tipo y tamaño. Sin adjuntos, el mensaje es idéntico al anterior. Worker: el
+  aviso fiscal ya apunta al `fiscal_document` aprobado; su lectura por clínica
+  selecciona `kude_storage_key` y el builder devuelve una **referencia**
+  (`FISCAL_KUDE`, clave, `kude-<serie>-<número>.html`). El handler de entrega
+  lee el objeto del almacenamiento justo antes del envío, en cada intento, y lo
+  adjunta solo en `EMAIL`. Clave nula, lectura fallida, objeto mayor al tope o
+  nombre fuera del contrato: el aviso sale sin adjunto y la entrega no falla ni
+  reintenta por el KuDE. Asunto y cuerpo sin cambios. Ni bytes ni clave en el
+  job, el registro de entrega, los intentos ni los errores. [[ADR-011]] suma una
+  nota (guardarraíles sin cambios). Evidencia: `email.channel.test.ts`
+  («in-memory attachments», «the attachment contract»),
+  `whatsapp.channel.test.ts`, `fake.channel.test.ts`,
+  `notification-content.builder.test.ts` («the fiscal notice»),
+  `notification-delivery.handler.test.ts` («the fiscal notice's KuDE
+  attachment»). Criterios que T3 cree cumplidos (sin tildar hasta la
+  verificación final): «El mail de aprobación lleva el KuDE adjunto; sin KuDE
+  sale sin adjunto» y «El canal de email sigue sin leer archivos ni URLs». No se
+  registra el motivo de un aviso sin adjunto: el handler no tiene un log sin
+  contenido y DEC-098 dice «eso queda registrado»; queda como pregunta abierta.
+
 ## Verificación
 
 Pendiente.

@@ -28,7 +28,7 @@ Playwright lane. Forecast: ~900 authored lines.
 | --- | -------- | ---------------------------- | ------- | ----------------- |
 | T1  | S1,S3,S5 | delegated (context backstop) | done    | see L4            |
 | T2  | S2,S5    | delegated (context backstop) | done    | see L5            |
-| T3  | S4,S5    | tbd                          | pending |                   |
+| T3  | S4,S5    | delegated (context backstop) | done    | see L6            |
 | T4  | S1-S5    | tbd                          | pending | browser + docs    |
 
 Risk: item 5 (new dependency, T1), item 2 (new route on CONFIDENTIAL data, T2;
@@ -66,3 +66,15 @@ email channel contract, T3). Independent verifier at feature end.
   notes. API 2148 pass/277 skipped, web 2391 pass/1 unrelated timing flake
   (clinical recovery test, 67/67 alone); typecheck/lint/prettier pass; parent
   rerun fiscal integration + probe 57/57. Risk: items 2 and 3.
+- L6 (2026-11-10): T3 done by delegated writer. Port `attachments` (max 1,
+  text/html only, 1 B–512 KiB, strict filename, exact keys); SMTP passes only
+  {filename, content Buffer, contentType}, file/URL access still disabled,
+  no-attachment options pinned identical; violations → FAILED non-retryable
+  CHANNEL_ATTACHMENT_REJECTED; WhatsApp refuses attachments; fake records
+  metadata only. Builder selects kudeStorageKey in its tenant-scoped approved
+  read (reference only); handler reads storage at send time each attempt; null
+  key/read failure/oversize/bad filename → sent without attachment, SENT; no
+  bytes/key in payload, delivery or attempt rows; subject/body unchanged.
+  Notifications 95, worker 319 green; parent rerun email channel 20/20. Known
+  limitation: a notice sent without the KuDE leaves no record (DEC-098 wording
+  corrected). Risk: items 2 and 3.

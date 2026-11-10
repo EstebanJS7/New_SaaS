@@ -55,7 +55,8 @@ Opción 2, elegida por el usuario el 2026-11-10 («Staff + QR + mail»).
   lo que [[ADR-011]] no cambia: `disableFileAccess` y `disableUrlAccess` siguen
   activos. El puerto del canal suma un campo opcional de adjuntos, con tamaño
   máximo y tipos permitidos cerrados. Si el KuDE no se puede leer, el aviso sale
-  sin adjunto y eso queda registrado, sin el contenido.
+  sin adjunto. Hoy eso no deja registro (ni log ni código en el intento): queda
+  como limitación conocida de [[FISC-021]].
 
 ## Fuera de esta decisión
 
