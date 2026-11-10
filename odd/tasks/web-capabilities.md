@@ -23,12 +23,12 @@ Runners: Vitest (api, web), Playwright lane.
 
 ## Tasks
 
-| ID  | Specs | Route                                 | Status  | Commit / evidence |
-| --- | ----- | ------------------------------------- | ------- | ----------------- |
-| T1  | S1    | delegated (context backstop, with T2) | done    | see L3            |
-| T2  | S2,S4 | delegated (context backstop, with T1) | done    | see L3            |
-| T3  | S3    | tbd                                   | pending |                   |
-| T4  | S1-S5 | tbd                                   | pending | browser + docs    |
+| ID  | Specs | Route                                              | Status  | Commit / evidence |
+| --- | ----- | -------------------------------------------------- | ------- | ----------------- |
+| T1  | S1    | delegated (context backstop, with T2)              | done    | see L3            |
+| T2  | S2,S4 | delegated (context backstop, with T1)              | done    | see L3            |
+| T3  | S3    | delegated (parallel: T3a commerce, T3b care/admin) | done    | see L4            |
+| T4  | S1-S5 | tbd                                                | pending | browser + docs    |
 
 Risk: item 2 (exposes the caller's own permissions; guards), item 3 (shared
 memberships proxy allowlist, nav). Independent verifier at feature end.
@@ -55,3 +55,15 @@ memberships proxy allowlist, nav). Independent verifier at feature end.
   2147 pass/277 skipped, typecheck/lint/ prettier pass; parent rerun API
   capabilities+probe 32/32, web proxy/loader/ settings page 43/43. Risk: items 2
   and 3 (verifier at feature end).
+- L4 (2026-11-10): Shared helper canUse/useCan committed by the parent (08fe529,
+  RED 5 → GREEN 5). T3 ran as two parallel writers with disjoint surfaces. T3a
+  (bab769c): catalog, suppliers, purchases, inventory, sales, cash, billing,
+  fiscal — per-module action→permission maps citing controllers; sales/cash/
+  billing/fiscal also need their feature; cash close disabled with reason;
+  focused 711 pass. T3b (e5ffb16): agenda, customers, patients/clinical
+  (veterinary feature), notifications, imports, reports, settings team/
+  branches/branding (custom_branding)/fiscal, dashboard; no-access states when
+  the read permission is missing; focused 932 pass. Parent seam check: full web
+  197 files / 2594 tests, typecheck, lint, prettier pass. Known gaps: direct URL
+  to /new and /edit pages in commerce only hidden at entry (API 403 handled by
+  forms); dashboard period selector stays visible.
