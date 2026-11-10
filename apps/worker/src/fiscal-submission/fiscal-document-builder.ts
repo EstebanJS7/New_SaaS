@@ -45,6 +45,12 @@ export type FiscalDocumentBuildOutcome =
   | {
       readonly outcome: "BUILT";
       readonly document: FiscalIssueDocument;
+      /**
+       * FISC-021 / DEC-098: the KuDE rendered from the same request that was
+       * signed, when one could be rendered. Absent for a type without a KuDE
+       * model; the stage stores it next to the XML and never fails on it.
+       */
+      readonly kudeHtml?: string;
     }
   | {
       readonly outcome: "UNAVAILABLE";

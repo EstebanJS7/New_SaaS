@@ -69,6 +69,14 @@ const BUILT_DOCUMENT: FiscalIssueDocument = {
   signedXml: '<rDE Id="cdc-built-1"><dVerFor>150</dVerFor></rDE>',
 };
 
+/** FISC-021: a build that also rendered the KuDE. */
+const KUDE_HTML = "<!DOCTYPE html><html><body>KuDE cdc-built-1 receptor-secret</body></html>";
+const BUILT_WITH_KUDE: FiscalDocumentBuildOutcome = {
+  outcome: "BUILT",
+  document: BUILT_DOCUMENT,
+  kudeHtml: KUDE_HTML,
+};
+
 interface DocumentFixture {
   readonly id: string;
   readonly tenantId: string;
@@ -107,6 +115,8 @@ interface StageScript {
   readonly gateError?: DteSchemaError;
   /** The custody a `SENDING` recovery reads back. */
   readonly stored?: { readonly xmlStorageKey: string | null; readonly cdc: string | null };
+  /** FISC-021: the KuDE's put fails while the XML's succeeds. */
+  readonly kudePutFails?: boolean;
 }
 
 /**
@@ -218,7 +228,9 @@ function setup(
   };
   const build = vi.fn(() => Promise.resolve(buildOutcome));
   const storagePut = vi.fn((args: { key: string; body: Buffer; contentType: string }) =>
-    Promise.resolve({ key: args.key, byteSize: args.body.byteLength })
+    stage.kudePutFails === true && args.contentType.startsWith("text/html")
+      ? Promise.reject(new Error(`driver refused ${args.body.toString("utf8")}`))
+      : Promise.resolve({ key: args.key, byteSize: args.body.byteLength })
   );
   const storageGet = vi.fn(() =>
     Promise.resolve({
@@ -588,6 +600,12 @@ describe("FiscalSubmissionHandler", () => {
     expect(issue.mock.calls[0]?.[0]?.document).toBeNull();
   });
 
+  it("writes no kude_storage_key when the provider requires no document (FISC-021)", async () => {
+    const { handler, updates } = setup();
+    await handler.handle(job);
+    for (const update of updates) expect(update.data).not.toHaveProperty("kudeStorageKey");
+  });
+
   it("stores the signed XML first, writes xml_storage_key and cdc, gates it, then submits", async () => {
     const { handler, updates, issue, build, storagePut } = setup(
       "PENDING",
@@ -620,6 +638,73 @@ describe("FiscalSubmissionHandler", () => {
     expect(updates[2]?.where).toMatchObject({ status: "SIGNING" });
     expect(updates[2]?.data).toMatchObject({ status: "SENDING" });
     expect(issue.mock.calls[0]?.[0]?.document).toEqual(BUILT_DOCUMENT);
+  });
+
+  it("stores the KuDE next to the XML and writes kude_storage_key in the same SIGNING update (FISC-021)", async () => {
+    const { handler, updates, issue, storagePut } = setup(
+      "PENDING",
+      "APPROVED",
+      null,
+      undefined,
+      undefined,
+      { requiresSignedDocument: true, build: { ...BUILT_WITH_KUDE } }
+    );
+    await handler.handle(job);
+
+    const xmlPut = storagePut.mock.calls.find(([args]) => args.contentType === "application/xml");
+    const kudePut = storagePut.mock.calls.find(([args]) =>
+      args.contentType.startsWith("text/html")
+    );
+    expect(kudePut?.[0].key).toMatch(/^fiscal-kude_/);
+    expect(kudePut?.[0].body.toString("utf8")).toBe(KUDE_HTML);
+    expect(kudePut?.[0].contentType).toBe("text/html; charset=utf-8");
+    // One conditional update carries the three custody fields together.
+    expect(updates[1]?.where).toMatchObject({ status: "SIGNING" });
+    expect(updates[1]?.data).toEqual({
+      xmlStorageKey: xmlPut?.[0].key,
+      kudeStorageKey: kudePut?.[0].key,
+      cdc: BUILT_DOCUMENT.cdc,
+    });
+    // The KuDE never travels to the provider.
+    expect(issue.mock.calls[0]?.[0]?.document).toEqual(BUILT_DOCUMENT);
+  });
+
+  it("submits without a KuDE when the build carries none, leaving kude_storage_key null (FISC-021)", async () => {
+    const { handler, updates, issue, storagePut } = setup(
+      "PENDING",
+      "APPROVED",
+      null,
+      undefined,
+      undefined,
+      { requiresSignedDocument: true }
+    );
+    await handler.handle(job);
+
+    expect(storagePut).toHaveBeenCalledTimes(1);
+    expect(updates[1]?.data).not.toHaveProperty("kudeStorageKey");
+    expect(issue).toHaveBeenCalledTimes(1);
+  });
+
+  it("submits anyway when the KuDE cannot be stored, without a key and without the driver's message (FISC-021)", async () => {
+    const { handler, updates, issue, storagePut } = setup(
+      "PENDING",
+      "APPROVED",
+      null,
+      undefined,
+      undefined,
+      { requiresSignedDocument: true, build: { ...BUILT_WITH_KUDE }, kudePutFails: true }
+    );
+    await handler.handle(job);
+
+    expect(storagePut).toHaveBeenCalledTimes(2);
+    expect(updates[1]?.data).not.toHaveProperty("kudeStorageKey");
+    expect(updates[1]?.data).toMatchObject({ cdc: BUILT_DOCUMENT.cdc });
+    expect(issue).toHaveBeenCalledTimes(1);
+    expect(issue.mock.calls[0]?.[0]?.document).toEqual(BUILT_DOCUMENT);
+    // Nothing the driver said, and nothing of the KuDE, reaches the row.
+    const written = JSON.stringify(updates.map((update) => update.data));
+    expect(written).not.toContain("driver refused");
+    expect(written).not.toContain(KUDE_HTML);
   });
 
   it("fails closed when the document seam is unavailable", async () => {

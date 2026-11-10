@@ -497,11 +497,42 @@ reach the page**.
   are sliced rather than parsed into a `Date` — the DE's instants are
   timezone-less by §21 — and the printed forms never round, because the chapter
   states no rounding rule.
-- **The renderer returns a standalone printable HTML document**, with no route,
-  no UI and no dependency, and it escapes every value: the emitter's name, the
-  receptor's name and the item descriptions are tenant data reaching an HTML
-  sink. The two paper rolls §13.6 and §13.7 describe are profiled and not
-  rendered.
+- **The renderer returns a standalone printable HTML document** that fetches
+  nothing, and it escapes every value: the emitter's name, the receptor's name
+  and the item descriptions are tenant data reaching an HTML sink. The two paper
+  rolls §13.6 and §13.7 describe are profiled and not rendered.
+- **The QR is a scannable image** ([[FISC-021]], [[DEC-098]]): `kude.qr.ts`
+  draws `dCarQR` as an SVG data URL with `qrcode-generator` (MIT, no
+  dependencies), the one file that imports it — `qr-dependency-boundary.test.ts`
+  pins that. `renderKudeForRequest(request)` builds, draws and renders in one
+  call and answers `RENDERED` with the HTML or the builder's `UNAVAILABLE`.
+
+### Generated at signing
+
+The KuDE cannot be produced later: it is built from the `DteRequest` the worker
+holds in memory while signing, and a second build would draw another `dCodSeg`
+and another instant. So the worker's assembly renders it **in the same step**,
+from the same request, with `gCamFuFD.dCarQR` holding the QR's final content,
+and the submission stage stores it in private object storage under the
+`fiscal-kude_` prefix, next to the signed XML. `kude_storage_key` is written in
+the same `SIGNING`-guarded update as `xml_storage_key` and `cdc`.
+
+The KuDE never blocks a submission:
+
+| Case                                        | Submission                   | `kude_storage_key`  |
+| ------------------------------------------- | ---------------------------- | ------------------- |
+| Rendered and stored                         | proceeds                     | the object's key    |
+| Type without a KuDE model (`UNAVAILABLE`)   | proceeds                     | null                |
+| Renderer throws                             | proceeds                     | null                |
+| The KuDE's put fails                        | proceeds                     | null                |
+| Provider requires no signed document (fake) | pass-through, nothing stored | null                |
+| Document signed before FISC-021             | —                            | null, never rebuilt |
+
+A failed put records nothing: the driver's message cannot be proven free of the
+stored bytes, and the KuDE carries the receptor's data (CONFIDENTIAL). A
+`SENDING` recovery resends the stored XML and does not touch the KuDE. Serving
+it to staff and attaching it to the approval email are the next parts of
+[[FISC-021]].
 
 ## The signing-material boundary
 
@@ -600,9 +631,10 @@ void and the signing material stay API-only (`404` at the proxy).
   habilitación, a certificate from a real PSC and the production CSC issued at
   the emitter's `ingreso`. **Nothing in this module has been tested against the
   DNIT.**
-- **The KuDE's delivery surface.** The renderer generates the representation;
-  printing, exporting or serving it is deferred with printed documents
-  ([[DEC-039]], [[DEC-044]]).
+- **The KuDE's delivery surface — in progress.** The worker now generates and
+  stores the KuDE at signing ([[FISC-021]]); the staff route and the approval
+  email attachment are later tasks of that story ([[DEC-098]]). The ticket
+  format and a server-side PDF stay out of scope.
 - **The secret-store capability itself** — a reusable platform boundary in
   `packages/secret-store` ([[ADR-005]]); Fiscal consumes the port and never
   reaches a concrete driver.
