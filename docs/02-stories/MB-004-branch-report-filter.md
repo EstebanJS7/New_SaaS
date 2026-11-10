@@ -8,9 +8,9 @@ priority: high
 depends_on: [MB-002, MB-003]
 prd_sections: ["§31"]
 permissions: []
-branch:
+branch: test/mb004-branch-report-browser
 created: 2026-11-05
-updated: 2026-11-05
+updated: 2026-11-09
 ---
 
 # MB-004 — Filtro por sucursal en reportes
@@ -62,4 +62,34 @@ entrega de [[DEC-094]] (§11); en este punto reemplaza a [[DEC-062]] y cierra
   veterinario; exportación filtrada; ruta nueva fijada en el probe.
 - Web: proxy (reenvío y rechazos), selector de sucursal (por defecto, cambio,
   exportación, una sola sucursal, reporte veterinario), build de Next.
-- **Pendiente:** prueba en navegador.
+- Navegador: `apps/e2e/specs/branch-reports.spec.ts` (ver abajo).
+
+## Prueba en navegador
+
+`apps/e2e/specs/branch-reports.spec.ts`, con la clínica demo del lane y el
+informe Stock en el período «hoy». La corrida recibe 10 unidades de su ítem en
+una segunda sucursal y transfiere 4 a la sucursal principal (preparado por el
+BFF; las pantallas de compras, stock y sucursales son de MB-001 y MB-003):
+
+- «Todas las sucursales» es la opción por defecto: saldo 10, entradas 10,
+  salidas 0. La transferencia no cuenta.
+- Con la segunda sucursal: saldo 6, entradas 10, salidas 4. Con la principal:
+  saldo 4, entradas 4. La transferencia es entrada o salida real.
+- La tabla coincide con el mismo informe leído por el BFF, que con sucursal
+  devuelve `branch`.
+- «Exportar CSV» usa la misma sucursal (`?preset=today&branchId=`): la fila del
+  ítem trae los números de esa sucursal y el nombre del archivo es el mismo que
+  sin filtro.
+- Una sucursal desactivada sigue en el selector como «(inactiva)» y responde su
+  historia.
+- El informe veterinario «Consultas» no muestra el selector.
+- Al terminar se restaura la asignación del propietario y se desactiva la
+  sucursal creada; una corrida interrumpida se limpia al empezar la siguiente.
+
+El caso «una sola sucursal: sin selector» no se prueba en el navegador: el lane
+conserva las sucursales desactivadas de corridas anteriores y el selector las
+lista. Lo cubre la prueba web del selector.
+
+Evidencia (2026-11-09, lane local sobre `main` `3191dc0`): la spec sola 1/1 y el
+lane completo 32/32, con la base persistente de vuelta en una sola sucursal
+activa. Sin cambios de producto.
