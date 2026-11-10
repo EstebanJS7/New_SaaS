@@ -2,6 +2,7 @@
 
 import type { JSX } from "react";
 import { useId, useState } from "react";
+import { AvailabilityEditor } from "./availability-editor";
 import { changedFields } from "./general-settings-rules";
 import { SaveButton, SettingsSection, type SectionFormProps } from "./settings-section";
 
@@ -62,20 +63,23 @@ export function ConflictPolicyForm({ settings, onSave, saving }: SectionFormProp
 }
 
 /**
- * The «Agenda» section.
- *
- * T2 EXTENSION POINT (CFG-001 S4): the availability windows and blocks editor
- * mounts below `ConflictPolicyForm` as its own form with its own save, sending
- * ONLY `availability` and/or `blocks` (the API merges the patch). Until then
- * this section neither renders nor edits them, and its save never sends them.
+ * The «Agenda» section: the conflict policy form and, below it, the
+ * availability windows and blocks editor (CFG-001 T2). Each has its own save;
+ * the policy patch never carries the lists and the lists' patch never carries
+ * `conflictPolicy` (the API merges the patch and replaces arrays whole).
  */
 export function SchedulingSection(): JSX.Element {
   return (
     <SettingsSection
       namespace="scheduling"
       title="Agenda"
-      description="Cómo la agenda trata los turnos de un mismo profesional."
-      renderForm={(props) => <ConflictPolicyForm {...props} />}
+      description="Cómo la agenda trata los turnos de un mismo profesional, sus horarios de atención y sus bloqueos."
+      renderForm={(props) => (
+        <div className="space-y-6">
+          <ConflictPolicyForm {...props} />
+          <AvailabilityEditor {...props} />
+        </div>
+      )}
     />
   );
 }

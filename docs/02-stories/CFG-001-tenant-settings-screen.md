@@ -108,6 +108,37 @@ Criterios que T1 cree cumplidos (sin marcar hasta T3):
 - «El proxy acepta los cuatro namespaces y rechaza cualquier otro como antes»
   (`apps/web/src/app/api/settings/[[...path]]/route.test.ts`).
 
+### T2 — Horarios de atención y bloqueos (S4)
+
+- En la sección Agenda, debajo de la política de superposición, el editor
+  «Horarios de atención» (profesional, sucursal, día, desde, hasta) y «Bloqueos»
+  (profesional, sucursal, desde, hasta con fecha y hora). Alta, edición y baja
+  por fila; «Guardar horarios y bloqueos» envía solo la lista que cambió,
+  completa (la API reemplaza los arreglos enteros); nunca envía
+  `conflictPolicy`, y el guardado de la política nunca envía las listas.
+- Semántica tomada del código de la API
+  (`apps/api/src/scheduling/appointment-invariants.ts`): `weekday` 0 es domingo;
+  los minutos son hora local de la clínica (`America/Asuncion`); un fin `00:00`
+  se guarda como 1440 (medianoche al final del día). Los bloqueos se ingresan y
+  muestran en hora de la clínica y se envían como instantes UTC con los mismos
+  helpers de la agenda (`agenda-time.ts`).
+- Validación en la web igual a la de la API: profesional y sucursal
+  obligatorios, fin posterior al inicio, horas válidas; los mensajes son en
+  español. El rechazo de la API usa la misma frase en español que T1.
+- Profesionales y sucursales salen de `GET /appointments/options`
+  (`scheduling.appointment.read`, que tienen los roles con
+  `scheduling.settings.manage`): veterinarios y sucursales de esta clínica, por
+  nombre. Una fila con un profesional o sucursal que ya no figura se ve como
+  «Profesional no disponible» / «Sucursal no disponible» y se puede editar o
+  quitar; nunca se descarta en silencio.
+- Si las listas guardadas no se pueden leer o falla la carga de profesionales y
+  sucursales, el editor no ofrece edición (con reintento en el segundo caso).
+- Tests: `availability-editor.test.tsx` (14).
+
+**Limitación:** guardar la política de superposición refresca la sección y
+descarta cambios sin guardar del editor de horarios (y viceversa); cada
+formulario se guarda por separado.
+
 ## Verificación
 
 Pendiente (T3).

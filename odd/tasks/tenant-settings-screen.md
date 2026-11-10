@@ -27,7 +27,7 @@ authored lines.
 | ID  | Specs    | Route                        | Status  | Commit / evidence |
 | --- | -------- | ---------------------------- | ------- | ----------------- |
 | T1  | S1-S3,S5 | delegated (context backstop) | done    | see L4            |
-| T2  | S4       | tbd                          | pending |                   |
+| T2  | S4       | delegated (context backstop) | done    | see L5            |
 | T3  | S1-S6    | tbd                          | pending | browser + docs    |
 
 Risk: item 2 only if permission gating is wrong (backend re-checks); item 3 for
@@ -57,3 +57,13 @@ the shared settings proxy (pin existing behavior).
   no caller permissions/features, so gating is component-level only (same as
   imports/reports); recorded in the story. Extension point for T2:
   scheduling-section.tsx.
+- L5 (2026-11-10): T2 done (delegated). Availability/blocks editor in the Agenda
+  section: tables + add/edit/remove, one save sending only changed full arrays,
+  never conflictPolicy; malformed stored lists → not editable. Semantics from
+  code: weekday 0=Sunday, window minutes are clinic-local (America/Asuncion,
+  appointment-invariants.ts:69-136), blocks are UTC instants converted with
+  agenda-time.ts helpers (DST gap refused); 00:00 end → 1440. Pickers from GET
+  /appointments/options (scheduling.appointment.read, held by both seeded
+  settings-manager roles). 14 new tests RED→GREEN; web 2445 pass,
+  typecheck/lint/prettier pass; parent rerun settings 43/43. Limitation: saving
+  one Agenda form reloads and discards unsaved edits in the other.
